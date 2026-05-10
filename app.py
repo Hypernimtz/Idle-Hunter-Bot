@@ -507,7 +507,7 @@ def verify_needed_embed(user_id: str) -> discord.Embed:
     code = data[user_id]["verify"]["code"]
     return discord.Embed(
         title="🔒 Verification Required",
-        description=f"Use </verify:COMMAND_ID["verify"]> to continue.\nWe're preventing autoclickers.",
+        description=f"Use {</verify:COMMAND_ID["verify"]>} to continue.\nWe're preventing autoclickers.",
         color=discord.Color.orange(),
     )
 
@@ -669,7 +669,7 @@ async def maybe_send_mail_notification(interaction: discord.Interaction, user_id
 
     embed = discord.Embed(
         title="📬 You have new mail!",
-        description="Use </mail:COMMAND_ID["mail"]> to check your mailbox.",
+        description="Use {</mail:COMMAND_ID["mail"]>} to check your mailbox.",
         color=discord.Color.yellow(),
     )
 
