@@ -3166,7 +3166,7 @@ async def help_cmd(interaction: discord.Interaction):
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
 @app_commands.describe(time="Number of minutes from now until maintenance mode starts", message="Reason about why the maintenance will start")
-async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message = str):
+async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message: str):
     global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
     user_id = str(interaction.user.id)
     init_user(user_id)
