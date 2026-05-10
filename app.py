@@ -1342,7 +1342,6 @@ def build_help_components(user_id: str) -> list:
         f"</{c.name}:{COMMAND_ID.get(c.name)}> — {c.description or 'No description'}"
         for c in cmds
     )
-    is_admin = user_id in BOT_ADMIN_ID
     content = f"### 📖 Commands\n{lines}\n-# Use /verify if blocked from commands."
     components = [
         {
@@ -1351,20 +1350,6 @@ def build_help_components(user_id: str) -> list:
         },
         _back_row(user_id),
     ]
-    if is_admin:
-        admin_lines = "\n".join([
-            ".bot_shutdown — Shuts down the bot for maintenance",
-            ".bot_resume — Resumes the bot from maintenance",
-            ".setdevmail — Set dev mail"
-        ])
-        components.insert(0, {
-            "type": 10,
-            "content": f"### ── Admin Commands ──\n{admin_lines}"
-        })
-        components.insert(1, {
-            "type": 14,
-            "spacing": 1
-        })  # separator (V2 separator component)
     return [{
         "type": 17,
         "accent_color": _accent(user_id),
