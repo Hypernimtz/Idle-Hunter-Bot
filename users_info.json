@@ -1,0 +1,4746 @@
+{
+    "1286458710146940980": {
+        "money": 541960,
+        "level": 26,
+        "xp": 100,
+        "inv": [
+            "Stray Dog",
+            "Crow",
+            "Pigeon",
+            "Stray Dog",
+            "Rat"
+        ],
+        "gems": 999988870,
+        "premium": false,
+        "hunt_cd": 1778349753.7865636,
+        "daily_cd": 0,
+        "color": "dark blue",
+        "tribe": "7A",
+        "tribe_inv": null,
+        "biome": "village",
+        "verify": {
+            "needed": false,
+            "time": 147,
+            "code": "YcpT"
+        },
+        "idle": {
+            "active": true,
+            "stacks": 9,
+            "started_at": 1778312090.9651203
+        },
+        "boosts": {
+            "luck": 50,
+            "sell": 50,
+            "xp": 50
+        },
+        "tool": "Dragon Cannon",
+        "owned_tools": [
+            "Bare Hands",
+            "Cosmic RPG",
+            "Slingshot",
+            "Hunting Knife",
+            "Spear",
+            "Shortbow",
+            "Longbow",
+            "Crossbow",
+            "Musket",
+            "Sniper Rifle",
+            "Tranq Gun",
+            "Plasma Caster",
+            "Gravity Trap",
+            "Soul Snare",
+            "Void Bow",
+            "Celestial Lance",
+            "Mythic Net",
+            "Dragon Cannon"
+        ],
+        "prestige": 1,
+        "record": {
+            "Sparrow": {
+                "count": 22,
+                "total_earned": 1980,
+                "tools": {
+                    "Cosmic RPG": 22
+                }
+            },
+            "Mouse": {
+                "count": 23,
+                "total_earned": 2898,
+                "tools": {
+                    "Cosmic RPG": 23
+                }
+            },
+            "Rabbit": {
+                "count": 26,
+                "total_earned": 10608,
+                "tools": {
+                    "Cosmic RPG": 26
+                }
+            },
+            "Fox": {
+                "count": 21,
+                "total_earned": 12852,
+                "tools": {
+                    "Cosmic RPG": 20,
+                    "Dragon Cannon": 1
+                }
+            },
+            "Stray Dog": {
+                "count": 20,
+                "total_earned": 5580,
+                "tools": {
+                    "Cosmic RPG": 17,
+                    "Dragon Cannon": 3
+                }
+            },
+            "Stray Cat": {
+                "count": 15,
+                "total_earned": 4590,
+                "tools": {
+                    "Cosmic RPG": 15
+                }
+            },
+            "Rat": {
+                "count": 21,
+                "total_earned": 3213,
+                "tools": {
+                    "Cosmic RPG": 19,
+                    "Dragon Cannon": 2
+                }
+            },
+            "Crow": {
+                "count": 14,
+                "total_earned": 2478,
+                "tools": {
+                    "Cosmic RPG": 11,
+                    "Dragon Cannon": 3
+                }
+            },
+            "Squirrel": {
+                "count": 24,
+                "total_earned": 4896,
+                "tools": {
+                    "Cosmic RPG": 24
+                }
+            },
+            "Pigeon": {
+                "count": 14,
+                "total_earned": 1428,
+                "tools": {
+                    "Cosmic RPG": 13,
+                    "Dragon Cannon": 1
+                }
+            }
+        },
+        "servers": [
+            "1498817571409887352",
+            "1497616131475902644",
+            "1500344303296188446",
+            "1401681247180296315",
+            "1429567746924089416",
+            "1453133433134911549"
+        ],
+        "total_caught": 200,
+        "daily_last_claim_date_utc": "",
+        "daily_streak": 1,
+        "log": [
+            {
+                "ts": 1778349750,
+                "biome": "village",
+                "tool": "Dragon Cannon",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 208,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 102,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 158,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 168,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 106,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 742,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778348548,
+                "biome": "village",
+                "tool": "Dragon Cannon",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 194,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 168,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 176,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 70,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 168,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 776,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778311997,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 96,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 128,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 216,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 160,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 206,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 910,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778311994,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 174,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 132,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 206,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 132,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 762,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778304762,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 192,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 100,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 146,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 812,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778303391,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 192,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 82,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 54,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 702,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778302954,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 64,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 228,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 132,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 174,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 844,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778302925,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 170,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 192,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 184,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 902,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778302806,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 114,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 124,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 150,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 138,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 206,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 928,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778302803,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 150,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 82,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 216,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 160,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 982,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778302799,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 188,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 86,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 220,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 92,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 100,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 864,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778296704,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 228,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 150,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 170,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 124,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 1028,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778296698,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 138,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 128,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 146,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 54,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 712,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778296525,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 78,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 224,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 114,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 58,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 210,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 100,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 784,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778296452,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 170,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 142,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 118,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 210,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 64,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 142,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 846,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778221351,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 114,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 54,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 170,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 228,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 662,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778221347,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 78,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 82,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 78,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 612,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778221343,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 58,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 192,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 170,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 184,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 146,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 818,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778126332,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 128,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 128,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 86,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 138,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 124,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 650,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778123829,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 96,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 92,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 124,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 102,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 279,
+                        "xp_earned": 188,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 742,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778123553,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 202,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 150,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 64,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 178,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 184,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 980,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778123548,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 150,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 177,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 126,
+                        "xp_earned": 220,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 192,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 153,
+                        "xp_earned": 146,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 306,
+                        "xp_earned": 220,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 978,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778122303,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 612,
+                        "xp_earned": 82,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 90,
+                        "xp_earned": 54,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 228,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 408,
+                        "xp_earned": 164,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 204,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 792,
+                "level_ups": 1
+            }
+        ],
+        "last_daily_date": "2026-05-09",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 1,
+        "total_money_earned": 124566,
+        "mail_read_dev": false,
+        "mail_dev_content_read": "Just checking if this command works, sorry for the ping!",
+        "_display_name": "Hypernimtz"
+    },
+    "1275952632367681566": {
+        "money": 101010400,
+        "level": 1000,
+        "xp": 240,
+        "inv": [],
+        "gems": 1100,
+        "premium": false,
+        "hunt_cd": 1777950262.4623752,
+        "daily_cd": 0,
+        "color": "green",
+        "tribe": null,
+        "tribe_inv": null,
+        "biome": "village",
+        "verify": {
+            "needed": false,
+            "time": 238,
+            "code": "X5C7"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {
+            "Crow": {
+                "count": 2,
+                "total_earned": 70,
+                "tools": {
+                    "Bare Hands": 2
+                }
+            },
+            "Stray Dog": {
+                "count": 1,
+                "total_earned": 55,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            }
+        },
+        "servers": [
+            "1498817571409887352"
+        ],
+        "total_caught": 3,
+        "daily_last_claim_date_utc": "",
+        "daily_streak": 0,
+        "mail_dev_content_read": ""
+    },
+    "922684194377850911": {
+        "money": 49080449,
+        "level": 10000,
+        "xp": 6700,
+        "inv": [
+            "Sparrow",
+            "Rabbit",
+            "Mouse",
+            "Bear",
+            "Pheasant",
+            "Owl",
+            "Bear",
+            "Wild Boar",
+            "Pheasant",
+            "Pheasant",
+            "Hare",
+            "Badger",
+            "Deer",
+            "Hare",
+            "Badger",
+            "Bear",
+            "Badger",
+            "Badger",
+            "Deer",
+            "Pheasant",
+            "Lynx",
+            "Lynx",
+            "Elk",
+            "Owl",
+            "Wild Boar",
+            "Owl",
+            "Wolf",
+            "Bear",
+            "Pheasant",
+            "Wild Boar"
+        ],
+        "gems": 100000247,
+        "premium": false,
+        "hunt_cd": 1778350215.6523786,
+        "daily_cd": 0,
+        "color": "#FFB9FF",
+        "tribe": null,
+        "tribe_inv": "Developers",
+        "biome": "forest",
+        "verify": {
+            "needed": false,
+            "time": 115,
+            "code": "dFMx"
+        },
+        "boosts": {
+            "luck": 50,
+            "sell": 50,
+            "xp": 10
+        },
+        "idle": {
+            "active": true,
+            "stacks": 2,
+            "started_at": 1778230889.7522397
+        },
+        "tool": "Shotgun",
+        "owned_tools": [
+            "Bare Hands",
+            "Shotgun"
+        ],
+        "prestige": 0,
+        "record": {
+            "Rabbit": {
+                "count": 18,
+                "total_earned": 2264,
+                "tools": {
+                    "Bare Hands": 10,
+                    "Shotgun": 8
+                }
+            },
+            "Stray Cat": {
+                "count": 10,
+                "total_earned": 936,
+                "tools": {
+                    "Bare Hands": 6,
+                    "Shotgun": 4
+                }
+            },
+            "Mouse": {
+                "count": 19,
+                "total_earned": 873,
+                "tools": {
+                    "Bare Hands": 8,
+                    "Shotgun": 11
+                }
+            },
+            "Rat": {
+                "count": 9,
+                "total_earned": 381,
+                "tools": {
+                    "Bare Hands": 5,
+                    "Shotgun": 4
+                }
+            },
+            "Crow": {
+                "count": 11,
+                "total_earned": 582,
+                "tools": {
+                    "Bare Hands": 8,
+                    "Shotgun": 3
+                }
+            },
+            "Fox": {
+                "count": 14,
+                "total_earned": 3024,
+                "tools": {
+                    "Bare Hands": 7,
+                    "Shotgun": 7
+                }
+            },
+            "Squirrel": {
+                "count": 12,
+                "total_earned": 644,
+                "tools": {
+                    "Bare Hands": 4,
+                    "Shotgun": 8
+                }
+            },
+            "Stray Dog": {
+                "count": 15,
+                "total_earned": 960,
+                "tools": {
+                    "Bare Hands": 11,
+                    "Shotgun": 4
+                }
+            },
+            "Sparrow": {
+                "count": 15,
+                "total_earned": 392,
+                "tools": {
+                    "Bare Hands": 8,
+                    "Shotgun": 7
+                }
+            },
+            "Pigeon": {
+                "count": 8,
+                "total_earned": 174,
+                "tools": {
+                    "Bare Hands": 4,
+                    "Shotgun": 4
+                }
+            },
+            "Bear": {
+                "count": 4,
+                "total_earned": 7200,
+                "tools": {
+                    "Shotgun": 4
+                }
+            },
+            "Pheasant": {
+                "count": 5,
+                "total_earned": 2475,
+                "tools": {
+                    "Shotgun": 5
+                }
+            },
+            "Owl": {
+                "count": 3,
+                "total_earned": 2970,
+                "tools": {
+                    "Shotgun": 3
+                }
+            },
+            "Wild Boar": {
+                "count": 3,
+                "total_earned": 1890,
+                "tools": {
+                    "Shotgun": 3
+                }
+            },
+            "Hare": {
+                "count": 2,
+                "total_earned": 540,
+                "tools": {
+                    "Shotgun": 2
+                }
+            },
+            "Badger": {
+                "count": 4,
+                "total_earned": 1950,
+                "tools": {
+                    "Shotgun": 4
+                }
+            },
+            "Deer": {
+                "count": 2,
+                "total_earned": 1350,
+                "tools": {
+                    "Shotgun": 2
+                }
+            },
+            "Lynx": {
+                "count": 2,
+                "total_earned": 1050,
+                "tools": {
+                    "Shotgun": 2
+                }
+            },
+            "Elk": {
+                "count": 1,
+                "total_earned": 300,
+                "tools": {
+                    "Shotgun": 1
+                }
+            },
+            "Wolf": {
+                "count": 1,
+                "total_earned": 1350,
+                "tools": {
+                    "Shotgun": 1
+                }
+            }
+        },
+        "servers": [
+            "1497616131475902644",
+            "1500344303296188446"
+        ],
+        "total_caught": 158,
+        "log": [
+            {
+                "ts": 1778350212,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Bear",
+                        "sell_value": 1800,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pheasant",
+                        "sell_value": 495,
+                        "xp_earned": 88,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Wild Boar",
+                        "sell_value": 810,
+                        "xp_earned": 62,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 254,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778350157,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Wild Boar",
+                        "sell_value": 810,
+                        "xp_earned": 70,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Owl",
+                        "sell_value": 990,
+                        "xp_earned": 26,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Wolf",
+                        "sell_value": 1350,
+                        "xp_earned": 32,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 128,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778321415,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Lynx",
+                        "sell_value": 525,
+                        "xp_earned": 50,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Elk",
+                        "sell_value": 300,
+                        "xp_earned": 59,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Owl",
+                        "sell_value": 990,
+                        "xp_earned": 70,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 179,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778301665,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Deer",
+                        "sell_value": 675,
+                        "xp_earned": 48,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pheasant",
+                        "sell_value": 495,
+                        "xp_earned": 64,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Lynx",
+                        "sell_value": 525,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 160,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778301582,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Bear",
+                        "sell_value": 1800,
+                        "xp_earned": 108,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Badger",
+                        "sell_value": 585,
+                        "xp_earned": 116,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Badger",
+                        "sell_value": 585,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 270,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778301554,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Deer",
+                        "sell_value": 675,
+                        "xp_earned": 110,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Hare",
+                        "sell_value": 405,
+                        "xp_earned": 42,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Badger",
+                        "sell_value": 195,
+                        "xp_earned": 57,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 209,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778301534,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Pheasant",
+                        "sell_value": 495,
+                        "xp_earned": 24,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Hare",
+                        "sell_value": 135,
+                        "xp_earned": 38,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Badger",
+                        "sell_value": 585,
+                        "xp_earned": 24,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 86,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778298927,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Bear",
+                        "sell_value": 1800,
+                        "xp_earned": 34,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Wild Boar",
+                        "sell_value": 270,
+                        "xp_earned": 52,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Pheasant",
+                        "sell_value": 495,
+                        "xp_earned": 70,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 156,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778298298,
+                "biome": "forest",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Bear",
+                        "sell_value": 1800,
+                        "xp_earned": 120,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pheasant",
+                        "sell_value": 495,
+                        "xp_earned": 116,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Owl",
+                        "sell_value": 990,
+                        "xp_earned": 76,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 312,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778231266,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 27,
+                        "xp_earned": 33,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 360,
+                        "xp_earned": 24,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 37,
+                        "xp_earned": 22,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 79,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778231261,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 81,
+                        "xp_earned": 62,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 156,
+                        "xp_earned": 114,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 111,
+                        "xp_earned": 106,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 282,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778231193,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 111,
+                        "xp_earned": 76,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 180,
+                        "xp_earned": 60,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 111,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 182,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778231190,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 180,
+                        "xp_earned": 86,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 135,
+                        "xp_earned": 94,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 30,
+                        "xp_earned": 31,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 211,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778231184,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 27,
+                        "xp_earned": 52,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 270,
+                        "xp_earned": 34,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 37,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 121,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230994,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 88,
+                        "xp_earned": 29,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 22,
+                        "xp_earned": 43,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 93,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230990,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 132,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 33,
+                        "xp_earned": 23,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 33,
+                        "xp_earned": 14,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 84,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230986,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 38,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 88,
+                        "xp_earned": 38,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 264,
+                        "xp_earned": 56,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 113,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230983,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 22,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 66,
+                        "xp_earned": 29,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 60,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 93,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230979,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 27,
+                        "xp_earned": 49,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 57,
+                        "xp_earned": 52,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 88,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 120,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230973,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 24,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 27,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 27,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 101,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230968,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 132,
+                        "xp_earned": 31,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 27,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 90,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230965,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 81,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 396,
+                        "xp_earned": 78,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 19,
+                        "xp_earned": 53,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 235,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230961,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 44,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 22,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 19,
+                        "xp_earned": 58,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 150,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230955,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 38,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 180,
+                        "xp_earned": 52,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 60,
+                        "xp_earned": 12,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 111,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230952,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 132,
+                        "xp_earned": 44,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 44,
+                        "xp_earned": 26,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 27,
+                        "xp_earned": 58,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 128,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230948,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 88,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 132,
+                        "xp_earned": 43,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 88,
+                        "xp_earned": 32,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 110,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230838,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 60,
+                        "xp_earned": 28,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rat",
+                        "sell_value": 30,
+                        "xp_earned": 29,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 18,
+                        "xp_earned": 51,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 108,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230834,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 180,
+                        "xp_earned": 114,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 80,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 192,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230828,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 120,
+                        "xp_earned": 33,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 20,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 18,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 90,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230755,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Rat",
+                        "sell_value": 30,
+                        "xp_earned": 18,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 18,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230752,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 35,
+                        "xp_earned": 10,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 10,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230748,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 80,
+                        "xp_earned": 29,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 29,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230744,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 80,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 17,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230741,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 35,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 17,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230737,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 35,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230733,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 36,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 36,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230730,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 43,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 43,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230726,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 13,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 13,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230723,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 20,
+                        "xp_earned": 50,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 50,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230719,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 35,
+                        "xp_earned": 24,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 24,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230694,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 35,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230690,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 35,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 42,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230687,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Rat",
+                        "sell_value": 30,
+                        "xp_earned": 15,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 15,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230683,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 60,
+                        "xp_earned": 24,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 24,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230679,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 75,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 68,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230675,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 22,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 22,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230671,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Crow",
+                        "sell_value": 105,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 50,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230668,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 27,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 27,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230652,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 80,
+                        "xp_earned": 40,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 40,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778230649,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 60,
+                        "xp_earned": 15,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 15,
+                "level_ups": 0
+            }
+        ],
+        "daily_streak": 2,
+        "last_daily_date": "2026-05-09",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 17790,
+        "mail_read_dev": false,
+        "mail_dev_content_read": "",
+        "_display_name": "r\ud806\udcf2mi"
+    },
+    "1360803643934113972": {
+        "money": 45440455270,
+        "level": 1,
+        "xp": 706,
+        "inv": [
+            "Stray Dog",
+            "Mouse",
+            "Stray Cat",
+            "Stray Cat",
+            "Mouse",
+            "Rabbit",
+            "Mouse"
+        ],
+        "gems": 0,
+        "premium": false,
+        "hunt_cd": 1778344829.9855063,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": "GOLDEN KNIGHT",
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 231,
+            "code": "gfCU"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": true,
+            "stacks": 8,
+            "started_at": 1777781236.1541522
+        },
+        "tool": "Shotgun",
+        "owned_tools": [
+            "Bare Hands",
+            "Shotgun"
+        ],
+        "prestige": 0,
+        "record": {
+            "Crow": {
+                "count": 1,
+                "total_earned": 35,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            },
+            "Fox": {
+                "count": 1,
+                "total_earned": 360,
+                "tools": {
+                    "Shotgun": 1
+                }
+            },
+            "Rabbit": {
+                "count": 2,
+                "total_earned": 480,
+                "tools": {
+                    "Shotgun": 2
+                }
+            },
+            "Rat": {
+                "count": 1,
+                "total_earned": 90,
+                "tools": {
+                    "Shotgun": 1
+                }
+            },
+            "Stray Dog": {
+                "count": 1,
+                "total_earned": 165,
+                "tools": {
+                    "Shotgun": 1
+                }
+            },
+            "Mouse": {
+                "count": 3,
+                "total_earned": 225,
+                "tools": {
+                    "Shotgun": 3
+                }
+            },
+            "Stray Cat": {
+                "count": 2,
+                "total_earned": 360,
+                "tools": {
+                    "Shotgun": 2
+                }
+            }
+        },
+        "servers": [
+            "1500344303296188446"
+        ],
+        "total_caught": 11,
+        "mail_dev_content_read": "",
+        "log": [
+            {
+                "ts": 1778344826,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 75,
+                        "xp_earned": 110,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 240,
+                        "xp_earned": 38,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 75,
+                        "xp_earned": 68,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 216,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778344819,
+                "biome": "village",
+                "tool": "Shotgun",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 75,
+                        "xp_earned": 58,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 180,
+                        "xp_earned": 62,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 180,
+                        "xp_earned": 86,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 206,
+                "level_ups": 0
+            }
+        ],
+        "daily_streak": 0,
+        "last_daily_date": "",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 825,
+        "mail_read_dev": false,
+        "_display_name": "Golden Knight (Quit Fighting)"
+    },
+    "1199593017603006534": {
+        "money": 11798,
+        "level": 1,
+        "xp": 44,
+        "inv": [
+            "Pigeon"
+        ],
+        "gems": 200,
+        "premium": false,
+        "hunt_cd": 1778124116.4945886,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": null,
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 246,
+            "code": "Q2Z3"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {
+            "Pigeon": {
+                "count": 1,
+                "total_earned": 20,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            }
+        },
+        "servers": [
+            "1500344303296188446",
+            "1401681247180296315"
+        ],
+        "total_caught": 1,
+        "daily_last_claim_date_utc": "",
+        "daily_streak": 1,
+        "log": [
+            {
+                "ts": 1778124113,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 20,
+                        "xp_earned": 44,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 44,
+                "level_ups": 0
+            }
+        ],
+        "last_daily_date": "2026-05-07",
+        "mail_dev_content_read": ""
+    },
+    "1338235291370000397": {
+        "money": 109430,
+        "level": 49,
+        "xp": 1197,
+        "inv": [
+            "Porcupine",
+            "Grouse",
+            "Wild Turkey",
+            "Coyote",
+            "Coyote",
+            "Black Bear",
+            "Grouse",
+            "Raccoon",
+            "Moose",
+            "Raccoon",
+            "Moose",
+            "Snapping Turtle",
+            "Timber Wolf",
+            "Moose",
+            "Grouse",
+            "Porcupine",
+            "Timber Wolf",
+            "Mink",
+            "Black Bear",
+            "Timber Wolf",
+            "Porcupine",
+            "Moose",
+            "Grouse",
+            "Wild Turkey",
+            "Coyote",
+            "Coyote",
+            "Coyote",
+            "Coyote",
+            "Mink",
+            "Moose",
+            "Coyote",
+            "Grouse",
+            "Moose",
+            "Moose",
+            "Raccoon",
+            "Coyote",
+            "Timber Wolf",
+            "Mink",
+            "Coyote",
+            "Raccoon",
+            "Black Bear",
+            "Wild Turkey",
+            "Moose",
+            "Black Bear",
+            "Moose",
+            "Mink",
+            "Grouse",
+            "Raccoon",
+            "Moose",
+            "Grouse",
+            "Coyote",
+            "Wild Turkey",
+            "Black Bear",
+            "Snapping Turtle",
+            "Coyote",
+            "Moose",
+            "Grouse",
+            "Snapping Turtle",
+            "Raccoon",
+            "Porcupine",
+            "Grouse",
+            "Grouse",
+            "Porcupine",
+            "Raccoon",
+            "Coyote",
+            "Snapping Turtle",
+            "Black Bear",
+            "Timber Wolf",
+            "Mink",
+            "Coyote",
+            "Raccoon",
+            "Snapping Turtle",
+            "Grouse",
+            "Coyote",
+            "Wild Turkey",
+            "Raccoon",
+            "Black Bear",
+            "Raccoon",
+            "Mink",
+            "Black Bear",
+            "Coyote",
+            "Wild Turkey",
+            "Black Bear",
+            "Moose",
+            "Coyote",
+            "Wild Turkey",
+            "Snapping Turtle",
+            "Moose",
+            "Timber Wolf",
+            "Porcupine",
+            "Moose",
+            "Coyote",
+            "Mink",
+            "Mink",
+            "Porcupine",
+            "Coyote",
+            "Porcupine",
+            "Porcupine",
+            "Grouse",
+            "Snapping Turtle",
+            "Grouse",
+            "Porcupine"
+        ],
+        "gems": 0,
+        "premium": false,
+        "hunt_cd": 1778375076.9028423,
+        "daily_cd": 0,
+        "color": "orange",
+        "biome": "woods",
+        "tribe": "7A",
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 231,
+            "code": "UX0e"
+        },
+        "boosts": {
+            "luck": 5,
+            "sell": 20,
+            "xp": 0
+        },
+        "idle": {
+            "active": true,
+            "stacks": 5,
+            "started_at": 1778364644.4765587
+        },
+        "tool": "Crossbow",
+        "owned_tools": [
+            "Bare Hands",
+            "Spear",
+            "Shortbow",
+            "Longbow",
+            "Crossbow"
+        ],
+        "prestige": 0,
+        "record": {
+            "Pigeon": {
+                "count": 21,
+                "total_earned": 596,
+                "tools": {
+                    "Bare Hands": 2,
+                    "Spear": 19
+                }
+            },
+            "Crow": {
+                "count": 38,
+                "total_earned": 1834,
+                "tools": {
+                    "Bare Hands": 5,
+                    "Spear": 33
+                }
+            },
+            "Stray Cat": {
+                "count": 28,
+                "total_earned": 3132,
+                "tools": {
+                    "Bare Hands": 1,
+                    "Spear": 27
+                }
+            },
+            "Rabbit": {
+                "count": 30,
+                "total_earned": 3248,
+                "tools": {
+                    "Bare Hands": 4,
+                    "Spear": 26
+                }
+            },
+            "Fox": {
+                "count": 31,
+                "total_earned": 5592,
+                "tools": {
+                    "Bare Hands": 1,
+                    "Spear": 30
+                }
+            },
+            "Mouse": {
+                "count": 27,
+                "total_earned": 1105,
+                "tools": {
+                    "Bare Hands": 1,
+                    "Spear": 26
+                }
+            },
+            "Rat": {
+                "count": 33,
+                "total_earned": 1548,
+                "tools": {
+                    "Bare Hands": 2,
+                    "Spear": 31
+                }
+            },
+            "Sparrow": {
+                "count": 32,
+                "total_earned": 966,
+                "tools": {
+                    "Bare Hands": 1,
+                    "Spear": 31
+                }
+            },
+            "Stray Dog": {
+                "count": 27,
+                "total_earned": 1914,
+                "tools": {
+                    "Bare Hands": 1,
+                    "Spear": 26
+                }
+            },
+            "Squirrel": {
+                "count": 28,
+                "total_earned": 1824,
+                "tools": {
+                    "Spear": 28
+                }
+            },
+            "Wolf": {
+                "count": 50,
+                "total_earned": 22320,
+                "tools": {
+                    "Spear": 22,
+                    "Shortbow": 28
+                }
+            },
+            "Deer": {
+                "count": 33,
+                "total_earned": 7380,
+                "tools": {
+                    "Spear": 10,
+                    "Shortbow": 23
+                }
+            },
+            "Owl": {
+                "count": 55,
+                "total_earned": 19800,
+                "tools": {
+                    "Spear": 17,
+                    "Shortbow": 38
+                }
+            },
+            "Elk": {
+                "count": 51,
+                "total_earned": 14160,
+                "tools": {
+                    "Spear": 24,
+                    "Shortbow": 27
+                }
+            },
+            "Bear": {
+                "count": 42,
+                "total_earned": 24960,
+                "tools": {
+                    "Spear": 12,
+                    "Shortbow": 30
+                }
+            },
+            "Pheasant": {
+                "count": 57,
+                "total_earned": 9636,
+                "tools": {
+                    "Spear": 17,
+                    "Shortbow": 40
+                }
+            },
+            "Lynx": {
+                "count": 47,
+                "total_earned": 24780,
+                "tools": {
+                    "Spear": 18,
+                    "Shortbow": 29
+                }
+            },
+            "Hare": {
+                "count": 45,
+                "total_earned": 5508,
+                "tools": {
+                    "Spear": 19,
+                    "Shortbow": 26
+                }
+            },
+            "Badger": {
+                "count": 45,
+                "total_earned": 8580,
+                "tools": {
+                    "Spear": 15,
+                    "Shortbow": 30
+                }
+            },
+            "Wild Boar": {
+                "count": 50,
+                "total_earned": 13392,
+                "tools": {
+                    "Spear": 21,
+                    "Shortbow": 29
+                }
+            },
+            "Wild Turkey": {
+                "count": 90,
+                "total_earned": 34800,
+                "tools": {
+                    "Shortbow": 7,
+                    "Longbow": 52,
+                    "Crossbow": 31
+                }
+            },
+            "Timber Wolf": {
+                "count": 87,
+                "total_earned": 63180,
+                "tools": {
+                    "Shortbow": 4,
+                    "Longbow": 41,
+                    "Crossbow": 42
+                }
+            },
+            "Black Bear": {
+                "count": 98,
+                "total_earned": 95040,
+                "tools": {
+                    "Shortbow": 5,
+                    "Longbow": 58,
+                    "Crossbow": 35
+                }
+            },
+            "Snapping Turtle": {
+                "count": 86,
+                "total_earned": 43680,
+                "tools": {
+                    "Shortbow": 8,
+                    "Longbow": 50,
+                    "Crossbow": 28
+                }
+            },
+            "Grouse": {
+                "count": 107,
+                "total_earned": 37548,
+                "tools": {
+                    "Shortbow": 5,
+                    "Longbow": 64,
+                    "Crossbow": 38
+                }
+            },
+            "Mink": {
+                "count": 93,
+                "total_earned": 58080,
+                "tools": {
+                    "Shortbow": 4,
+                    "Longbow": 54,
+                    "Crossbow": 35
+                }
+            },
+            "Raccoon": {
+                "count": 99,
+                "total_earned": 32400,
+                "tools": {
+                    "Shortbow": 4,
+                    "Longbow": 58,
+                    "Crossbow": 37
+                }
+            },
+            "Porcupine": {
+                "count": 86,
+                "total_earned": 26400,
+                "tools": {
+                    "Shortbow": 4,
+                    "Longbow": 50,
+                    "Crossbow": 32
+                }
+            },
+            "Coyote": {
+                "count": 114,
+                "total_earned": 46800,
+                "tools": {
+                    "Shortbow": 4,
+                    "Longbow": 66,
+                    "Crossbow": 44
+                }
+            },
+            "Moose": {
+                "count": 84,
+                "total_earned": 64800,
+                "tools": {
+                    "Shortbow": 5,
+                    "Longbow": 47,
+                    "Crossbow": 32
+                }
+            }
+        },
+        "servers": [
+            "1401681247180296315",
+            "1432194282235887738"
+        ],
+        "total_caught": 1714,
+        "log": [
+            {
+                "ts": 1778375073,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 756,
+                        "xp_earned": 42,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 31,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 73,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375069,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 70,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375065,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 30,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 30,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 60,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375061,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 792,
+                        "xp_earned": 32,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 12,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 44,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375057,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Mink",
+                        "sell_value": 1440,
+                        "xp_earned": 28,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 76,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375053,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 1800,
+                        "xp_earned": 40,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 57,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375049,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 540,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 52,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 100,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375045,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 41,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 50,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 91,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375041,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 18,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 300,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 57,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375037,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 24,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 45,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375033,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 300,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 56,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375029,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 46,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 85,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375025,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 24,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 71,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375021,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 300,
+                        "xp_earned": 29,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 71,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375017,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 54,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 44,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 98,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375013,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 12,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 16,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 28,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375009,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 63,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778375005,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 2160,
+                        "xp_earned": 46,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 540,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 88,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778375001,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 37,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 85,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374977,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 52,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 31,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 83,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374973,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 48,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 65,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374969,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 32,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 51,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374965,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 54,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 73,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374961,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 46,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 50,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 96,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374957,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 25,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 72,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374953,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 22,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 900,
+                        "xp_earned": 50,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 72,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374949,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 11,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 32,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374945,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 756,
+                        "xp_earned": 94,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 17,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 111,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374941,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 1800,
+                        "xp_earned": 38,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 27,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 65,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374937,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 27,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 2160,
+                        "xp_earned": 64,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 91,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374933,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 35,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 300,
+                        "xp_earned": 43,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 78,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374929,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 34,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 240,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 76,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374925,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 1620,
+                        "xp_earned": 82,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 33,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 115,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374921,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 720,
+                        "xp_earned": 104,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 25,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 129,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374917,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 37,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 84,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374913,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 28,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 70,
+                "level_ups": 1
+            },
+            {
+                "ts": 1778374909,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 41,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 14,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 55,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374905,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 20,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 51,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 71,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374901,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 54,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 20,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 74,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374897,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 300,
+                        "xp_earned": 23,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 44,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374893,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 39,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 78,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374889,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 540,
+                        "xp_earned": 38,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 57,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374885,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 540,
+                        "xp_earned": 47,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Mink",
+                        "sell_value": 480,
+                        "xp_earned": 51,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 98,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374881,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 49,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Porcupine",
+                        "sell_value": 264,
+                        "xp_earned": 14,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 63,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374877,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Timber Wolf",
+                        "sell_value": 540,
+                        "xp_earned": 51,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 36,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 87,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374868,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 41,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Snapping Turtle",
+                        "sell_value": 420,
+                        "xp_earned": 21,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 62,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374862,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Moose",
+                        "sell_value": 600,
+                        "xp_earned": 51,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 720,
+                        "xp_earned": 34,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 85,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374857,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Grouse",
+                        "sell_value": 252,
+                        "xp_earned": 49,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Raccoon",
+                        "sell_value": 720,
+                        "xp_earned": 40,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 89,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374850,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 45,
+                        "is_rare": false
+                    },
+                    {
+                        "animal": "Black Bear",
+                        "sell_value": 720,
+                        "xp_earned": 20,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 65,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778374845,
+                "biome": "woods",
+                "tool": "Crossbow",
+                "catches": [
+                    {
+                        "animal": "Wild Turkey",
+                        "sell_value": 900,
+                        "xp_earned": 76,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Coyote",
+                        "sell_value": 360,
+                        "xp_earned": 33,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 109,
+                "level_ups": 0
+            }
+        ],
+        "daily_streak": 1,
+        "last_daily_date": "2026-05-09",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 1287805,
+        "mail_read_dev": false,
+        "mail_dev_content_read": "",
+        "_display_name": "tissue",
+        "tribe_inv_read": false
+    },
+    "1206829042607718464": {
+        "money": 10000,
+        "level": 1,
+        "xp": 416,
+        "inv": [
+            "Mouse",
+            "Fox",
+            "Mouse",
+            "Stray Dog",
+            "Squirrel",
+            "Squirrel",
+            "Squirrel",
+            "Pigeon",
+            "Stray Cat",
+            "Mouse",
+            "Sparrow",
+            "Mouse",
+            "Pigeon",
+            "Mouse",
+            "Squirrel"
+        ],
+        "gems": 100,
+        "premium": false,
+        "hunt_cd": 1778361712.362048,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": null,
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 224,
+            "code": "2Y1H"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {
+            "Mouse": {
+                "count": 5,
+                "total_earned": 125,
+                "tools": {
+                    "Bare Hands": 5
+                }
+            },
+            "Fox": {
+                "count": 1,
+                "total_earned": 120,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            },
+            "Stray Dog": {
+                "count": 1,
+                "total_earned": 55,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            },
+            "Squirrel": {
+                "count": 4,
+                "total_earned": 160,
+                "tools": {
+                    "Bare Hands": 4
+                }
+            },
+            "Pigeon": {
+                "count": 2,
+                "total_earned": 40,
+                "tools": {
+                    "Bare Hands": 2
+                }
+            },
+            "Stray Cat": {
+                "count": 1,
+                "total_earned": 60,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            },
+            "Sparrow": {
+                "count": 1,
+                "total_earned": 18,
+                "tools": {
+                    "Bare Hands": 1
+                }
+            }
+        },
+        "servers": [
+            "1500344303296188446"
+        ],
+        "total_caught": 15,
+        "log": [
+            {
+                "ts": 1778361709,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 45,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 45,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361704,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 13,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 13,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361701,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 20,
+                        "xp_earned": 20,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 20,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361696,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 36,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 36,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361693,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 18,
+                        "xp_earned": 19,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 19,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361689,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 42,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 42,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361685,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 60,
+                        "xp_earned": 27,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 27,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361679,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 20,
+                        "xp_earned": 38,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 38,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361674,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 13,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 13,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361668,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 33,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 33,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778361664,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 40,
+                        "xp_earned": 26,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 26,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778354682,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 55,
+                        "xp_earned": 43,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 43,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778354678,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 30,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 30,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778354674,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Fox",
+                        "sell_value": 120,
+                        "xp_earned": 18,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 18,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778354671,
+                "biome": "village",
+                "tool": "Bare Hands",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 25,
+                        "xp_earned": 13,
+                        "is_rare": false
+                    }
+                ],
+                "total_xp": 13,
+                "level_ups": 0
+            }
+        ],
+        "daily_streak": 0,
+        "last_daily_date": "",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 578,
+        "mail_read_dev": false,
+        "mail_dev_content_read": "",
+        "_display_name": "versailles"
+    },
+    "1161861348385378334": {
+        "money": 10000,
+        "level": 1,
+        "xp": 0,
+        "inv": [],
+        "gems": 100,
+        "premium": false,
+        "hunt_cd": 0,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": null,
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 250,
+            "code": "uaNR"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {},
+        "servers": [],
+        "total_caught": 0,
+        "log": [],
+        "daily_streak": 0,
+        "last_daily_date": "",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 0,
+        "mail_read_dev": false,
+        "mail_dev_content_read": ""
+    },
+    "1323902714299678805": {
+        "money": 10000,
+        "level": 1,
+        "xp": 0,
+        "inv": [],
+        "gems": 200,
+        "premium": false,
+        "hunt_cd": 0,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": null,
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 250,
+            "code": "PaIx"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {},
+        "servers": [],
+        "total_caught": 0,
+        "log": [],
+        "daily_streak": 0,
+        "last_daily_date": "",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 0,
+        "mail_read_dev": false,
+        "mail_dev_content_read": "",
+        "gift_mails": [
+            {
+                "sender_id": "1286458710146940980",
+                "sender_name": "Hypernimtz",
+                "fmt": "gems",
+                "amt_str": "\ud83d\udc8e 100",
+                "message": "Play Idle Hunter my man",
+                "ts": 1778302781,
+                "read": false
+            }
+        ]
+    },
+    "1128780466087006218": {
+        "money": 10000,
+        "level": 1,
+        "xp": 0,
+        "inv": [],
+        "gems": 100,
+        "premium": false,
+        "hunt_cd": 0,
+        "daily_cd": 0,
+        "color": "green",
+        "biome": "village",
+        "tribe": null,
+        "tribe_inv": null,
+        "verify": {
+            "needed": false,
+            "time": 249,
+            "code": "0XLr"
+        },
+        "boosts": {
+            "luck": 0,
+            "sell": 0,
+            "xp": 0
+        },
+        "idle": {
+            "active": false,
+            "stacks": 0,
+            "started_at": 0
+        },
+        "tool": "Bare Hands",
+        "owned_tools": [
+            "Bare Hands"
+        ],
+        "prestige": 0,
+        "record": {},
+        "servers": [
+            "1497616131475902644"
+        ],
+        "total_caught": 0,
+        "log": [],
+        "daily_streak": 0,
+        "last_daily_date": "",
+        "joined_date": "2026-05-09",
+        "best_daily_streak": 0,
+        "total_money_earned": 0,
+        "mail_read_dev": false,
+        "mail_dev_content_read": ""
+    }
+}
