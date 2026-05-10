@@ -33,6 +33,7 @@ def is_admin(interaction: discord.Interaction) -> bool:
 
 maintenance_mode = False
 maintenance_warning = False
+maintenance_message = ""
 maintenance_channels: set[int] = set()  # channels where maintenance msg was sent
 
 # ─────────────────────────────────────────────
@@ -642,7 +643,7 @@ async def send_ephemeral_embed(interaction: discord.Interaction, description: st
 
 async def check_maintenance(interaction: discord.Interaction) -> bool:
     """Returns True (and responds) if in maintenance mode. Adds channel to set."""
-    global maintenance_mode, maintenance_channels
+    global maintenance_mode, maintenance_channels, maintenance_message
     if not maintenance_mode:
         return False
     if interaction.channel_id:
@@ -652,6 +653,7 @@ async def check_maintenance(interaction: discord.Interaction) -> bool:
             title="🔧 Bot Maintenance",
             description=(
                 "**Idle Hunter is currently under maintenance.**\n\n"
+                f"Reason: {maintenance_message}\n"
                 "Our team is working hard to improve your hunting experience.\n"
                 "Please be patient — we'll be back shortly!\n\n"
                 "-# All your data is safe. See you soon, hunter. 🏕️"
@@ -3163,16 +3165,18 @@ async def help_cmd(interaction: discord.Interaction):
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
-@app_commands.describe(time="Number of minutes from now until maintenance mode starts")
-async def bot_shutdown_cmd(interaction: discord.Interaction, time: int):
-    global maintenance_mode, maintenance_warning, maintenance_channels
+@app_commands.describe(time="Number of minutes from now until maintenance mode starts", message="Reason about why the maintenance will start")
+async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message = str):
+    global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
     user_id = str(interaction.user.id)
     init_user(user_id)
     maintenance_warning = True
+    maintenance_message = message
     announcement = discord.Embed(
         title = f"🔧 Bot Maintenance Starting in {time} minutes",
         description = (
             "**Idle Hunter is going into maintenance mode.**\n\n"
+            f"Reason: {maintenance_message}\n"
             f"All commands are now temporarily disabled in {time} minutes.\n"
             "Sorry for this interruption.\n" 
             "Please do not use any limited or boosts.\n\n"
@@ -3214,13 +3218,14 @@ async def bot_shutdown_cmd(interaction: discord.Interaction, time: int):
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
 async def bot_resume_cmd(interaction: discord.Interaction):
-    global maintenance_mode, maintenance_channels
+    global maintenance_mode, maintenance_channels, maintenance_warning, maintenanc_message
 
     user_id = str(interaction.user.id)
     init_user(user_id)
 
     maintenance_mode = False
-
+    maintenance_warning = False
+    maintenance_message = ""
     announcement = discord.Embed(
         title="✅ Bot Back Online",
         description=(
