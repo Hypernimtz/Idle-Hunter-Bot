@@ -3165,52 +3165,55 @@ async def help_cmd(interaction: discord.Interaction):
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
-@app_commands.describe(time="Number of minutes from now until maintenance mode starts", message="Reason about why the maintenance will start")
+@app_commands.describe(
+    time="Minutes until maintenance starts",
+    message="Reason for maintenance"
+)
 async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message: str):
     global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
-    user_id = str(interaction.user.id)
-    init_user(user_id)
+
     maintenance_warning = True
     maintenance_message = message
-    announcement = discord.Embed(
-        title = f"🔧 Bot Maintenance Starting in {time} minutes",
-        description = (
-            "**Idle Hunter is going into maintenance mode.**\n\n"
-            f"Reason: {maintenance_message}\n"
-            f"All commands are now temporarily disabled in {time} minutes.\n"
-            "Sorry for this interruption.\n" 
-            "Please do not use any limited or boosts.\n\n"
-            "-# We will be back soon!"
+
+    start_embed = discord.Embed(
+        title=f"🔧 Maintenance Starting in {time} minutes",
+        description=(
+            "**Idle Hunter will enter maintenance soon.**\n\n"
+            f"Reason: {message}\n"
+            "Please finish your actions."
         ),
         color=discord.Color.orange()
     )
-    await asyncio.sleep(time * 60)
 
-    maintenance_mode = True
-    # Announce in all known channels where users have run commands
-    announcement = discord.Embed(
-        title="🔧 Bot Maintenance Started",
-        description=(
-            "**Idle Hunter is going into maintenance mode.**\n\n"
-            "All commands are now temporarily disabled.\n"
-            "Your data is safe — we'll be back soon!\n\n"
-            "-# Thank you for your patience. 🏕️"
-        ),
-        color=discord.Color.red()
-    )
-    for channel_id in list(maintenance_channels):
-        try:
+    await interaction.response.send_message(embed=start_embed)
+
+    async def start_maintenance():
+        await asyncio.sleep(time * 60)
+
+        global maintenance_mode
+        maintenance_mode = True
+
+        started_embed = discord.Embed(
+            title="🔧 Bot Maintenance Started",
+            description=(
+                "**Idle Hunter is now in maintenance mode.**\n\n"
+                f"Reason: {message}\n\n"
+                "All commands are disabled.\n"
+                "Data is safe.\n\n"
+                "-# Thanks for your patience 🏕️"
+            ),
+            color=discord.Color.red()
+        )
+
+        for channel_id in list(maintenance_channels):
             channel = bot.get_channel(channel_id)
             if channel:
-                await interaction.channel.send(embed=announcement)
-        except Exception:
-            pass
-    # Also send in the owner's channel
-    try:
-        await interaction.response.send_message(embed=announcement)
-        maintenance_channels.add(interaction.channel.id)
-    except Exception:
-        pass
+                try:
+                    await channel.send(embed=started_embed)
+                except Exception:
+                    pass
+
+    bot.loop.create_task(start_maintenance())
 
 
 @bot.tree.command(name="bot_resume", description="Resumes the bot after maintenance")
