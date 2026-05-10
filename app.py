@@ -673,9 +673,11 @@ async def maybe_send_mail_notification(interaction: discord.Interaction, user_id
     if not has_new_mail_notice(user_id):
         return
 
+    mail_cmd_id = COMMAND_ID["mail"]
+
     embed = discord.Embed(
         title="📬 You have new mail!",
-        description="Use </mail:{COMMAND_ID["mail"]}> to check your mailbox.",
+        description=f"Use </mail:{mail_cmd_id}> to check your mailbox.",
         color=discord.Color.yellow(),
     )
 
