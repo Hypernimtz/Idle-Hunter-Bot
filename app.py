@@ -40,6 +40,7 @@ maintenance_channels: set[int] = set()  # channels where maintenance msg was sen
 # ─────────────────────────────────────────────
 
 DEV_MAIL = ""   # Set via .setdevmail command
+DEV_MAIL_FILE = "dev_mail.json"
 
 # ─────────────────────────────────────────────
 # TIPS
@@ -158,6 +159,22 @@ def load_data_tribe():
 
 tribe_data = load_data_tribe()
 
+def save_dev_mail() -> None:
+    with open(DEV_MAIL_FILE, "w", encoding="utf-8") as f:
+        json.dump({"message": DEV_MAIL}, f, indent=4)
+
+def load_dev_mail() -> str:
+    try:
+        with open(DEV_MAIL_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return str(payload.get("message", "") or "")
+        return ""
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+
+DEV_MAIL = load_dev_mail()
+
 # ─────────────────────────────────────────────
 # VERIFY HELPERS
 # ─────────────────────────────────────────────
@@ -192,8 +209,9 @@ def init_user(user_id: str):
         "joined_date": today,
         "best_daily_streak": 0,
         "total_money_earned": 0,
-        "mail_read_dev": False,   # tracks if current DEV_MAIL has been read
-        "mail_dev_content_read": "",  # stores which dev mail message was read
+        "mail_read_dev": False,
+        "mail_dev_content_read": "",
+        "mail_dev_notice_seen": "",
     }
     if user_id not in data:
         data[user_id] = dict(defaults)
@@ -386,6 +404,35 @@ def has_unread_mail(user_id: str) -> bool:
     # Dev mail
     if DEV_MAIL and d.get("mail_dev_content_read", "") != DEV_MAIL:
         return True
+    return False
+
+def has_new_mail_notice(user_id: str) -> bool:
+    """Returns True only when there is unread mail that has not already triggered a notice."""
+    d = data[user_id]
+
+    if (
+        DEV_MAIL
+        and d.get("mail_dev_content_read", "") != DEV_MAIL
+        and d.get("mail_dev_notice_seen", "") != DEV_MAIL
+    ):
+        return True
+
+    tribe_inv = d.get("tribe_inv")
+    if (
+        tribe_inv
+        and not d.get("tribe_inv_read", False)
+        and d.get("tribe_inv_notice_seen", "") != tribe_inv
+    ):
+        return True
+
+    gifts = d.get("gift_mails", [])
+    unread_gifts = [g for g in gifts if not g.get("read", False)]
+
+    if unread_gifts:
+        gift_notice_key = str(max(g.get("ts", 0) for g in unread_gifts))
+        if d.get("gift_mail_notice_seen", "") != gift_notice_key:
+            return True
+
     return False
 
 def mail_tab_style(user_id: str, tab: str) -> int:
@@ -614,22 +661,40 @@ async def check_maintenance(interaction: discord.Interaction) -> bool:
 # ─────────────────────────────────────────────
 
 async def maybe_send_mail_notification(interaction: discord.Interaction, user_id: str):
-    """Sends a mail ping in the channel if user has unread mail."""
-    if not has_unread_mail(user_id):
+    """Sends one ephemeral notice for unread mail without marking the mail itself as read."""
+    init_user(user_id)
+
+    if not has_new_mail_notice(user_id):
         return
-    if interaction.channel is None:
-        return
+
+    embed = discord.Embed(
+        title="📬 You have new mail!",
+        description="Use `/mail` to check your mailbox.",
+        color=discord.Color.yellow(),
+    )
+
     try:
-        await interaction.channel.send(
-            content=f"<@{user_id}>",
-            embed=discord.Embed(
-                title="📬 You have unread mail!",
-                description="Use `/mail` to check your mailbox.",
-                color=discord.Color.yellow()
-            )
-        )
-    except Exception:
-        pass
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        print("Mail notification error:", e)
+        return
+
+    d = data[user_id]
+
+    if DEV_MAIL and d.get("mail_dev_content_read", "") != DEV_MAIL:
+        d["mail_dev_notice_seen"] = DEV_MAIL
+
+    tribe_inv = d.get("tribe_inv")
+    if tribe_inv and not d.get("tribe_inv_read", False):
+        d["tribe_inv_notice_seen"] = tribe_inv
+
+    gifts = d.get("gift_mails", [])
+    unread_gifts = [g for g in gifts if not g.get("read", False)]
+    if unread_gifts:
+        gift_notice_key = str(max(g.get("ts", 0) for g in unread_gifts))
+        d["gift_mail_notice_seen"] = gift_notice_key
+
+    save_data_users()
 
 # ─────────────────────────────────────────────
 # BACK-STACK
@@ -2292,6 +2357,10 @@ async def on_interaction(interaction: discord.Interaction):
 
         if parts[1] == "tab":
             tab = parts[2]
+
+            if tab == "dev" and DEV_MAIL:
+                data[owner_id]["mail_dev_content_read"] = DEV_MAIL
+
             await update_v2(interaction, build_mail_components(owner_id, tab))
             save_data_users()
             return
@@ -2787,7 +2856,6 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
     if data[user_id]["verify"]["needed"]:
         await interaction.response.send_message(embed=verify_needed_embed(user_id), ephemeral=True)
         return None
-    await maybe_send_mail_notification(interaction, user_id)
     return user_id
 
 
@@ -2799,6 +2867,7 @@ async def menu_cmd(interaction: discord.Interaction):
     if not user_id: return
     _nav_stack[user_id] = ["menu"]
     await send_v2(interaction, build_menu_components(user_id, interaction.user.display_name))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="profile", description="View your hunter profile (or another player's)")
@@ -2813,6 +2882,7 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
     init_user(target_id)
     nav_push(viewer_id, "profile")
     await send_v2(interaction, build_profile_components(target_id, target.display_name))
+    await maybe_send_mail_notification(interaction, viewer_id)
 
 
 @bot.tree.command(name="hunt", description="Go hunting in your current biome!")
@@ -2837,6 +2907,7 @@ async def hunt_cmd(interaction: discord.Interaction):
     data[user_id]["_display_name"] = interaction.user.display_name
     nav_push(user_id, "hunt")
     await send_v2(interaction, build_hunt_components(user_id, result))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="shop", description="Buy boosts and tools")
@@ -2847,6 +2918,7 @@ async def shop_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "shop")
     await send_v2(interaction, build_shop_components(user_id, "boosts"))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="biome", description="Choose your hunting biome")
@@ -2857,6 +2929,7 @@ async def biome_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "biome")
     await send_v2(interaction, build_biome_panel_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="color", description="Change your embed color (cosmetic only)")
@@ -2867,6 +2940,7 @@ async def color_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "color")
     await send_v2(interaction, build_color_panel_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="tools", description="Equip your hunting tools")
@@ -2877,6 +2951,7 @@ async def tools_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "tools")
     await send_v2(interaction, build_tools_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="idle", description="Manage idle income stacks")
@@ -2887,6 +2962,7 @@ async def idle_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "idle")
     await send_v2(interaction, build_idle_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="daily", description="Claim your daily reward")
@@ -2897,6 +2973,7 @@ async def daily_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "daily")
     await send_v2(interaction, build_daily_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="prestige", description="Reset for a permanent boost multiplier")
@@ -2907,6 +2984,7 @@ async def prestige_cmd(interaction: discord.Interaction):
     if not user_id: return
     nav_push(user_id, "prestige")
     await send_v2(interaction, build_prestige_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="mail", description="Check your mailbox (tribe invites, gifts, dev mail)")
@@ -2960,6 +3038,7 @@ async def leaderboard_cmd(interaction: discord.Interaction):
     if not user_id: return
     _lb_state[user_id] = {"mode": "hunter", "scope": "global", "stat": "Level", "page": 0, "guild": interaction.guild}
     await send_v2(interaction, build_leaderboard_v2_components(user_id, interaction.guild, "hunter", "global", "Level", 0))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="record", description="View a hunter's catch record book")
@@ -2975,6 +3054,7 @@ async def record_cmd(interaction: discord.Interaction, user: discord.User = None
     data[target_id]["_display_name"] = target.display_name
     _record_state[viewer_id] = {"target_id": target_id, "biome_idx": 0}
     await send_v2(interaction, build_record_standalone_v2_components(viewer_id, target_id, 0))
+    await maybe_send_mail_notification(interaction, viewer_id)
 
 
 @bot.tree.command(name="log", description="View your recent hunt log")
@@ -2985,6 +3065,7 @@ async def log_cmd(interaction: discord.Interaction):
     if not user_id: return
     _log_state[user_id] = 0
     await send_v2(interaction, build_log_standalone_v2_components(user_id, 0))
+    await maybe_send_mail_notification(interaction, user_id)
 
 
 @bot.tree.command(name="gift", description="Gift money or gems to another player")
@@ -3019,6 +3100,7 @@ async def gift_cmd(interaction: discord.Interaction, user: discord.User, format:
     # Show confirm panel
     nav_push(sender_id, "gift")
     await send_v2(interaction, build_gift_confirm_components(sender_id, user, format, parsed, sent_message))
+    await maybe_send_mail_notification(interaction, sender_id)
 
 
 @bot.tree.command(name="verify", description="Verify you're not an autoclicker!")
@@ -3078,6 +3160,7 @@ async def help_cmd(interaction: discord.Interaction):
     init_user(user_id)
     nav_push(user_id, "help")
     await send_v2(interaction, build_help_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 # ─────────────────────────────────────────────
 # ADMIN COMMANDS
@@ -3182,11 +3265,22 @@ async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
     user_id = str(interaction.user.id)
     init_user(user_id)
 
-    DEV_MAIL = message.strip()
+    new_mail = message.strip()
+    old_mail = DEV_MAIL
+    changed = new_mail != old_mail
 
-    # Mark all users as unread for the new mail
-    for uid in data:
-        data[uid]["mail_dev_content_read"] = ""
+    DEV_MAIL = new_mail
+    save_dev_mail()
+
+    if changed:
+        for uid in data:
+            data[uid]["mail_dev_content_read"] = ""
+            data[uid]["mail_dev_notice_seen"] = ""
+
+    if not DEV_MAIL:
+        for uid in data:
+            data[uid]["mail_dev_content_read"] = ""
+            data[uid]["mail_dev_notice_seen"] = ""
 
     save_data_users()
 
