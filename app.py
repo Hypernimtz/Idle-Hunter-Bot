@@ -1390,7 +1390,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
             if atype != current_type:
                 current_type = atype
                 compat_tools = ", ".join(AMMO_TYPE_TOOLS.get(atype, []))
-                lines.append(f"\n**— {AMMO_TYPE_LABELS[atype]} —** *(for: {compat_tools})*")
+                lines.append(f"**— {AMMO_TYPE_LABELS[atype]} —** *(for: {compat_tools})*")
             owned_qty = d.get("ammo_inv", {}).get(name, 0)
             ps = f"◈ {a['price']:,}/shot" if a["currency"] == "money" else f"💎{a['price']}/shot"
             boosts_str = (
@@ -1409,7 +1409,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                 "description": f"{boosts_str}"[:100],
             })
         comps = [
-            {"type": 10, "content": "### 🏪 Shop — Ammo\n" + "\n".join(lines)},
+            {"type": 10, "content": "### 🏪 Shop — Ammo\n" + "\n\n".join(line.strip() for line in lines if line.strip())},
             {"type": 14, "divider": True, "spacing": 1},
             tab_row,
             {"type": 14, "divider": True, "spacing": 1},
