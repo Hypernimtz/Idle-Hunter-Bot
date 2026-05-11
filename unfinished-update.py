@@ -3054,4 +3054,704 @@ class CustomColorModal(discord.ui.Modal, title="Custom Embed Color"):
         save_data_users()
         await update_v2(interaction, build_color_panel_components(self.user_id))
 
-# Continue from class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
+class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
+    qty_input = discord.ui.TextInput(
+        label="How many shots to buy?",
+        placeholder="e.g. 100",
+        required=True,
+        max_length=6,
+    )
+
+    def __init__(self, user_id: str, ammo_name: str):
+        super().__init__()
+        self.user_id   = str(user_id)
+        self.ammo_name = ammo_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = self.qty_input.value.strip()
+        if not raw.isdigit() or int(raw) <= 0:
+            await send_ephemeral_embed(interaction, "❌ Enter a positive whole number.", discord.Color.red())
+            return
+
+        qty  = min(int(raw), AMMO_MAX_STACK)
+        a    = AMMO.get(self.ammo_name)
+        if not a:
+            await send_ephemeral_embed(interaction, "❌ Unknown ammo.", discord.Color.red())
+            return
+
+        total_cost = a["price"] * qty
+        currency   = a["currency"]   # "money" or "gems"
+        icon       = "◈" if currency == "money" else "💎"
+
+        if data[self.user_id][currency] < total_cost:
+            await send_ephemeral_embed(
+                interaction,
+                f"❌ Need {icon} {total_cost:,} to buy {qty}× {self.ammo_name}.",
+                discord.Color.red(),
+            )
+            return
+
+        data[self.user_id][currency] -= total_cost
+        inv = data[self.user_id].setdefault("ammo_inv", {})
+        inv[self.ammo_name] = min(inv.get(self.ammo_name, 0) + qty, AMMO_MAX_STACK)
+        save_data_users()
+
+        await update_v2(interaction, build_shop_components(self.user_id, "ammo"))
+
+
+class TribeInviteModal(discord.ui.Modal, title="Invite a Player"):
+    uid_input = discord.ui.TextInput(label="User ID", placeholder="123456789012345678", required=True, max_length=100)
+    def __init__(self, user_id, tribe_name):
+        super().__init__(); self.user_id = str(user_id); self.tribe_name = tribe_name
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = self.uid_input.value.strip()
+        if raw.startswith("<@") and raw.endswith(">"):
+            raw = raw.replace("<@", "").replace("!", "").replace(">", "").strip()
+        if not raw.isdigit():
+            await send_ephemeral_embed(interaction, "❌ Invalid user ID.", discord.Color.red()); return
+        if raw == self.user_id:
+            await send_ephemeral_embed(interaction, "❌ Can't invite yourself.", discord.Color.red()); return
+        init_user(raw)
+        if data[raw].get("tribe"):
+            await send_ephemeral_embed(interaction, "❌ Already in a tribe.", discord.Color.red()); return
+        if data[raw].get("tribe_inv"):
+            await send_ephemeral_embed(interaction, "❌ Already has a pending invite.", discord.Color.red()); return
+        td    = tribe_data[self.tribe_name]
+        total = 1 + len(td["roles"]["officer"]) + len(td["roles"]["members"])
+        if total >= td["max_members"]:
+            await send_ephemeral_embed(interaction, "❌ Tribe is full.", discord.Color.red()); return
+        td.setdefault("invites", []).append(raw)
+        data[raw]["tribe_inv"]      = self.tribe_name
+        data[raw]["tribe_inv_read"] = False
+        save_data_users(); save_data_tribe()
+        try:
+            target_user = await bot.fetch_user(int(raw))
+            await target_user.send(embed=discord.Embed(
+                title=f"{TRIBE_EMOJIS['invite']} Tribe Invite",
+                description=(
+                    f"You've been invited to **{self.tribe_name}** by **{interaction.user.display_name}**!\n\n"
+                    f"Use `/mail` to accept or decline."
+                ),
+                color=v2_color(self.user_id)))
+        except Exception:
+            pass
+        await send_ephemeral_embed(interaction, f"✅ Invite sent to <@{raw}>.", discord.Color.green())
+
+
+class TribeSetDescModal(discord.ui.Modal, title="Set Tribe Description"):
+    desc_input = discord.ui.TextInput(label="Description", placeholder="Enter a description...",
+                                       required=True, max_length=200, style=discord.TextStyle.paragraph)
+    def __init__(self, user_id, tribe_name):
+        super().__init__(); self.user_id = str(user_id); self.tribe_name = tribe_name
+    async def on_submit(self, interaction: discord.Interaction):
+        tribe_data[self.tribe_name]["description"] = self.desc_input.value
+        save_data_tribe()
+        await update_v2(interaction, build_tribe_components(self.user_id, self.tribe_name, "actions"))
+
+
+class TribeLeaveLeaderModal(discord.ui.Modal, title="Assign New Leader Before Leaving"):
+    uid_input = discord.ui.TextInput(label="New Leader User ID", placeholder="123456789012345678", required=True, max_length=20)
+    def __init__(self, user_id, tribe_name):
+        super().__init__(); self.user_id = str(user_id); self.tribe_name = tribe_name
+    async def on_submit(self, interaction: discord.Interaction):
+        target  = self.uid_input.value.strip()
+        td      = tribe_data[self.tribe_name]
+        all_ids = td["roles"]["officer"] + td["roles"]["members"]
+        if target not in all_ids:
+            await send_ephemeral_embed(interaction, "❌ That user is not a tribe member.", discord.Color.red()); return
+        for role in ("officer", "members"):
+            if target in td["roles"][role]:        td["roles"][role].remove(target)
+            if self.user_id in td["roles"][role]:  td["roles"][role].remove(self.user_id)
+        td["roles"]["leader"] = target
+        data[self.user_id]["tribe"] = None
+        save_data_users(); save_data_tribe()
+        await update_v2(interaction, build_menu_components(self.user_id, interaction.user.display_name))
+
+
+class TribeCreateModal(discord.ui.Modal, title="Create a Tribe"):
+    name_input = discord.ui.TextInput(label="Tribe Name", placeholder="Enter your tribe name...", required=True, max_length=32)
+    desc_input = discord.ui.TextInput(label="Description", placeholder="Optional...", required=False, max_length=200, style=discord.TextStyle.paragraph)
+    def __init__(self, user_id):
+        super().__init__(); self.user_id = str(user_id)
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self.name_input.value.strip()
+        if name in tribe_data:
+            await send_ephemeral_embed(interaction, "❌ Tribe name taken.", discord.Color.red()); return
+        init_tribe(name, self.user_id)
+        tribe_data[name]["description"] = self.desc_input.value.strip()
+        save_data_tribe()
+        await update_v2(interaction, build_tribe_components(self.user_id, name, "main"))
+
+
+# ─────────────────────────────────────────────
+# SLASH COMMANDS
+# ─────────────────────────────────────────────
+
+async def _common_init(interaction: discord.Interaction) -> str | None:
+    """
+    Defers the interaction, runs maintenance check, initialises user.
+    Returns user_id on success, None if blocked.
+    For maintenance WARNING mode, sends the panel normally then fires
+    an ephemeral followup warning (option B).
+    """
+    global maintenance_mode, maintenance_warning, maintenance_message, _maintenance_warned
+
+    # Always defer first so we can use followup freely afterwards
+    await interaction.response.defer()
+
+    if interaction.channel_id:
+        maintenance_channels.add(interaction.channel_id)
+
+    # Full maintenance — block entirely
+    if maintenance_mode:
+        await interaction.followup.send(
+            embed=discord.Embed(
+                title="🔧 Bot Maintenance",
+                description=(
+                    "**Idle Hunter is currently under maintenance.**\n\n"
+                    f"Reason: {maintenance_message}\n"
+                    "Our team is working hard to improve your hunting experience.\n"
+                    "Please be patient — we'll be back shortly!\n\n"
+                    "-# All your data is safe. See you soon, hunter. 🏕️"
+                ),
+                color=discord.Color.orange(),
+            ),
+            ephemeral=True,
+        )
+        return None
+
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+    await update_user_servers(user_id, interaction.guild)
+    tick_verify(user_id)
+
+    if data[user_id]["verify"]["needed"]:
+        await interaction.followup.send(embed=verify_needed_embed(user_id), ephemeral=True)
+        return None
+
+    # Warning mode — let the command run, but fire one ephemeral notice per user
+    if maintenance_warning and user_id not in _maintenance_warned:
+        _maintenance_warned.add(user_id)
+        try:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    title="⚠️ Maintenance Soon",
+                    description=(
+                        "**Idle Hunter will enter maintenance shortly.**\n\n"
+                        f"Reason: {maintenance_message}\n\n"
+                        "Please finish any important actions before the bot goes offline.\n"
+                        "-# You will only see this message once."
+                    ),
+                    color=discord.Color.yellow(),
+                ),
+                ephemeral=True,
+            )
+        except Exception:
+            pass
+
+    return user_id
+
+
+# Because we now defer in _common_init, send_v2 / update_v2 won't work for
+# the *initial* panel (the interaction is already deferred, not a fresh one).
+# We use interaction.followup.send with the v2 flags instead.
+
+async def send_v2_followup(interaction: discord.Interaction, components: list):
+    """Send the initial panel after a defer via followup (flags=32768)."""
+    await interaction.followup.send(components=components, flags=32768)   # type: ignore[arg-type]
+
+
+@bot.tree.command(name="menu", description="Open the main hunter menu")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def menu_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    _nav_stack[user_id] = ["menu"]
+    await send_v2_followup(interaction, build_menu_components(user_id, interaction.user.display_name))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="profile", description="View your hunter profile (or another player's)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(user="User to view (leave empty for yourself)")
+async def profile_cmd(interaction: discord.Interaction, user: discord.User = None):
+    viewer_id = await _common_init(interaction)
+    if not viewer_id: return
+    target    = user or interaction.user
+    target_id = str(target.id)
+    init_user(target_id)
+    nav_push(viewer_id, "profile")
+    await send_v2_followup(interaction, build_profile_components(target_id, target.display_name))
+    await maybe_send_mail_notification(interaction, viewer_id)
+
+
+@bot.tree.command(name="hunt", description="Go hunting in your current biome!")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def hunt_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    result = run_hunt(user_id)
+    if result.get("verify"):
+        await interaction.followup.send(embed=verify_needed_embed(user_id), ephemeral=True); return
+    if result.get("tool_locked"):
+        await interaction.followup.send(embed=discord.Embed(
+            description=f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. Use `/tools`.",
+            color=discord.Color.red()), ephemeral=True); return
+    if result.get("no_ammo"):
+        ran_out = result.get("ran_out", False)
+        atype   = result.get("ammo_type", "ammo")
+        msg     = (f"💥 You ran out of {atype}! Your ammo was unequipped.\n"
+                   if ran_out else
+                   f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in /shop → Ammo!")
+        await interaction.followup.send(embed=discord.Embed(description=msg, color=discord.Color.orange()), ephemeral=True); return
+    if not result["ok"]:
+        remaining = result.get("remaining", 3)
+        await interaction.followup.send(embed=discord.Embed(
+            description=f"⏳ Hunt again in **{remaining:.1f}s**.",
+            color=discord.Color.orange()), ephemeral=True); return
+    save_data_users()
+    data[user_id]["_display_name"] = interaction.user.display_name
+    nav_push(user_id, "hunt")
+    await send_v2_followup(interaction, build_hunt_components(user_id, result))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="shop", description="Buy boosts, tools and ammo")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def shop_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "shop")
+    await send_v2_followup(interaction, build_shop_components(user_id, "boosts"))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="biome", description="Choose your hunting biome")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def biome_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "biome")
+    await send_v2_followup(interaction, build_biome_panel_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="color", description="Change your embed color (cosmetic only)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def color_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "color")
+    await send_v2_followup(interaction, build_color_panel_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="tools", description="Equip your hunting tools and ammo")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def tools_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "tools")
+    await send_v2_followup(interaction, build_tools_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="idle", description="Manage idle income stacks")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def idle_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "idle")
+    await send_v2_followup(interaction, build_idle_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="daily", description="Claim your daily reward")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def daily_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "daily")
+    await send_v2_followup(interaction, build_daily_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="prestige", description="Reset for a permanent boost multiplier")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def prestige_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "prestige")
+    await send_v2_followup(interaction, build_prestige_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="mail", description="Check your mailbox (tribe invites, gifts, dev mail)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def mail_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "mail")
+    await send_v2_followup(interaction, build_mail_components(user_id, "tribe"))
+
+
+@bot.tree.command(name="tribe", description="View your current tribe and options")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def tribe_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    nav_push(user_id, "tribe")
+
+    tribe_nm  = data[user_id].get("tribe")
+    tribe_inv = data[user_id].get("tribe_inv")
+
+    if not tribe_nm and tribe_inv and tribe_inv in tribe_data:
+        await interaction.followup.send(embed=discord.Embed(
+            description="You have a pending tribe invite! Use `/mail` to accept or decline.",
+            color=discord.Color.yellow()), ephemeral=True)
+        return
+
+    if not tribe_nm or tribe_nm not in tribe_data:
+        view = discord.ui.View(timeout=60)
+        btn  = discord.ui.Button(label="🏕️ Create Tribe", style=discord.ButtonStyle.primary)
+        async def create_cb(i: discord.Interaction):
+            if str(i.user.id) != user_id:
+                await send_ephemeral_embed(i, "Not yours.", discord.Color.red()); return
+            await i.response.send_modal(TribeCreateModal(user_id))
+        btn.callback = create_cb; view.add_item(btn)
+        await interaction.followup.send(embed=discord.Embed(
+            title=f"{TRIBE_EMOJIS['tribe']} No Tribe",
+            description="You are not in a tribe! Create one or wait for an invite.",
+            color=v2_color(user_id)), view=view, ephemeral=True)
+        return
+
+    await send_v2_followup(interaction, build_tribe_components(user_id, tribe_nm, "main"))
+
+
+@bot.tree.command(name="leaderboard", description="View hunter and tribe leaderboards")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def leaderboard_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    _lb_state[user_id] = {"mode": "hunter", "scope": "global", "stat": "Level", "page": 0, "guild": interaction.guild}
+    await send_v2_followup(interaction, build_leaderboard_v2_components(user_id, interaction.guild, "hunter", "global", "Level", 0))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="record", description="View a hunter's catch record book")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(user="User to view (leave empty for yourself)")
+async def record_cmd(interaction: discord.Interaction, user: discord.User = None):
+    viewer_id = await _common_init(interaction)
+    if not viewer_id: return
+    target    = user or interaction.user
+    target_id = str(target.id)
+    init_user(target_id)
+    data[target_id]["_display_name"] = target.display_name
+    _record_state[viewer_id] = {"target_id": target_id, "biome_idx": 0}
+    await send_v2_followup(interaction, build_record_standalone_v2_components(viewer_id, target_id, 0))
+    await maybe_send_mail_notification(interaction, viewer_id)
+
+
+@bot.tree.command(name="log", description="View your recent hunt log")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def log_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    _log_state[user_id] = 0
+    await send_v2_followup(interaction, build_log_standalone_v2_components(user_id, 0))
+    await maybe_send_mail_notification(interaction, user_id)
+
+
+@bot.tree.command(name="gift", description="Gift money or gems to another player")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(
+    user="Who to gift",
+    format="money or gems",
+    amount="Amount (e.g. 1000, 2.5M, 1B)",
+    sent_message="Message to include with the gift"
+)
+@app_commands.choices(format=[
+    app_commands.Choice(name="Money (◈)", value="money"),
+    app_commands.Choice(name="Gems (💎)", value="gems"),
+])
+async def gift_cmd(interaction: discord.Interaction, user: discord.User, format: str, amount: str, sent_message: str):
+    sender_id = await _common_init(interaction)
+    if not sender_id: return
+    parsed = parse_amount(amount)
+    if parsed is None or parsed <= 0:
+        await interaction.followup.send(
+            embed=discord.Embed(description="❌ Invalid amount.", color=discord.Color.red()), ephemeral=True); return
+    receiver_id = str(user.id)
+    if receiver_id == sender_id:
+        await interaction.followup.send(
+            embed=discord.Embed(description="❌ You can't gift yourself.", color=discord.Color.red()), ephemeral=True); return
+    init_user(receiver_id)
+    icon = "◈" if format == "money" else "💎"
+    if data[sender_id][format] < parsed:
+        await interaction.followup.send(
+            embed=discord.Embed(description=f"❌ Not enough {icon}!", color=discord.Color.red()), ephemeral=True); return
+    nav_push(sender_id, "gift")
+    await send_v2_followup(interaction, build_gift_confirm_components(sender_id, user, format, parsed, sent_message))
+    await maybe_send_mail_notification(interaction, sender_id)
+
+
+@bot.tree.command(name="verify", description="Verify you're not an autoclicker!")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(code="Your 4-character verification code")
+async def verify_cmd(interaction: discord.Interaction, code: str):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+    v = data[user_id]["verify"]
+    if not v["needed"]:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="✅ You don't need to verify right now!", color=discord.Color.green()), ephemeral=True); return
+    if code.upper() == v["code"].upper():
+        v["needed"] = False; v["time"] = 250; v["code"] = generate_verify_code()
+        save_data_users()
+        await interaction.response.send_message(embed=discord.Embed(
+            title="✅ Verified!", description="Happy hunting!", color=discord.Color.green()), ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=discord.Embed(
+            title="❌ Wrong Code", description="Try again.", color=discord.Color.red()), ephemeral=True)
+
+
+@bot.tree.command(name="invite", description="Invite Idle Hunter to your server!")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def invite_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+    url1 = f"https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"
+    url2 = "https://discord.gg/X9JzdxeS8p"
+    await interaction.response.send_message(embed=discord.Embed(
+        title="🔗 Invite Idle Hunter",
+        description=f"[Click here to invite the bot!]({url1})\nJoin the support server: {url2}",
+        color=v2_color(user_id)), ephemeral=True)
+
+
+@bot.tree.command(name="id", description="Get a user's Discord ID")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(user="User to look up")
+async def id_cmd(interaction: discord.Interaction, user: discord.User = None):
+    viewer_id = str(interaction.user.id)
+    init_user(viewer_id)
+    target = user or interaction.user
+    await interaction.response.send_message(embed=discord.Embed(
+        title=f"{target.name}'s ID",
+        description=f"`{target.id}`\n-# Use this to invite players to your tribe.",
+        color=v2_color(viewer_id)), ephemeral=True)
+
+
+@bot.tree.command(name="help", description="View all available commands")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def help_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+    nav_push(user_id, "help")
+    await interaction.response.defer()
+    await send_v2_followup(interaction, build_help_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+# ─────────────────────────────────────────────
+# ADMIN COMMANDS
+# ─────────────────────────────────────────────
+
+@bot.tree.command(name="bot_shutdown", description="Shuts down the bot for maintenance")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+@app_commands.describe(
+    time="Minutes until maintenance starts",
+    message="Reason for maintenance"
+)
+async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message: str):
+    global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
+
+    maintenance_warning = True
+    maintenance_message = message
+
+    start_embed = discord.Embed(
+        title=f"🔧 Maintenance Starting in {time} minutes",
+        description=(
+            "**Idle Hunter will enter maintenance soon.**\n\n"
+            f"Reason: {message}\n"
+            "Please finish your actions."
+        ),
+        color=discord.Color.orange()
+    )
+
+    await interaction.response.send_message(embed=start_embed)
+
+    async def start_maintenance():
+        await asyncio.sleep(time * 60)
+        global maintenance_mode
+        maintenance_mode = True
+
+        started_embed = discord.Embed(
+            title="🔧 Bot Maintenance Started",
+            description=(
+                "**Idle Hunter is now in maintenance mode.**\n\n"
+                f"Reason: {message}\n\n"
+                "All commands are disabled.\n"
+                "Data is safe.\n\n"
+                "-# Thanks for your patience 🏕️"
+            ),
+            color=discord.Color.red()
+        )
+        for channel_id in list(maintenance_channels):
+            channel = bot.get_channel(channel_id)
+            if channel:
+                try:
+                    await channel.send(embed=started_embed)
+                except Exception:
+                    pass
+
+    bot.loop.create_task(start_maintenance())
+
+
+@bot.tree.command(name="bot_resume", description="Resumes the bot after maintenance")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+async def bot_resume_cmd(interaction: discord.Interaction):
+    global maintenance_mode, maintenance_channels, maintenance_warning, maintenance_message, _maintenance_warned
+
+    maintenance_mode    = False
+    maintenance_warning = False
+    maintenance_message = ""
+    _maintenance_warned.clear()
+
+    announcement = discord.Embed(
+        title="✅ Bot Back Online",
+        description=(
+            "**Idle Hunter is back online!**\n\n"
+            "All commands are now available again.\n"
+            "Happy hunting! 🏹"
+        ),
+        color=discord.Color.green()
+    )
+
+    for channel_id in list(maintenance_channels):
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                await channel.send(embed=announcement)
+            except Exception:
+                pass
+
+    maintenance_channels.clear()
+
+    try:
+        await interaction.response.send_message(embed=announcement)
+    except Exception:
+        pass
+
+
+@bot.tree.command(name="setdevmail", description="Sets the developer mail message")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+@app_commands.describe(message="The developer mail message")
+async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
+    global DEV_MAIL
+
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+
+    new_mail = message.strip()
+    old_mail = DEV_MAIL
+    changed  = new_mail != old_mail
+
+    DEV_MAIL = new_mail
+    save_dev_mail()
+
+    if changed or not DEV_MAIL:
+        for uid in data:
+            data[uid]["mail_dev_content_read"] = ""
+            data[uid]["mail_dev_notice_seen"]  = ""
+
+    save_data_users()
+
+    embed = discord.Embed(
+        title="📢 Dev Mail Set",
+        description=(
+            f"Message set to:\n\n{DEV_MAIL}"
+            if DEV_MAIL else
+            "Dev mail cleared."
+        ),
+        color=discord.Color.green()
+    )
+
+    try:
+        await interaction.user.send(embed=embed)
+    except Exception:
+        pass
+
+    try:
+        await interaction.response.send_message("✅ Developer mail updated.", ephemeral=True)
+    except Exception:
+        pass
+
+# ─────────────────────────────────────────────
+# AUTOSAVE
+# ─────────────────────────────────────────────
+
+@tasks.loop(seconds=5)
+async def autosave_users():
+    await asyncio.to_thread(save_data_users)
+
+@tasks.loop(seconds=5)
+async def autosave_tribes():
+    await asyncio.to_thread(save_data_tribe)
+
+@autosave_users.error
+async def _aue(e): print("Autosave users error:", e)
+
+@autosave_tribes.error
+async def _ate(e): print("Autosave tribes error:", e)
+
+# ─────────────────────────────────────────────
+# EVENTS
+# ─────────────────────────────────────────────
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} commands")
+    except Exception as e:
+        print("Sync failed:", e)
+    await bot.change_presence(activity=discord.Game(name="/menu | Idle Hunter"))
+    if not autosave_users.is_running():  autosave_users.start()
+    if not autosave_tribes.is_running(): autosave_tribes.start()
+    print("Autosave started.")
+
+# ─────────────────────────────────────────────
+# RUN
+# ─────────────────────────────────────────────
+
+from dotenv import load_dotenv
+import os
+load_dotenv("token.env")
+bot.run(os.getenv("TOKEN"))
