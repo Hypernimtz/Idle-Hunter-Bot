@@ -3257,8 +3257,16 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
 # We use interaction.followup.send with the v2 flags instead.
 
 async def send_v2_followup(interaction: discord.Interaction, components: list):
-    """Send the initial panel after a defer via followup (flags=32768)."""
-    await interaction.followup.send(components=components, flags=32768)   # type: ignore[arg-type]
+    """Send the initial panel after a defer via raw HTTP (flags=32768)."""
+    route = Route(
+        "POST", "/webhooks/{application_id}/{token}",
+        application_id=interaction.application_id,
+        token=interaction.token,
+    )
+    await interaction.client.http.request(
+        route,
+        json={"flags": V2_FLAGS, "components": components, "allowed_mentions": {"parse": []}}
+    )
 
 
 @bot.tree.command(name="menu", description="Open the main hunter menu")
