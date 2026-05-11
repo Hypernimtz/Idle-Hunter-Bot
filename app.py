@@ -1381,35 +1381,55 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         comps.append(_back_row(user_id))
 
     else:  # ammo tab
-        # Group ammo by type, show all
-        lines = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
-        buy_opts = []
+        header = f"**◈ {d['money']:,}** · 💎 **{d['gems']}**"
+        sections = []
         current_type = None
+        current_lines = []
+    
+        def flush_section():
+            if current_lines:
+                sections.append("\n".join(current_lines))
+    
         for name, a in AMMO.items():
             atype = a["ammo_type"]
             if atype != current_type:
+                flush_section()
+                current_lines = []
                 current_type = atype
                 compat_tools = ", ".join(AMMO_TYPE_TOOLS.get(atype, []))
-                lines.append(f"**— {AMMO_TYPE_LABELS[atype]} —** *(for: {compat_tools})*")
+                current_lines.append(f"**— {AMMO_TYPE_LABELS[atype]} —** *(for: {compat_tools})*")
             owned_qty = d.get("ammo_inv", {}).get(name, 0)
             ps = f"◈ {a['price']:,}/shot" if a["currency"] == "money" else f"💎{a['price']}/shot"
-            boosts_str = (
-                f"+{a['boost_luck']}% Luck · "
-                f"+{a['boost_sell']}% Sell · "
-                f"+{a['boost_xp']}% XP"
-            )
-            lines.append(
+            boosts_str = f"+{a['boost_luck']}% Luck · +{a['boost_sell']}% Sell · +{a['boost_xp']}% XP"
+            current_lines.append(
                 f"{a['emoji']} **{name}** — {ps} · Owned: **{owned_qty}**\n"
                 f"-# {a['description']}\n"
                 f"-# {boosts_str}"
             )
-            buy_opts.append({
-                "label": f"{name} — {ps}",
+        flush_section()
+    
+        buy_opts = [
+            {
+                "label": f"{name} — {'◈ ' + str(a['price']) + '/shot' if a['currency'] == 'money' else '💎' + str(a['price']) + '/shot'}",
                 "value": name,
-                "description": f"{boosts_str}"[:100],
-            })
-        comps = [
-            {"type": 10, "content": "### 🏪 Shop — Ammo\n" + "\n\n".join(line.strip() for line in lines if line.strip())},
+                "description": f"+{a['boost_luck']}% Luck · +{a['boost_sell']}% Sell · +{a['boost_xp']}% XP"[:100],
+            }
+            for name, a in AMMO.items()
+        ]
+    
+        # Split into multiple content blocks if needed to stay under 4000 chars
+        content_blocks = []
+        first_block = f"### 🏪 Shop — Ammo\n{header}"
+        content_blocks.append({"type": 10, "content": first_block})
+    
+        for section in sections:
+            if section.strip():
+                # chunk if over 4000
+                if len(section) > 4000:
+                    section = section[:3990] + "…"
+                content_blocks.append({"type": 10, "content": section})
+    
+        comps = content_blocks + [
             {"type": 14, "divider": True, "spacing": 1},
             tab_row,
             {"type": 14, "divider": True, "spacing": 1},
