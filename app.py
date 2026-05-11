@@ -2293,25 +2293,57 @@ def build_personal_leaderboard_components(user_id: str) -> list:
     ]}]
 
 # ── GIFT COMPONENTS ───────────────────────────
+import secrets
+gift_cache = {}
+
 def build_gift_confirm_components(sender_id: str, recipient: discord.User, format: str, parsed: int, message: str) -> list:
+    gift_id = secrets.token_hex(4)  # short safe ID
+
     amt_str = f"◈ {parsed:,}" if format == "money" else f"💎 {parsed:,}"
+
+    gift_cache[gift_id] = {
+        "sender_id": sender_id,
+        "recipient_id": recipient.id,
+        "format": format,
+        "parsed": parsed,
+        "message": message
+    }
+
     content = (
         f"### 🎁 Confirm Gift\n"
         f"Send **{amt_str}** to {recipient.mention}?\n\n"
         f"> {message}\n\n"
         f"-# This action cannot be undone."
     )
-    return [{"type": 17, "accent_color": _accent(sender_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
-        {"type": 14, "divider": True, "spacing": 1},
-        {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "✅ Confirm",
-             "custom_id": f"gift:confirm:{sender_id}:{recipient.id}:{format}:{parsed}:{message[:80]}",
-             "flow": {"actions": []}},
-            {"type": 2, "style": 4, "label": "❌ Cancel",
-             "custom_id": f"gift:cancel:{sender_id}", "flow": {"actions": []}},
-        ]},
-    ]}]
+
+    return [{
+        "type": 17,
+        "accent_color": _accent(sender_id),
+        "spoiler": False,
+        "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 3,
+                        "label": "✅ Confirm",
+                        "custom_id": f"gift:confirm:{gift_id}",
+                        "flow": {"actions": []}
+                    },
+                    {
+                        "type": 2,
+                        "style": 4,
+                        "label": "❌ Cancel",
+                        "custom_id": f"gift:cancel:{gift_id}",
+                        "flow": {"actions": []}
+                    },
+                ]
+            },
+        ]
+    }]
 
 def build_gift_sent_components(sender_id: str, recipient: discord.User, amt_str: str, bal_str: str, sent_message: str) -> list:
     content = (
@@ -2320,13 +2352,28 @@ def build_gift_sent_components(sender_id: str, recipient: discord.User, amt_str:
         f"Your balance: **{bal_str}**\n\n"
         f"Your sent message:\n> {sent_message}"
     )
-    return [{"type": 17, "accent_color": _accent(sender_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
-        {"type": 14, "divider": True, "spacing": 1},
-        {"type": 1, "components": [
-            {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{sender_id}", "flow": {"actions": []}}
-        ]},
-    ]}]
+
+    return [{
+        "type": 17,
+        "accent_color": _accent(sender_id),
+        "spoiler": False,
+        "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 2,
+                        "label": "◀ Menu",
+                        "custom_id": f"nav:menu:{sender_id}",
+                        "flow": {"actions": []}
+                    }
+                ]
+            },
+        ]
+    }]
 
 # ─────────────────────────────────────────────
 # NAVIGATION DISPATCHER
@@ -2730,26 +2777,73 @@ async def on_interaction(interaction: discord.Interaction):
 
     # ── GIFT CONFIRM ──────────────────────────
     if parts[0] == "gift":
-        owner_id = parts[2]
+        action = parts[1]
+        gift_id = parts[2]
+
+        gift_data = gift_cache.get(gift_id)
+
+        if not gift_data:
+            await send_ephemeral_embed(
+                interaction,
+                "❌ This gift confirmation expired.",
+                discord.Color.red()
+            )
+            return
+
+        owner_id = gift_data["sender_id"]
+
         if str(interaction.user.id) != owner_id:
-            await send_ephemeral_embed(interaction, "Not yours.", discord.Color.red()); return
+            await send_ephemeral_embed(
+                interaction,
+                "Not yours.",
+                discord.Color.red()
+            )
+            return
 
-        if parts[1] == "cancel":
-            await update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name)); return
+        if action == "cancel":
 
-        if parts[1] == "confirm":
-            recipient_id = parts[3]
-            fmt          = parts[4]
-            parsed       = int(parts[5])
-            message      = ":".join(parts[6:])
+            gift_cache.pop(gift_id, None)
+
+            await update_v2(
+                interaction,
+                build_menu_components(owner_id, interaction.user.display_name)
+            )
+            return
+
+        if action == "confirm":
+
+            recipient_id = str(gift_data["recipient_id"])
+            fmt          = gift_data["format"]
+            parsed       = int(gift_data["parsed"])
+            message      = gift_data["message"]
+
             init_user(recipient_id)
+
             icon = "◈" if fmt == "money" else "💎"
+
             if data[owner_id][fmt] < parsed:
-                await send_ephemeral_embed(interaction, f"❌ Not enough {icon}!", discord.Color.red()); return
+                await send_ephemeral_embed(
+                    interaction,
+                    f"❌ Not enough {icon}!",
+                    discord.Color.red()
+                )
+                return
+
             data[owner_id][fmt]     -= parsed
             data[recipient_id][fmt] += parsed
-            amt_str = f"◈ {parsed:,}" if fmt == "money" else f"💎 {parsed:,}"
-            bal_str = f"◈ {data[owner_id][fmt]:,}" if fmt == "money" else f"💎 {data[owner_id][fmt]:,}"
+
+            amt_str = (
+                f"◈ {parsed:,}"
+                if fmt == "money"
+                else f"💎 {parsed:,}"
+            )
+
+            bal_str = (
+                f"◈ {data[owner_id][fmt]:,}"
+                if fmt == "money"
+                else f"💎 {data[owner_id][fmt]:,}"
+            )
+
             gift_entry = {
                 "sender_id":   owner_id,
                 "sender_name": interaction.user.display_name,
@@ -2759,24 +2853,43 @@ async def on_interaction(interaction: discord.Interaction):
                 "ts":          int(time.time()),
                 "read":        False,
             }
+
             data[recipient_id].setdefault("gift_mails", []).insert(0, gift_entry)
             data[recipient_id]["gift_mails"] = data[recipient_id]["gift_mails"][:20]
+
             save_data_users()
+
             try:
                 recipient_user = await bot.fetch_user(int(recipient_id))
-                await recipient_user.send(embed=discord.Embed(
-                    title="🎁 You received a gift!",
-                    description=(
-                        f"**{interaction.user.display_name}** sent you **{amt_str}**!\n\n"
-                        f"> {message}\n\n"
-                        f"-# Use `/mail` to view your gift mail."
-                    ),
-                    color=discord.Color.green()
-                ))
+
+                await recipient_user.send(
+                    embed=discord.Embed(
+                        title="🎁 You received a gift!",
+                        description=(
+                            f"**{interaction.user.display_name}** sent you **{amt_str}**!\n\n"
+                            f"> {message}\n\n"
+                            f"-# Use `/mail` to view your gift mail."
+                        ),
+                        color=discord.Color.green()
+                    )
+                )
+
             except Exception:
                 pass
-            await update_v2(interaction, build_gift_sent_components(owner_id,
-                await bot.fetch_user(int(recipient_id)), amt_str, bal_str, message)); return
+
+            gift_cache.pop(gift_id, None)
+
+            await update_v2(
+                interaction,
+                build_gift_sent_components(
+                    owner_id,
+                    await bot.fetch_user(int(recipient_id)),
+                    amt_str,
+                    bal_str,
+                    message
+                )
+            )
+            return
 
     # ── TRIBE NAVIGATION ──────────────────────
     if parts[0] == "tribe":
