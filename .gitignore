@@ -1,3 +1,8 @@
+# JSON FILES specific to bot
+users_info.json
+tribe_info.json
+dev_mail.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
