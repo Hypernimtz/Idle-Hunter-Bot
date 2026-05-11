@@ -375,6 +375,7 @@ _log_state: dict[str, int] = {}
 _record_state: dict[str, dict] = {}
 _profile_log_page: dict[str, int] = {}
 _profile_record_page: dict[str, int] = {}
+_ammo_shop_page: dict[str, int] = {}
 
 # ─────────────────────────────────────────────
 # IDLE HELPERS
@@ -1381,57 +1382,67 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         comps.append(_back_row(user_id))
 
     else:  # ammo tab
-        header = f"**◈ {d['money']:,}** · 💎 **{d['gems']}**"
-        sections = []
-        current_type = None
-        current_lines = []
-    
-        def flush_section():
-            if current_lines:
-                sections.append("\n".join(current_lines))
-    
+        # Group ammo by type
+        grouped: dict[str, list[str]] = {}
         for name, a in AMMO.items():
-            atype = a["ammo_type"]
-            if atype != current_type:
-                flush_section()
-                current_lines = []
-                current_type = atype
-                compat_tools = ", ".join(AMMO_TYPE_TOOLS.get(atype, []))
-                current_lines.append(f"**— {AMMO_TYPE_LABELS[atype]} —** *(for: {compat_tools})*")
+            grouped.setdefault(a["ammo_type"], []).append(name)
+
+        ammo_types = list(grouped.keys())
+        # Get current page from a state dict
+        ammo_tab_page = _ammo_shop_page.get(user_id, 0)
+        ammo_tab_page = max(0, min(ammo_tab_page, len(ammo_types) - 1))
+
+        current_type = ammo_types[ammo_tab_page]
+        compat_tools = ", ".join(AMMO_TYPE_TOOLS.get(current_type, []))
+        ammo_names   = grouped[current_type]
+
+        lines = [
+            f"### 🏪 Shop — Ammo\n"
+            f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n\n"
+            f"**— {AMMO_TYPE_LABELS[current_type]} —** *(for: {compat_tools})*"
+        ]
+        for name in ammo_names:
+            a         = AMMO[name]
             owned_qty = d.get("ammo_inv", {}).get(name, 0)
-            ps = f"◈ {a['price']:,}/shot" if a["currency"] == "money" else f"💎{a['price']}/shot"
+            ps        = f"◈ {a['price']:,}/shot" if a["currency"] == "money" else f"💎{a['price']}/shot"
             boosts_str = f"+{a['boost_luck']}% Luck · +{a['boost_sell']}% Sell · +{a['boost_xp']}% XP"
-            current_lines.append(
+            lines.append(
                 f"{a['emoji']} **{name}** — {ps} · Owned: **{owned_qty}**\n"
                 f"-# {a['description']}\n"
                 f"-# {boosts_str}"
             )
-        flush_section()
-    
+
         buy_opts = [
             {
-                "label": f"{name} — {'◈ ' + str(a['price']) + '/shot' if a['currency'] == 'money' else '💎' + str(a['price']) + '/shot'}",
+                "label": f"{name} — {'◈ ' + str(AMMO[name]['price']) + '/shot' if AMMO[name]['currency'] == 'money' else '💎' + str(AMMO[name]['price']) + '/shot'}",
                 "value": name,
-                "description": f"+{a['boost_luck']}% Luck · +{a['boost_sell']}% Sell · +{a['boost_xp']}% XP"[:100],
+                "description": (f"+{AMMO[name]['boost_luck']}% Luck · +{AMMO[name]['boost_sell']}% Sell · +{AMMO[name]['boost_xp']}% XP")[:100],
             }
-            for name, a in AMMO.items()
+            for name in ammo_names
         ]
-    
-        # Split into multiple content blocks if needed to stay under 4000 chars
-        content_blocks = []
-        first_block = f"### 🏪 Shop — Ammo\n{header}"
-        content_blocks.append({"type": 10, "content": first_block})
-    
-        for section in sections:
-            if section.strip():
-                # chunk if over 4000
-                if len(section) > 4000:
-                    section = section[:3990] + "…"
-                content_blocks.append({"type": 10, "content": section})
-    
-        comps = content_blocks + [
+
+        type_nav_row = {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "◀ Prev Type",
+            "custom_id": f"shop:ammo_prev:{user_id}",
+            "disabled": ammo_tab_page == 0,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 2,
+            "label": f"{AMMO_TYPE_LABELS[current_type]} ({ammo_tab_page+1}/{len(ammo_types)})",
+            "custom_id": f"shop:ammo_noop:{user_id}",
+            "disabled": True,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 1, "label": "Next Type ▶",
+            "custom_id": f"shop:ammo_next:{user_id}",
+            "disabled": ammo_tab_page >= len(ammo_types) - 1,
+            "flow": {"actions": []}},
+        ]}
+
+        comps = [
+            {"type": 10, "content": "\n\n".join(lines)},
             {"type": 14, "divider": True, "spacing": 1},
             tab_row,
+            {"type": 14, "divider": True, "spacing": 1},
+            type_nav_row,
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [{"type": 3, "custom_id": f"shop:ammo_buy:{user_id}",
                 "placeholder": "Select ammo to buy...", "min_values": 1, "max_values": 1,
@@ -2581,12 +2592,16 @@ async def on_interaction(interaction: discord.Interaction):
             save_data_users()
             await update_v2(interaction, build_shop_components(owner_id, "tools")); return
 
-        if parts[1] == "ammo_buy":
-            # Opens a modal to enter quantity
-            ammo_name = values[0] if values else None
-            if not ammo_name or ammo_name not in AMMO:
-                await send_ephemeral_embed(interaction, "Unknown ammo.", discord.Color.red()); return
-            await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name)); return
+        if parts[1] == "ammo_prev":
+            _ammo_shop_page[owner_id] = max(0, _ammo_shop_page.get(owner_id, 0) - 1)
+            await update_v2(interaction, build_shop_components(owner_id, "ammo")); return
+
+        if parts[1] == "ammo_next":
+            _ammo_shop_page[owner_id] = _ammo_shop_page.get(owner_id, 0) + 1
+            await update_v2(interaction, build_shop_components(owner_id, "ammo")); return
+
+        if parts[1] == "ammo_noop":
+            await interaction.response.defer(); return
 
     # ── IDLE ──────────────────────────────────
     if parts[0] == "idle":
