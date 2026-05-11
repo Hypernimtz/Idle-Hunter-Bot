@@ -2592,6 +2592,13 @@ async def on_interaction(interaction: discord.Interaction):
             save_data_users()
             await update_v2(interaction, build_shop_components(owner_id, "tools")); return
 
+        if parts[1] == "ammo_buy":
+            # Opens a modal to enter quantity
+            ammo_name = values[0] if values else None
+            if not ammo_name or ammo_name not in AMMO:
+                await send_ephemeral_embed(interaction, "Unknown ammo.", discord.Color.red()); return
+            await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name)); return
+
         if parts[1] == "ammo_prev":
             _ammo_shop_page[owner_id] = max(0, _ammo_shop_page.get(owner_id, 0) - 1)
             await update_v2(interaction, build_shop_components(owner_id, "ammo")); return
