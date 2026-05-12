@@ -1,18 +1,36 @@
 {
     "1286458710146940980": {
-        "money": 54196000,
+        "money": 150969939,
         "level": 2600,
-        "xp": 100,
+        "xp": 3502,
         "inv": [
             "Stray Dog",
             "Crow",
             "Pigeon",
             "Stray Dog",
-            "Rat"
+            "Rat",
+            "Mouse",
+            "Squirrel",
+            "Crow",
+            "Fox",
+            "Stray Dog",
+            "Mouse",
+            "Stray Dog",
+            "Sparrow",
+            "Fox",
+            "Fox",
+            "Stray Cat",
+            "Sparrow",
+            "Pigeon",
+            "Squirrel",
+            "Squirrel",
+            "Rabbit",
+            "Sparrow",
+            "Squirrel"
         ],
-        "gems": 999988870,
+        "gems": 999923870,
         "premium": false,
-        "hunt_cd": 1778349753.7865636,
+        "hunt_cd": 1778472830.9352357,
         "daily_cd": 0,
         "color": "dark blue",
         "tribe": "7A",
@@ -20,20 +38,20 @@
         "biome": "village",
         "verify": {
             "needed": false,
-            "time": 147,
+            "time": 135,
             "code": "YcpT"
         },
         "idle": {
             "active": true,
-            "stacks": 9,
-            "started_at": 1778312090.9651203
+            "stacks": 11,
+            "started_at": 1778472727.240027
         },
         "boosts": {
             "luck": 50,
             "sell": 50,
             "xp": 50
         },
-        "tool": "Dragon Cannon",
+        "tool": "Cosmic RPG",
         "owned_tools": [
             "Bare Hands",
             "Cosmic RPG",
@@ -57,47 +75,47 @@
         "prestige": 1,
         "record": {
             "Sparrow": {
-                "count": 22,
-                "total_earned": 1980,
+                "count": 25,
+                "total_earned": 2331,
                 "tools": {
-                    "Cosmic RPG": 22
+                    "Cosmic RPG": 25
                 }
             },
             "Mouse": {
-                "count": 23,
-                "total_earned": 2898,
+                "count": 25,
+                "total_earned": 3228,
                 "tools": {
-                    "Cosmic RPG": 23
+                    "Cosmic RPG": 25
                 }
             },
             "Rabbit": {
-                "count": 26,
-                "total_earned": 10608,
+                "count": 27,
+                "total_earned": 11136,
                 "tools": {
-                    "Cosmic RPG": 26
+                    "Cosmic RPG": 27
                 }
             },
             "Fox": {
-                "count": 21,
-                "total_earned": 12852,
+                "count": 24,
+                "total_earned": 15228,
                 "tools": {
-                    "Cosmic RPG": 20,
+                    "Cosmic RPG": 23,
                     "Dragon Cannon": 1
                 }
             },
             "Stray Dog": {
-                "count": 20,
-                "total_earned": 5580,
+                "count": 22,
+                "total_earned": 6306,
                 "tools": {
-                    "Cosmic RPG": 17,
+                    "Cosmic RPG": 19,
                     "Dragon Cannon": 3
                 }
             },
             "Stray Cat": {
-                "count": 15,
-                "total_earned": 4590,
+                "count": 16,
+                "total_earned": 4986,
                 "tools": {
-                    "Cosmic RPG": 15
+                    "Cosmic RPG": 16
                 }
             },
             "Rat": {
@@ -109,25 +127,25 @@
                 }
             },
             "Crow": {
-                "count": 14,
-                "total_earned": 2478,
+                "count": 15,
+                "total_earned": 2709,
                 "tools": {
-                    "Cosmic RPG": 11,
+                    "Cosmic RPG": 12,
                     "Dragon Cannon": 3
                 }
             },
             "Squirrel": {
-                "count": 24,
-                "total_earned": 4896,
+                "count": 28,
+                "total_earned": 5952,
                 "tools": {
-                    "Cosmic RPG": 24
+                    "Cosmic RPG": 28
                 }
             },
             "Pigeon": {
-                "count": 14,
-                "total_earned": 1428,
+                "count": 15,
+                "total_earned": 1560,
                 "tools": {
-                    "Cosmic RPG": 13,
+                    "Cosmic RPG": 14,
                     "Dragon Cannon": 1
                 }
             }
@@ -140,10 +158,148 @@
             "1429567746924089416",
             "1453133433134911549"
         ],
-        "total_caught": 200,
+        "total_caught": 218,
         "daily_last_claim_date_utc": "",
         "daily_streak": 1,
         "log": [
+            {
+                "ts": 1778472827,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "ammo": "Eternal Cosmos",
+                "catches": [
+                    {
+                        "animal": "Pigeon",
+                        "sell_value": 132,
+                        "xp_earned": 268,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 264,
+                        "xp_earned": 228,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 264,
+                        "xp_earned": 140,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Rabbit",
+                        "sell_value": 528,
+                        "xp_earned": 196,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 117,
+                        "xp_earned": 156,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 264,
+                        "xp_earned": 280,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 1268,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778472824,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "ammo": "Eternal Cosmos",
+                "catches": [
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 363,
+                        "xp_earned": 94,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 117,
+                        "xp_earned": 134,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 792,
+                        "xp_earned": 212,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 792,
+                        "xp_earned": 56,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Cat",
+                        "sell_value": 396,
+                        "xp_earned": 250,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Sparrow",
+                        "sell_value": 117,
+                        "xp_earned": 280,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 1026,
+                "level_ups": 0
+            },
+            {
+                "ts": 1778472819,
+                "biome": "village",
+                "tool": "Cosmic RPG",
+                "ammo": "Eternal Cosmos",
+                "catches": [
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 165,
+                        "xp_earned": 94,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Squirrel",
+                        "sell_value": 264,
+                        "xp_earned": 190,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Crow",
+                        "sell_value": 231,
+                        "xp_earned": 262,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Fox",
+                        "sell_value": 792,
+                        "xp_earned": 144,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Stray Dog",
+                        "sell_value": 363,
+                        "xp_earned": 274,
+                        "is_rare": true
+                    },
+                    {
+                        "animal": "Mouse",
+                        "sell_value": 165,
+                        "xp_earned": 144,
+                        "is_rare": true
+                    }
+                ],
+                "total_xp": 1108,
+                "level_ups": 0
+            },
             {
                 "ts": 1778349750,
                 "biome": "village",
@@ -1171,10 +1327,15 @@
         "last_daily_date": "2026-05-09",
         "joined_date": "2026-05-09",
         "best_daily_streak": 1,
-        "total_money_earned": 124566,
+        "total_money_earned": 104584631,
         "mail_read_dev": false,
         "mail_dev_content_read": "Just checking if this command works, sorry for the ping!",
-        "_display_name": "Hypernimtz"
+        "_display_name": "Hypernimtz",
+        "mail_dev_notice_seen": "",
+        "ammo_inv": {
+            "Eternal Cosmos": 982
+        },
+        "equipped_ammo": "Eternal Cosmos"
     },
     "1275952632367681566": {
         "money": 101010400,
@@ -4253,7 +4414,10 @@
         "mail_read_dev": false,
         "mail_dev_content_read": "",
         "_display_name": "tissue",
-        "tribe_inv_read": false
+        "tribe_inv_read": false,
+        "mail_dev_notice_seen": "",
+        "ammo_inv": {},
+        "equipped_ammo": null
     },
     "1206829042607718464": {
         "money": 10000,
