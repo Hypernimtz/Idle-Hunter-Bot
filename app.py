@@ -27,17 +27,7 @@ BOT_ADMIN_ID = [
 def is_admin(interaction: discord.Interaction) -> bool:
     return str(interaction.user.id) in BOT_ADMIN_ID
 
-# ─────────────────────────────────────────────
-# MAINTENANCE
-# ─────────────────────────────────────────────
-
-maintenance_mode    = False
-maintenance_warning = False
-maintenance_message = ""
-maintenance_channels: set[int] = set()
-
-# Track which users have already received the maintenance warning this session
-_maintenance_warned: set[str] = set()
+SUGGESTION_CHANNEL_ID = 0  # replace with your channel ID
 
 # ─────────────────────────────────────────────
 # DEV MAIL
@@ -215,21 +205,48 @@ def load_data_tribe():
 
 tribe_data = load_data_tribe()
 
-def save_dev_mail() -> None:
-    with open(DEV_MAIL_FILE, "w", encoding="utf-8") as f:
-        json.dump({"message": DEV_MAIL}, f, indent=4)
+CONFIG_FILE = "config.json"
 
-def load_dev_mail() -> str:
+def save_config():
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({
+            "dev_mail": DEV_MAIL,
+            "update": UPDATE_MSG,
+            "maintenance": {
+                "mode": maintenance_mode,
+                "warning": maintenance_warning,
+                "message": maintenance_message,
+                "channels": list(maintenance_channels),
+                "warned": list(_maintenance_warned),
+            }
+        }, f, indent=4)
+
+def load_config() -> dict:
     try:
-        with open(DEV_MAIL_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return str(payload.get("message", "") or "")
-        return ""
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return ""
-
-DEV_MAIL = load_dev_mail()
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {
+            "dev_mail": "",
+            "update": "",
+            "maintenance": {
+                "mode": False,
+                "warning": False,
+                "message": "",
+                "channels": [],
+                "warned": [],
+            }
+        }
+    
+_cfg                = load_config()
+DEV_MAIL            = _cfg["dev_mail"]
+UPDATE_MSG          = _cfg["update"]
+_m                  = _cfg["maintenance"]
+maintenance_mode    = _m["mode"]
+maintenance_warning = _m["warning"]
+maintenance_message = _m["message"]
+maintenance_channels: set[int] = set(_m["channels"])
+_maintenance_warned: set[str]  = set(_m["warned"])
 
 # ─────────────────────────────────────────────
 # VERIFY HELPERS
@@ -857,6 +874,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": f"Mail{mail_indicator}", "emoji": {"name": "📬"}, "value": "mail", "description": "Check your mailbox"},
             {"label": "Tribe", "emoji": {"id": "1500237653591851080", "name": "Bot_Tribe"}, "value": "tribe", "description": "View your tribe"},
             {"label": "Profile",  "emoji": {"id": "1500237646121930863", "name": "User_Profile"}, "value": "profile", "description": "View your profile"},
+            {"label": "Update", "emoji": {"name": "📋"}, "value": "update", "description": "View the latest update from the developers"},
         ]
     }]}
 
@@ -1541,6 +1559,18 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         ]
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+
+# Update
+def build_update_components(user_id: str) -> list:
+    content = (
+        f"### 📋 Latest Update\n\n"
+        f"{UPDATE_MSG if UPDATE_MSG else '-# No update posted yet.'}"
+    )
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": content},
+        {"type": 14, "divider": True, "spacing": 1},
+        _back_row(user_id),
+    ]}]
 
 # ── IDLE ──────────────────────────────────────
 def build_idle_components(user_id: str) -> list:
@@ -2497,6 +2527,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str, panel: str, 
         await update_v2(interaction, build_mail_components(user_id, "tribe"))
     elif panel == "help":
         await update_v2(interaction, build_help_components(user_id))
+    elif panel == "update":
+        await update_v2(interaction, build_update_components(user_id))
     elif panel == "tribe":
         tribe_nm = data[user_id].get("tribe")
         if tribe_nm and tribe_nm in tribe_data:
@@ -3486,6 +3518,7 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
 
     if interaction.channel_id:
         maintenance_channels.add(interaction.channel_id)
+        save_config()
 
     # Admin bypass
     if str(interaction.user.id) in BOT_ADMIN_ID:
@@ -3872,9 +3905,131 @@ async def help_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_help_components(user_id))
     await maybe_send_mail_notification(interaction, user_id)
 
+@bot.tree.command(name="update", description="View the latest update from the developers.")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def update_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    await send_v2_followup(interaction, build_update_components(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
+
+@bot.tree.command(name="suggest", description="Send a suggestion to the developers.")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(suggestion="Your suggestion")
+async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+
+    # Anti-troll: minimum level gate
+    if data[user_id]["level"] < 5:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description="❌ You must be at least **Level 5** to send suggestions.",
+                color=discord.Color.red()
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Anti-troll: cooldown (1 suggestion per hour)
+    now = time.time()
+    last_suggest = data[user_id].get("last_suggest", 0)
+    cooldown = 3600  # 1 hour
+    if now - last_suggest < cooldown:
+        remaining = int(cooldown - (now - last_suggest))
+        mins = remaining // 60
+        secs = remaining % 60
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"❌ You can suggest again in **{mins}m {secs}s**.",
+                color=discord.Color.red()
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Anti-troll: minimum length
+    if len(suggestion.strip()) < 20:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description="❌ Suggestion must be at least **20 characters**.",
+                color=discord.Color.red()
+            ),
+            ephemeral=True
+        )
+        return
+
+    data[user_id]["last_suggest"] = now
+    save_data_users()
+
+    # Store in config
+    entry = {
+        "user_id": user_id,
+        "username": interaction.user.display_name,
+        "suggestion": suggestion.strip(),
+        "ts": int(now),
+    }
+    _cfg_suggestions = load_config().get("suggestions", [])
+    _cfg_suggestions.insert(0, entry)
+
+    # Save — load full config, update suggestions key, save
+    cfg = load_config()
+    cfg["suggestions"] = _cfg_suggestions[:200]  # cap at 200
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, indent=4)
+
+    # Send to suggestion channel
+    channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
+    if channel:
+        try:
+            await channel.send(
+                embed=discord.Embed(
+                    title="💡 New Suggestion",
+                    description=(
+                        f"**From:** {interaction.user.display_name} (`{user_id}`)\n"
+                        f"**Level:** {data[user_id]['level']} · "
+                        f"**Prestige:** {data[user_id].get('prestige', 0)} · "
+                        f"**Caught:** {data[user_id].get('total_caught', 0):,}\n\n"
+                        f"{suggestion.strip()}"
+                    ),
+                    color=discord.Color.blurple()
+                )
+            )
+        except Exception:
+            pass
+
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="💡 Suggestion Sent!",
+            description="Your suggestion has been sent to the developers. Thank you!",
+            color=discord.Color.green()
+        ),
+        ephemeral=True
+    )
+
 # ─────────────────────────────────────────────
 # ADMIN COMMANDS
 # ─────────────────────────────────────────────
+
+@bot.tree.command(name="change_update", description="Set the latest update message.")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+@app_commands.describe(message="The update message to display.")
+async def change_update_cmd(interaction: discord.Interaction, message: str = ""):
+    global UPDATE_MSG
+    UPDATE_MSG = message.strip()
+    save_config()
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="📋 Update Set",
+            description=UPDATE_MSG if UPDATE_MSG else "Update cleared.",
+            color=discord.Color.green()
+        ),
+        ephemeral=True
+    )
 
 @bot.tree.command(name="bot_shutdown", description="Shuts down the bot for maintenance")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -3889,6 +4044,7 @@ async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message:
 
     maintenance_warning = True
     maintenance_message = message
+    save_config()
 
     start_embed = discord.Embed(
         title=f"🔧 Maintenance Starting in {time} minutes",
@@ -3906,6 +4062,7 @@ async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message:
         await asyncio.sleep(time * 60)
         global maintenance_mode
         maintenance_mode = True
+        save_config()
 
         started_embed = discord.Embed(
             title="🔧 Bot Maintenance Started",
@@ -3940,6 +4097,8 @@ async def bot_resume_cmd(interaction: discord.Interaction):
     maintenance_warning = False
     maintenance_message = ""
     _maintenance_warned.clear()
+    maintenance_channels.clear()
+    save_config()
 
     announcement = discord.Embed(
         title="✅ Bot Back Online",
@@ -3983,7 +4142,7 @@ async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
     changed  = new_mail != old_mail
 
     DEV_MAIL = new_mail
-    save_dev_mail()
+    save_config()
 
     if changed or not DEV_MAIL:
         for uid in data:
