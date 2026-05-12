@@ -270,6 +270,8 @@ def init_user(user_id: str):
         # Ammo system
         "ammo_inv": {},       # {ammo_name: quantity}
         "equipped_ammo": None,
+        "vehicle": "None",
+        "owned_vehicles": [],
     }
     if user_id not in data:
         data[user_id] = dict(defaults)
@@ -337,6 +339,9 @@ def get_total_boosts(user_id: str) -> dict:
     tool_info = TOOLS.get(data[user_id].get("tool", "Bare Hands"), {})
     tool_luck = tool_info.get("boost_luck", 0); tool_xp = tool_info.get("boost_xp", 0)
     ammo_b    = get_ammo_boosts(user_id)
+    vehicle_info = VEHICLES.get(data[user_id].get("vehicle"), {})
+    vehicle_cd   = vehicle_info.get("boost_cd", 0)
+    vehicle_luck = vehicle_info.get("boost_luck", 0)
     return {
         "luck": personal.get("luck", 0) + t_luck + prestige_b + tool_luck + ammo_b["luck"],
         "sell": personal.get("sell", 0) + t_sell + prestige_b + ammo_b["sell"],
@@ -345,6 +350,9 @@ def get_total_boosts(user_id: str) -> dict:
         "t_luck": t_luck, "t_sell": t_sell, "t_xp": t_xp,
         "prestige_b": prestige_b, "tool_luck": tool_luck, "tool_xp": tool_xp,
         "ammo_luck": ammo_b["luck"], "ammo_sell": ammo_b["sell"], "ammo_xp": ammo_b["xp"],
+        "luck": personal.get("luck", 0) + t_luck + prestige_b + tool_luck + ammo_b["luck"] + vehicle_luck,
+        # add vehicle_cd to return too:
+        "cd": vehicle_cd,
     }
 
 # ─────────────────────────────────────────────
@@ -376,6 +384,7 @@ _record_state: dict[str, dict] = {}
 _profile_log_page: dict[str, int] = {}
 _profile_record_page: dict[str, int] = {}
 _ammo_shop_page: dict[str, int] = {}
+_vehicle_shop_page: dict[str, int] = {}
 
 # ─────────────────────────────────────────────
 # IDLE HELPERS
@@ -393,7 +402,7 @@ def idle_cost_for_stack(current_stacks: int) -> int:
 
 def collect_idle(user_id: str) -> int:
     idle = data[user_id]["idle"]
-    if not idle["active"] or idle["stacks"] <= 0:
+    if not idle["active"] or idle["stacks"] <= 0 or idle.get("started_at", 0) == 0:
         return 0
     now    = time.time()
     earned = int(((now - idle["started_at"]) / 3600) * idle_rate_per_hour(user_id) * idle["stacks"])
@@ -644,8 +653,9 @@ def run_hunt(user_id: str) -> dict:
     else:
         remaining_ammo = None
 
+    effective_cd = max(1.0, HUNT_COOLDOWN - boosts.get("cd", 0))
+    data[user_id]["hunt_cd"]           = now + effective_cd
     data[user_id]["xp"]                += total_xp
-    data[user_id]["hunt_cd"]            = now + HUNT_COOLDOWN
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + total_val
 
     level_ups = 0
@@ -711,9 +721,13 @@ async def send_v2(interaction: discord.Interaction, components: list):
 async def update_v2(interaction: discord.Interaction, components: list):
     await _raw(interaction, {"type": 7, "data": {"flags": V2_FLAGS, "components": components, "allowed_mentions": {"parse": []}}})
 
-async def send_ephemeral_embed(interaction: discord.Interaction, description: str, color: discord.Color):
-    await interaction.response.send_message(
-        embed=discord.Embed(description=description, color=color), ephemeral=True)
+async def send_ephemeral_embed(interaction, description, color):
+    embed = discord.Embed(description=description, color=color)
+
+    if interaction.response.is_done():
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ─────────────────────────────────────────────
 # MAINTENANCE CHECK HELPER
@@ -825,7 +839,7 @@ def nav_pop(user_id: str) -> str:
 
 def _back_row(user_id: str) -> dict:
     return {"type": 1, "components": [
-        {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}", "flow": {"actions": []}}
+        {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:menu:{user_id}", }
     ]}
 
 # ── MENU (dropdown) ───────────────────────────
@@ -859,6 +873,10 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     a_info      = AMMO.get(ammo_name, {})
     ammo_line   = f"{a_info.get('emoji','🔸')} **{ammo_name}** ×{ammo_count}" if ammo_name else "None"
 
+    vehicle_name = d.get("vehicle", "None")
+    v_info       = VEHICLES.get(vehicle_name, {})
+    vehicle_line = f"{v_info.get('emoji','🚗')} **{vehicle_name}**" if vehicle_name and vehicle_name != "None" else "None"
+
     stats = (
         f"### {USER_EMOJIS['profile']} {display_name}'s Menu\n"
         f"{USER_EMOJIS['levels']} Lv.**{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
@@ -866,7 +884,8 @@ def build_menu_components(user_id: str, display_name: str) -> list:
         f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n\n"
         f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · "
         f"{TOOLS[tool_name]['emoji']} **{tool_name}** (T{get_tool_tier(tool_name)})\n"
-        f"🔸 Ammo: {ammo_line}\n"
+        f"🔸 Ammo: {ammo_line}\n"    
+        f"🚗 Vehicle: {vehicle_line}\n" 
         f"Tribe: {TRIBE_EMOJIS['tribe']} {tribe_line}\n\n"
         f"💤 Idle stacks: **{stacks}** · Pending: **◈ {pending:,}**\n\n"
         f"🎒 Inventory ({len(inv)} items · ◈ {sell_val:,}):\n"
@@ -897,7 +916,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     row2 = {"type": 1, "components": [
         {"type": 2, "style": 5, "label": "🔗 Invite Bot",
          "url": f"https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"},
-        {"type": 2, "style": 1, "label": "📖 Help", "custom_id": f"menu:help:{user_id}", "flow": {"actions": []}},
+        {"type": 2, "style": 1, "label": "📖 Help", "custom_id": f"menu:help:{user_id}", },
     ]}
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
@@ -909,7 +928,8 @@ def build_menu_components(user_id: str, display_name: str) -> list:
              ]}]
 
 # ── PROFILE ───────────────────────────────────
-def build_profile_components(user_id: str, display_name: str, active_panel: str = "main") -> list:
+def build_profile_components(user_id: str, display_name: str, active_panel: str = "main", viewer_id: str = None) -> list:
+    nav_id    = viewer_id or user_id
     d         = data[user_id]
     boosts    = get_total_boosts(user_id)
     biome     = d.get("biome", "village")
@@ -942,6 +962,11 @@ def build_profile_components(user_id: str, display_name: str, active_panel: str 
     a_info      = AMMO.get(ammo_name, {})
     ammo_line   = f"{a_info.get('emoji','🔸')} **{ammo_name}** ×{ammo_count}" if ammo_name else "None"
 
+    vehicle_name = d.get("vehicle", "None")
+    v_info       = VEHICLES.get(vehicle_name, {})
+    vehicle_line = f"{v_info.get('emoji','🚗')} **{vehicle_name}**" if vehicle_name and vehicle_name != "None" else "None"
+    
+
     stats = (
         f"### {USER_EMOJIS['profile']} {display_name}'s Profile\n"
         f"{USER_EMOJIS['levels']} Lv.**{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
@@ -950,6 +975,7 @@ def build_profile_components(user_id: str, display_name: str, active_panel: str 
         f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · "
         f"{TOOLS[tool_name]['emoji']} **{tool_name}** (T{get_tool_tier(tool_name)})\n"
         f"🔸 Ammo: {ammo_line}\n"
+        f"🚗 Vehicle: {vehicle_line}\n"
         f"{TRIBE_EMOJIS['tribe']} {tribe_line}\n"
         f"{color_label}\n\n"
         f"{USER_EMOJIS['luck_boost']} Luck **{boosts['luck']}%** · "
@@ -962,19 +988,19 @@ def build_profile_components(user_id: str, display_name: str, active_panel: str 
 
     row_1 = {"type": 1, "components":[
         {"type": 2, "style": 3 if active_panel == "main" else 1, "label": "Main Profile",
-         "custom_id": f"profile:main:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:main:{user_id}", },
         {"type": 2, "style": 3 if active_panel == "inventory" else 1, "label": "Inventory",
-         "custom_id": f"profile:inventory:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:inventory:{user_id}", },
         {"type": 2, "style": 3 if active_panel == "statistics" else 1, "label": "Statistics",
-         "custom_id": f"profile:statistics:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:statistics:{user_id}", },
     ]}
     row_2 = {"type": 1, "components":[
         {"type": 2, "style": 3 if active_panel == "leaderboard" else 1, "label": "Rankings",
-         "custom_id": f"profile:leaderboard:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:leaderboard:{user_id}", },
         {"type": 2, "style": 3 if active_panel == "log" else 1, "label": "Hunting Log",
-         "custom_id": f"profile:log:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:log:{user_id}", },
         {"type": 2, "style": 2, "label": "◀ Menu",
-         "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"nav:menu:{nav_id}", },
     ]}
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
@@ -1013,19 +1039,19 @@ def build_statistics_components(user_id: str, display_name: str) -> list:
     )
     row_1 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Main Profile",
-         "custom_id": f"profile:main:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:main:{user_id}", },
         {"type": 2, "style": 1, "label": "Inventory",
-         "custom_id": f"profile:inventory:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:inventory:{user_id}", },
         {"type": 2, "style": 3, "label": "Statistics",
-         "custom_id": f"profile:statistics:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:statistics:{user_id}", },
     ]}
     row_2 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Rankings",
-         "custom_id": f"profile:leaderboard:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:leaderboard:{user_id}", },
         {"type": 2, "style": 1, "label": "Hunting Log",
-         "custom_id": f"profile:log:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:log:{user_id}", },
         {"type": 2, "style": 2, "label": "◀ Menu",
-         "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"nav:menu:{user_id}", },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
              "components": [
@@ -1054,19 +1080,19 @@ def build_inventory_components(user_id: str, display_name: str, active_panel: st
     )
     row_1 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Main Profile",
-         "custom_id": f"profile:main:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:main:{user_id}", },
         {"type": 2, "style": 3, "label": "Inventory",
-         "custom_id": f"profile:inventory:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:inventory:{user_id}", },
         {"type": 2, "style": 1, "label": "Statistics",
-         "custom_id": f"profile:statistics:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:statistics:{user_id}", },
     ]}
     row_2 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Rankings",
-         "custom_id": f"profile:leaderboard:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:leaderboard:{user_id}", },
         {"type": 2, "style": 1, "label": "Hunting Log",
-         "custom_id": f"profile:log:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:log:{user_id}", },
         {"type": 2, "style": 2, "label": "◀ Menu",
-         "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"nav:menu:{user_id}", },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
              "components": [
@@ -1129,9 +1155,9 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     catches_content = "\n\n".join(catch_parts)
 
     btn_row = {"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}",    "flow": {"actions": []}},
-        {"type": 2, "style": 1, "label": "Sell All", "custom_id": f"hunt:sell_all:{user_id}", "flow": {"actions": []}},
-        {"type": 2, "style": 2, "label": "◀ Back",  "custom_id": f"hunt:back:{user_id}",     "flow": {"actions": []}},
+        {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}",    },
+        {"type": 2, "style": 1, "label": "Sell All", "custom_id": f"hunt:sell_all:{user_id}", },
+        {"type": 2, "style": 2, "label": "◀ Back",  "custom_id": f"hunt:back:{user_id}",     },
     ]}
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
@@ -1152,9 +1178,9 @@ def build_hunt_sold_components(user_id: str, sold: dict) -> list:
             f"-# Earned **◈ {sold['total']:,}** · Balance: **◈ {data[user_id]['money']:,}**"
         )
     btn_row = {"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}",    "flow": {"actions": []}},
-        {"type": 2, "style": 1, "label": "Sell All", "custom_id": f"hunt:sell_all:{user_id}", "disabled": True, "flow": {"actions": []}},
-        {"type": 2, "style": 2, "label": "◀ Back",  "custom_id": f"hunt:back:{user_id}",     "flow": {"actions": []}},
+        {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}",    },
+        {"type": 2, "style": 1, "label": "Sell All", "custom_id": f"hunt:sell_all:{user_id}", "disabled": True, },
+        {"type": 2, "style": 2, "label": "◀ Back",  "custom_id": f"hunt:back:{user_id}",     },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
@@ -1179,7 +1205,7 @@ def build_color_panel_components(user_id: str) -> list:
         {"type": 9,
          "components": [{"type": 10, "content": f"**Custom Hex**\n{custom_line}"}],
          "accessory": {"type": 2, "style": 2, "label": "Set Custom Hex",
-                        "custom_id": f"hunter_color_hex:{user_id}", "flow": {"actions": []}}},
+                        "custom_id": f"hunter_color_hex:{user_id}", }},
         _back_row(user_id),
     ]}]
 
@@ -1320,14 +1346,18 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     boost_btn_style = 3 if tab == "boosts" else 1
     tools_btn_style = 3 if tab == "tools"  else 1
     ammo_btn_style  = 3 if tab == "ammo"   else 1
+    vehicle_btn_style = 3 if tab == "vehicles" else 1
+
 
     tab_row = {"type": 1, "components": [
         {"type": 2, "style": boost_btn_style, "label": "🧪 Boosts",
-         "custom_id": f"shop:tab:boosts:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"shop:tab:boosts:{user_id}", },
         {"type": 2, "style": tools_btn_style, "label": "Tools", "emoji": {"id": "1500237654891958394", "name": "Bot_Upgrade"},
-         "custom_id": f"shop:tab:tools:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"shop:tab:tools:{user_id}", },
         {"type": 2, "style": ammo_btn_style, "label": "🔸 Ammo",
-         "custom_id": f"shop:tab:ammo:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"shop:tab:ammo:{user_id}", },
+         {"type": 2, "style": vehicle_btn_style, "label": "🚗 Vehicles",
+         "custom_id": f"shop:tab:vehicles:{user_id}", },
     ]}
 
     if tab == "boosts":
@@ -1381,6 +1411,61 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
             comps.append({"type": 10, "content": "-# You own all tools!"})
         comps.append(_back_row(user_id))
 
+    elif tab == "vehicles":
+        owned    = data[user_id].get("owned_vehicles", [])
+        equipped = data[user_id].get("vehicle", "None")
+        
+        all_vehicles = list(VEHICLES.items())
+        page         = _vehicle_shop_page.get(user_id, 0)
+        per_page     = 5
+        total_pages  = max(1, (len(all_vehicles) + per_page - 1) // per_page)
+        page         = max(0, min(page, total_pages - 1))
+        page_vehicles = all_vehicles[page * per_page:(page + 1) * per_page]
+
+        lines = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
+        buy_opts   = []
+        equip_opts = []
+
+        for name, v in page_vehicles:
+            ps       = f"◈ {v['price']:,}" if v["currency"] == "money" else f"💎{v['price']}"
+            cd_str   = f"-{v['boost_cd']}s cooldown"
+            luck_str = f" · +{v['boost_luck']}% Luck" if v["boost_luck"] else ""
+            eq_tag   = " ✅ Equipped" if name == equipped else (" 📦 Owned" if name in owned else "")
+            lines.append(f"{v['emoji']} **{name}** (T{v['tier']}) — {ps}{eq_tag}\n-# {v['description']}\n-# {cd_str}{luck_str}")
+            if name not in owned:
+                buy_opts.append({"label": f"{name} — {ps}", "value": name, "description": v["description"][:100]})
+            else:
+                equip_opts.append({"label": f"{v['emoji']} {name}", "value": name, "default": name == equipped})
+
+        page_nav_row = {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "◀ Prev",
+            "custom_id": f"shop:vehicle_prev:{user_id}",
+            "disabled": page == 0,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 1, "label": "Next ▶",
+            "custom_id": f"shop:vehicle_next:{user_id}",
+            "disabled": page >= total_pages - 1,
+            "flow": {"actions": []}},
+        ]}
+
+        comps = [
+            {"type": 10, "content": "### 🏪 Shop — Vehicles\n" + "\n\n".join(lines)},
+            {"type": 14, "divider": True, "spacing": 1},
+            tab_row,
+            {"type": 14, "divider": True, "spacing": 1},
+            page_nav_row,
+            {"type": 14, "divider": True, "spacing": 1},
+        ]
+        if buy_opts:
+            comps.append({"type": 1, "components": [{"type": 3, "custom_id": f"shop:vehicle_buy:{user_id}",
+                "placeholder": "Buy a vehicle...", "min_values": 1, "max_values": 1,
+                "flows": {}, "options": buy_opts[:25]}]})
+        if equip_opts:
+            comps.append({"type": 1, "components": [{"type": 3, "custom_id": f"shop:vehicle_equip:{user_id}",
+                "placeholder": "Equip a vehicle...", "min_values": 1, "max_values": 1,
+                "flows": {}, "options": equip_opts[:25]}]})
+        comps.append(_back_row(user_id))
+
     else:  # ammo tab
         # Group ammo by type
         grouped: dict[str, list[str]] = {}
@@ -1425,16 +1510,11 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
             {"type": 2, "style": 1, "label": "◀ Prev Type",
             "custom_id": f"shop:ammo_prev:{user_id}",
             "disabled": ammo_tab_page == 0,
-            "flow": {"actions": []}},
-            {"type": 2, "style": 2,
-            "label": f"{AMMO_TYPE_LABELS[current_type]} ({ammo_tab_page+1}/{len(ammo_types)})",
-            "custom_id": f"shop:ammo_noop:{user_id}",
-            "disabled": True,
-            "flow": {"actions": []}},
+            },
             {"type": 2, "style": 1, "label": "Next Type ▶",
             "custom_id": f"shop:ammo_next:{user_id}",
             "disabled": ammo_tab_page >= len(ammo_types) - 1,
-            "flow": {"actions": []}},
+            },
         ]}
 
         comps = [
@@ -1474,9 +1554,9 @@ def build_idle_components(user_id: str) -> list:
         )},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "📥 Collect",    "custom_id": f"idle:collect:{user_id}", "flow": {"actions": []}},
-            {"type": 2, "style": 1, "label": "👷 Hire Stack", "custom_id": f"idle:hire:{user_id}",    "flow": {"actions": []}},
-            {"type": 2, "style": 2, "label": "◀ Back",       "custom_id": f"nav:back:{user_id}",     "flow": {"actions": []}},
+            {"type": 2, "style": 3, "label": "📥 Collect",    "custom_id": f"idle:collect:{user_id}", },
+            {"type": 2, "style": 1, "label": "👷 Hire Stack", "custom_id": f"idle:hire:{user_id}",    },
+            {"type": 2, "style": 2, "label": "◀ Back",       "custom_id": f"nav:back:{user_id}",     },
         ]},
     ]}]
 
@@ -1492,7 +1572,7 @@ def build_daily_components(user_id: str, claimed: bool = False,
         body = (
             f"### 📅 Daily Claimed!\n"
             f"You received **{icon}{reward_amt:,}**!\n"
-            f"-# 🔥 Streak: **{streak}** days · +{streak}% bonus\n"
+            f"-# 🔥 Streak: **{streak}** days · +{streak}% Reward bonus\n"
             f"-# Resets <t:{nxt_ts}:R>"
         )
     elif already:
@@ -1507,7 +1587,7 @@ def build_daily_components(user_id: str, claimed: bool = False,
         body = (
             f"### 📅 Daily Reward\n"
             f"Claim your daily reward!\n"
-            f"-# 🔥 Streak: **{cur_streak}** days · +{cur_streak}% bonus\n"
+            f"-# 🔥 Streak: **{cur_streak}** days · +{cur_streak}% Reward bonus\n"
             f"-# 💰 Possible: ◈ {tier['money_min']:,}–◈ {tier['money_max']:,} "
             f"or 💎{tier['gems_min']}–{tier['gems_max']}\n"
             f"-# Resets <t:{nxt_ts}:R>"
@@ -1515,9 +1595,9 @@ def build_daily_components(user_id: str, claimed: bool = False,
     btns = []
     if not already and not claimed:
         btns.append({"type": 2, "style": 3, "label": "Claim Daily",
-                     "custom_id": f"daily:claim:{user_id}", "flow": {"actions": []}})
+                     "custom_id": f"daily:claim:{user_id}", })
     btns.append({"type": 2, "style": 2, "label": "◀ Back",
-                 "custom_id": f"nav:back:{user_id}", "flow": {"actions": []}})
+                 "custom_id": f"nav:back:{user_id}", })
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
@@ -1546,9 +1626,9 @@ def build_prestige_components(user_id: str) -> list:
     btns = []
     if lvl_ok and money_ok:
         btns.append({"type": 2, "style": 4, "label": "✅ Prestige",
-                     "custom_id": f"prestige:confirm:{user_id}", "flow": {"actions": []}})
+                     "custom_id": f"prestige:confirm:{user_id}", })
     btns.append({"type": 2, "style": 2, "label": "◀ Back",
-                 "custom_id": f"nav:back:{user_id}", "flow": {"actions": []}})
+                 "custom_id": f"nav:back:{user_id}", })
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
@@ -1562,7 +1642,10 @@ def build_prestige_done_components(user_id: str, new_prestige: int) -> list:
             f"All progress reset. Welcome back, hunter.\n"
             f"-# Permanent bonus: +**{new_prestige * 20}%** to all boosts"
         )},
-        _back_row(user_id),
+        {"type": 1, "components": [
+            {"type": 2, "style": 2, "label": "◀ Menu",
+             "custom_id": f"nav:menu:{user_id}", }
+        ]},
     ]}]
 
 # ── HELP ──────────────────────────────────────
@@ -1590,11 +1673,11 @@ def build_mail_components(user_id: str, tab: str = "tribe") -> list:
     elif tab == "dev":    dev_style   = 3
     tab_row = {"type": 1, "components": [
         {"type": 2, "style": tribe_style, "label": "🏕️ Tribe Invites",
-         "custom_id": f"mail:tab:tribe:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"mail:tab:tribe:{user_id}", },
         {"type": 2, "style": gifts_style, "label": "🎁 Gifts",
-         "custom_id": f"mail:tab:gifts:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"mail:tab:gifts:{user_id}", },
         {"type": 2, "style": dev_style,   "label": "📢 Dev Mail",
-         "custom_id": f"mail:tab:dev:{user_id}",   "flow": {"actions": []}},
+         "custom_id": f"mail:tab:dev:{user_id}",   },
     ]}
     if tab == "tribe":
         tribe_inv = d.get("tribe_inv")
@@ -1613,16 +1696,16 @@ def build_mail_components(user_id: str, tab: str = "tribe") -> list:
             )
             btns = [
                 {"type": 2, "style": 3, "label": "✅ Accept",
-                 "custom_id": f"mail:tribe:accept:{user_id}", "flow": {"actions": []}},
+                 "custom_id": f"mail:tribe:accept:{user_id}", },
                 {"type": 2, "style": 4, "label": "❌ Decline",
-                 "custom_id": f"mail:tribe:decline:{user_id}", "flow": {"actions": []}},
+                 "custom_id": f"mail:tribe:decline:{user_id}", },
             ]
             d["tribe_inv_read"] = True
         else:
             content = "### 🏕️ Tribe Invites\n\n-# No pending tribe invites."
             btns = []
         btns.append({"type": 2, "style": 2, "label": "◀ Menu",
-                     "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}})
+                     "custom_id": f"nav:menu:{user_id}", })
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
             {"type": 14, "divider": True, "spacing": 1},
@@ -1635,7 +1718,7 @@ def build_mail_components(user_id: str, tab: str = "tribe") -> list:
         if not gifts:
             content = "### 🎁 Gift Mail\n\n-# No gift mail."
             btns = [{"type": 2, "style": 2, "label": "◀ Menu",
-                     "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}}]
+                     "custom_id": f"nav:menu:{user_id}", }]
         else:
             lines = []
             for i, g in enumerate(gifts):
@@ -1652,9 +1735,9 @@ def build_mail_components(user_id: str, tab: str = "tribe") -> list:
                 g["read"] = True
             content = "### 🎁 Gift Mail\n\n" + "\n\n".join(lines)
             btns = [{"type": 2, "style": 4, "label": "🗑️ Clear All",
-                     "custom_id": f"mail:gifts:clear:{user_id}", "flow": {"actions": []}},
+                     "custom_id": f"mail:gifts:clear:{user_id}", },
                     {"type": 2, "style": 2, "label": "◀ Menu",
-                     "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}}]
+                     "custom_id": f"nav:menu:{user_id}", }]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
             {"type": 14, "divider": True, "spacing": 1},
@@ -1667,15 +1750,15 @@ def build_mail_components(user_id: str, tab: str = "tribe") -> list:
         if not DEV_MAIL:
             content = "### 📢 Dev Mail\n\n-# No messages from the dev team."
             btns = [{"type": 2, "style": 2, "label": "◀ Menu",
-                     "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}}]
+                     "custom_id": f"nav:menu:{user_id}", }]
         else:
             unread_tag = "" if is_read else " 🔴"
             content    = f"### 📢 Dev Mail{unread_tag}\n\n{DEV_MAIL}"
             btns_list  = [{"type": 2, "style": 2, "label": "◀ Menu",
-                           "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}}]
+                           "custom_id": f"nav:menu:{user_id}", }]
             if not is_read:
                 btns_list.insert(0, {"type": 2, "style": 3, "label": "✅ Mark as Read",
-                                      "custom_id": f"mail:dev:read:{user_id}", "flow": {"actions": []}})
+                                      "custom_id": f"mail:dev:read:{user_id}", })
             btns = btns_list
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
@@ -1718,10 +1801,10 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             {"type": 10, "content": content},
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
-                {"type": 2, "style": 1, "label": "Members",   "custom_id": f"tribe:nav:members:{user_id}",  "flow": {"actions": []}},
-                {"type": 2, "style": 1, "label": "Perk Shop", "custom_id": f"tribe:nav:shop:{user_id}",     "flow": {"actions": []}},
-                {"type": 2, "style": 1, "label": "Actions",   "custom_id": f"tribe:nav:actions:{user_id}",  "flow": {"actions": []}},
-                {"type": 2, "style": 2, "label": sort_lbl,    "custom_id": f"tribe:sort:{user_id}",         "flow": {"actions": []}},
+                {"type": 2, "style": 1, "label": "Members",   "custom_id": f"tribe:nav:members:{user_id}",  },
+                {"type": 2, "style": 1, "label": "Perk Shop", "custom_id": f"tribe:nav:shop:{user_id}",     },
+                {"type": 2, "style": 1, "label": "Actions",   "custom_id": f"tribe:nav:actions:{user_id}",  },
+                {"type": 2, "style": 2, "label": sort_lbl,    "custom_id": f"tribe:sort:{user_id}",         },
             ]},
             _back_row(user_id),
         ]}]
@@ -1736,8 +1819,8 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             {"type": 10, "content": content},
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
-                {"type": 2, "style": 2, "label": sort_lbl, "custom_id": f"tribe:sort:{user_id}",     "flow": {"actions": []}},
-                {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", "flow": {"actions": []}},
+                {"type": 2, "style": 2, "label": sort_lbl, "custom_id": f"tribe:sort:{user_id}",     },
+                {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", },
             ]},
         ]}]
 
@@ -1754,15 +1837,15 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
         if is_leader or is_officer:
             btns = [
                 {"type": 2, "style": 3, "label": "Luck +5%",
-                 "emoji": {"id": "1500237656292855839"}, "custom_id": f"tribe:shop:luck_boost:50:5:{user_id}", "flow": {"actions": []}},
+                 "emoji": {"id": "1500237656292855839"}, "custom_id": f"tribe:shop:luck_boost:50:5:{user_id}", },
                 {"type": 2, "style": 3, "label": "Sell +5%",
-                 "emoji": {"id": "1500237659275001856"}, "custom_id": f"tribe:shop:sell_price_boost:50:5:{user_id}", "flow": {"actions": []}},
+                 "emoji": {"id": "1500237659275001856"}, "custom_id": f"tribe:shop:sell_price_boost:50:5:{user_id}", },
                 {"type": 2, "style": 3, "label": "XP +5%",
-                 "emoji": {"id": "1500237658037944400"}, "custom_id": f"tribe:shop:xp_boost:50:5:{user_id}", "flow": {"actions": []}},
+                 "emoji": {"id": "1500237658037944400"}, "custom_id": f"tribe:shop:xp_boost:50:5:{user_id}", },
                 {"type": 2, "style": 3, "label": "+1 Slot",
-                 "emoji": {"id": "1500224532022296586"}, "custom_id": f"tribe:shop:max_members:100:1:{user_id}", "flow": {"actions": []}},
+                 "emoji": {"id": "1500224532022296586"}, "custom_id": f"tribe:shop:max_members:100:1:{user_id}", },
             ]
-        btns.append({"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", "flow": {"actions": []}})
+        btns.append({"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", })
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
             {"type": 14, "divider": True, "spacing": 1},
@@ -1811,7 +1894,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "options": action_opts,
             }]},
             {"type": 1, "components": [
-                {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", "flow": {"actions": []}},
+                {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"tribe:nav:main:{user_id}", },
             ]},
         ]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
@@ -1825,7 +1908,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
                 {"type": 10, "content": content},
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                    "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                    "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
         opts = [{"label": f"Kick @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
@@ -1839,7 +1922,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "options": opts,
             }]},
             {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                "custom_id": f"tribe:nav:actions:{user_id}", }]},
         ]}]
 
     elif page == "promote_picker":
@@ -1850,7 +1933,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
                 {"type": 10, "content": content},
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                    "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                    "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
         opts = [{"label": f"Promote @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
@@ -1864,7 +1947,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "options": opts,
             }]},
             {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                "custom_id": f"tribe:nav:actions:{user_id}", }]},
         ]}]
 
     elif page == "demote_picker":
@@ -1875,7 +1958,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
                 {"type": 10, "content": content},
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                    "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                    "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
         opts = [{"label": f"Demote @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
@@ -1889,7 +1972,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "options": opts,
             }]},
             {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                "custom_id": f"tribe:nav:actions:{user_id}", }]},
         ]}]
 
     elif page == "transfer_picker":
@@ -1900,7 +1983,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
             return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
                 {"type": 10, "content": content},
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                    "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                    "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
         opts = [{"label": f"Transfer to @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"Officer — ID: {uid}"} for uid in targets[:25]]
@@ -1914,7 +1997,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "options": opts,
             }]},
             {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                "custom_id": f"tribe:nav:actions:{user_id}", }]},
         ]}]
 
     elif page == "banlist":
@@ -1937,7 +2020,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 "placeholder": "Unban a player...", "min_values": 1, "max_values": 1,
                 "flows": {}, "options": unban_opts[:25]}]},
             {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
-                                         "custom_id": f"tribe:nav:actions:{user_id}", "flow": {"actions": []}}]},
+                                         "custom_id": f"tribe:nav:actions:{user_id}", }]},
         ]}]
 
     return build_tribe_components(user_id, tribe_name, "main", sort_mode)
@@ -2021,17 +2104,17 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
 
     mode_row = {"type": 1, "components": [
         {"type": 2, "style": 3 if mode == "hunter" else 1, "label": "👤 Hunters",
-         "custom_id": f"lb:mode:hunter:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"lb:mode:hunter:{user_id}", },
         {"type": 2, "style": 3 if mode == "tribe" else 1,
          "label": "Tribes", "emoji": {"id": "1500237653591851080", "name": "Bot_Tribe"},
-         "custom_id": f"lb:mode:tribe:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"lb:mode:tribe:{user_id}", },
     ]}
     components.append(mode_row)
 
     scope_label_btn = "🌐 Global" if scope == "server" else "🏠 Server"
     components.append({"type": 1, "components": [
         {"type": 2, "style": 1, "label": scope_label_btn,
-         "custom_id": f"lb:scope:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"lb:scope:{user_id}", },
     ]})
 
     cands_len = len(get_server_user_ids(guild) if scope == "server" else list(data.keys())) \
@@ -2040,9 +2123,9 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
 
     components.append({"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Prev",
-         "custom_id": f"lb:prev:{user_id}", "disabled": (page == 0), "flow": {"actions": []}},
+         "custom_id": f"lb:prev:{user_id}", "disabled": (page == 0), },
         {"type": 2, "style": 1, "label": "Next ▶",
-         "custom_id": f"lb:next:{user_id}", "disabled": (page >= total_pages - 1), "flow": {"actions": []}},
+         "custom_id": f"lb:next:{user_id}", "disabled": (page >= total_pages - 1), },
     ]})
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
@@ -2080,11 +2163,11 @@ def build_record_v2_components(user_id: str, biome_idx: int = 0) -> list:
         content = f"### {BIOME_EMOJIS[biome_key]} {BIOME_NAMES[biome_key]} — Record Book\n\n" + "\n\n".join(lines)
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Prev Biome", "custom_id": f"record:prev:{user_id}",
-         "disabled": (biome_idx == 0), "flow": {"actions": []}},
+         "disabled": (biome_idx == 0), },
         {"type": 2, "style": 1, "label": "Next Biome ▶", "custom_id": f"record:next:{user_id}",
-         "disabled": (biome_idx >= total_biomes - 1), "flow": {"actions": []}},
+         "disabled": (biome_idx >= total_biomes - 1), },
         {"type": 2, "style": 2, "label": "◀ Back to Profile", "custom_id": f"profile:main:{user_id}",
-         "flow": {"actions": []}},
+         },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2122,10 +2205,10 @@ def build_record_standalone_v2_components(viewer_id: str, target_id: str, biome_
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Prev Biome",
          "custom_id": f"record_cmd:prev:{viewer_id}:{target_id}",
-         "disabled": (biome_idx == 0), "flow": {"actions": []}},
+         "disabled": (biome_idx == 0), },
         {"type": 2, "style": 1, "label": "Next Biome ▶",
          "custom_id": f"record_cmd:next:{viewer_id}:{target_id}",
-         "disabled": (biome_idx >= total_biomes - 1), "flow": {"actions": []}},
+         "disabled": (biome_idx >= total_biomes - 1), },
     ]}
     return [{"type": 17, "accent_color": _accent(viewer_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2140,7 +2223,7 @@ def build_log_v2_components(user_id: str, page: int = 0) -> list:
     if not log or page >= total:
         content = "### 📋 Hunt Log\nNo hunts recorded yet.\n-# Start hunting with the Hunt button!"
         btn_row = {"type": 1, "components": [
-            {"type": 2, "style": 2, "label": "◀ Back to Profile", "custom_id": f"profile:main:{user_id}", "flow": {"actions": []}}
+            {"type": 2, "style": 2, "label": "◀ Back to Profile", "custom_id": f"profile:main:{user_id}", }
         ]}
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
@@ -2176,11 +2259,11 @@ def build_log_v2_components(user_id: str, page: int = 0) -> list:
     )
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Newer", "custom_id": f"log:prev:{user_id}",
-         "disabled": (page == 0), "flow": {"actions": []}},
+         "disabled": (page == 0), },
         {"type": 2, "style": 1, "label": "Older ▶", "custom_id": f"log:next:{user_id}",
-         "disabled": (page >= total - 1), "flow": {"actions": []}},
+         "disabled": (page >= total - 1), },
         {"type": 2, "style": 2, "label": "◀ Back to Profile", "custom_id": f"profile:main:{user_id}",
-         "flow": {"actions": []}},
+         },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2224,9 +2307,9 @@ def build_log_standalone_v2_components(user_id: str, page: int = 0) -> list:
     )
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Newer", "custom_id": f"log_cmd:prev:{user_id}",
-         "disabled": (page == 0), "flow": {"actions": []}},
+         "disabled": (page == 0), },
         {"type": 2, "style": 1, "label": "Older ▶", "custom_id": f"log_cmd:next:{user_id}",
-         "disabled": (page >= total - 1), "flow": {"actions": []}},
+         "disabled": (page >= total - 1), },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2272,19 +2355,19 @@ def build_personal_leaderboard_components(user_id: str) -> list:
     )
     row_1 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Main Profile",
-         "custom_id": f"profile:main:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:main:{user_id}", },
         {"type": 2, "style": 1, "label": "Inventory",
-         "custom_id": f"profile:inventory:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:inventory:{user_id}", },
         {"type": 2, "style": 1, "label": "Statistics",
-         "custom_id": f"profile:statistics:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:statistics:{user_id}", },
     ]}
     row_2 = {"type": 1, "components":[
         {"type": 2, "style": 3, "label": "Rankings",
-         "custom_id": f"profile:leaderboard:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:leaderboard:{user_id}", },
         {"type": 2, "style": 1, "label": "Hunting Log",
-         "custom_id": f"profile:log:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"profile:log:{user_id}", },
         {"type": 2, "style": 2, "label": "◀ Menu",
-         "custom_id": f"nav:menu:{user_id}", "flow": {"actions": []}},
+         "custom_id": f"nav:menu:{user_id}", },
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2331,14 +2414,14 @@ def build_gift_confirm_components(sender_id: str, recipient: discord.User, forma
                         "style": 3,
                         "label": "✅ Confirm",
                         "custom_id": f"gift:confirm:{gift_id}",
-                        "flow": {"actions": []}
+                        
                     },
                     {
                         "type": 2,
                         "style": 4,
                         "label": "❌ Cancel",
                         "custom_id": f"gift:cancel:{gift_id}",
-                        "flow": {"actions": []}
+                        
                     },
                 ]
             },
@@ -2368,7 +2451,7 @@ def build_gift_sent_components(sender_id: str, recipient: discord.User, amt_str:
                         "style": 2,
                         "label": "◀ Menu",
                         "custom_id": f"nav:menu:{sender_id}",
-                        "flow": {"actions": []}
+                        
                     }
                 ]
             },
@@ -2515,8 +2598,8 @@ async def on_interaction(interaction: discord.Interaction):
             await send_ephemeral_embed(interaction, "Not yours.", discord.Color.red()); return
         action = parts[1]
         if action == "back":
-            prev = nav_pop(owner_id)
-            await _navigate(interaction, owner_id, prev, interaction.user.display_name)
+            _nav_stack[owner_id] = ["menu"]
+            await update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
         elif action == "menu":
             _nav_stack[owner_id] = ["menu"]
             await update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
@@ -2656,6 +2739,44 @@ async def on_interaction(interaction: discord.Interaction):
 
         if parts[1] == "ammo_noop":
             await interaction.response.defer(); return
+        
+        if parts[1] == "vehicle_prev":
+            _vehicle_shop_page[owner_id] = max(0, _vehicle_shop_page.get(owner_id, 0) - 1)
+            await update_v2(interaction, build_shop_components(owner_id, "vehicles")); return
+
+        if parts[1] == "vehicle_next":
+            _vehicle_shop_page[owner_id] = _vehicle_shop_page.get(owner_id, 0) + 1
+            await update_v2(interaction, build_shop_components(owner_id, "vehicles")); return
+
+        if parts[1] == "vehicle_noop":
+            await interaction.response.defer(); return
+
+        if parts[1] == "vehicle_buy":
+            vehicle_name = values[0] if values else None
+            if not vehicle_name or vehicle_name not in VEHICLES:
+                await send_ephemeral_embed(interaction, "Unknown vehicle.", discord.Color.red()); return
+            if vehicle_name in data[owner_id].get("owned_vehicles", []):
+                await send_ephemeral_embed(interaction, "Already owned.", discord.Color.red()); return
+            v = VEHICLES[vehicle_name]
+            if v["currency"] == "gems":
+                if data[owner_id]["gems"] < v["price"]:
+                    await send_ephemeral_embed(interaction, f"Need 💎{v['price']}.", discord.Color.red()); return
+                data[owner_id]["gems"] -= v["price"]
+            else:
+                if data[owner_id]["money"] < v["price"]:
+                    await send_ephemeral_embed(interaction, f"Need ◈ {v['price']:,}.", discord.Color.red()); return
+                data[owner_id]["money"] -= v["price"]
+            data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
+            data[owner_id]["vehicle"] = vehicle_name
+            save_data_users()
+            await update_v2(interaction, build_shop_components(owner_id, "vehicles")); return
+
+        if parts[1] == "vehicle_equip":
+            vehicle_name = values[0] if values else None
+            if vehicle_name and vehicle_name in data[owner_id].get("owned_vehicles", []):
+                data[owner_id]["vehicle"] = vehicle_name
+                save_data_users()
+            await update_v2(interaction, build_shop_components(owner_id, "vehicles")); return
 
     # ── IDLE ──────────────────────────────────
     if parts[0] == "idle":
@@ -2801,26 +2922,19 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if action == "cancel":
-
             gift_cache.pop(gift_id, None)
-
             await update_v2(
                 interaction,
                 build_menu_components(owner_id, interaction.user.display_name)
             )
             return
-
         if action == "confirm":
-
             recipient_id = str(gift_data["recipient_id"])
             fmt          = gift_data["format"]
             parsed       = int(gift_data["parsed"])
             message      = gift_data["message"]
-
             init_user(recipient_id)
-
             icon = "◈" if fmt == "money" else "💎"
-
             if data[owner_id][fmt] < parsed:
                 await send_ephemeral_embed(
                     interaction,
@@ -2828,16 +2942,13 @@ async def on_interaction(interaction: discord.Interaction):
                     discord.Color.red()
                 )
                 return
-
             data[owner_id][fmt]     -= parsed
             data[recipient_id][fmt] += parsed
-
             amt_str = (
                 f"◈ {parsed:,}"
                 if fmt == "money"
                 else f"💎 {parsed:,}"
             )
-
             bal_str = (
                 f"◈ {data[owner_id][fmt]:,}"
                 if fmt == "money"
@@ -2853,42 +2964,41 @@ async def on_interaction(interaction: discord.Interaction):
                 "ts":          int(time.time()),
                 "read":        False,
             }
-
             data[recipient_id].setdefault("gift_mails", []).insert(0, gift_entry)
             data[recipient_id]["gift_mails"] = data[recipient_id]["gift_mails"][:20]
-
             save_data_users()
-
             try:
                 recipient_user = await bot.fetch_user(int(recipient_id))
+                try:
+                    await recipient_user.send(
+                        embed=discord.Embed(
+                            title="🎁 You received a gift!",
+                            description=(
+                                f"**{interaction.user.display_name}** sent you **{amt_str}**!\n\n"
+                                f"> {message}\n\n"
+                                f"-# Use `/mail` to view your gift mail."
+                            ),
+                            color=discord.Color.green()
+                        )
+                    )
+                except Exception:
+                    pass
 
-                await recipient_user.send(
-                    embed=discord.Embed(
-                        title="🎁 You received a gift!",
-                        description=(
-                            f"**{interaction.user.display_name}** sent you **{amt_str}**!\n\n"
-                            f"> {message}\n\n"
-                            f"-# Use `/mail` to view your gift mail."
-                        ),
-                        color=discord.Color.green()
+                gift_cache.pop(gift_id, None)
+
+                await update_v2(
+                    interaction,
+                    build_gift_sent_components(
+                        owner_id,
+                        recipient_user,
+                        amt_str,
+                        bal_str,
+                        message
                     )
                 )
-
             except Exception:
-                pass
-
-            gift_cache.pop(gift_id, None)
-
-            await update_v2(
-                interaction,
-                build_gift_sent_components(
-                    owner_id,
-                    await bot.fetch_user(int(recipient_id)),
-                    amt_str,
-                    bal_str,
-                    message
-                )
-            )
+                gift_cache.pop(gift_id, None)
+                await send_ephemeral_embed(interaction, f"✅ Gift sent! ({amt_str})", discord.Color.green())
             return
 
     # ── TRIBE NAVIGATION ──────────────────────
@@ -3089,8 +3199,6 @@ async def on_interaction(interaction: discord.Interaction):
     # ── PROFILE ───────────────────────────────
     if parts[0] == "profile":
         owner_id = parts[-1]
-        if str(interaction.user.id) != owner_id:
-            await send_ephemeral_embed(interaction, "Not yours.", discord.Color.red()); return
         panel = parts[1]
         if panel == "main":
             nav_push(owner_id, "profile")
@@ -3301,7 +3409,8 @@ class TribeSetDescModal(discord.ui.Modal, title="Set Tribe Description"):
     async def on_submit(self, interaction: discord.Interaction):
         tribe_data[self.tribe_name]["description"] = self.desc_input.value
         save_data_tribe()
-        await update_v2(interaction, build_tribe_components(self.user_id, self.tribe_name, "actions"))
+        sort = _tribe_sort.get(self.user_id, "rank")
+        await update_v2(interaction, build_tribe_components(self.user_id, self.tribe_name, "actions", sort))
 
 
 class TribeLeaveLeaderModal(discord.ui.Modal, title="Assign New Leader Before Leaving"):
@@ -3446,7 +3555,7 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
     target_id = str(target.id)
     init_user(target_id)
     nav_push(viewer_id, "profile")
-    await send_v2_followup(interaction, build_profile_components(target_id, target.display_name))
+    await send_v2_followup(interaction, build_profile_components(target_id, target.display_name, viewer_id=viewer_id))
     await maybe_send_mail_notification(interaction, viewer_id)
 
 
@@ -3909,6 +4018,11 @@ async def on_ready():
     if not autosave_users.is_running():  autosave_users.start()
     if not autosave_tribes.is_running(): autosave_tribes.start()
     print("Autosave started.")
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
 
 # ─────────────────────────────────────────────
 # RUN
