@@ -861,3 +861,16 @@ SHOP_BOOST_ITEMS = {
         "boost_key": "xp", "boost_amt": 5
     },
 }
+
+VEHICLES = {
+    "Trail Boots":    {"emoji": "🥾", "tier": 1,  "boost_cd": 0.3, "boost_luck": 0,  "price": 500,          "currency": "money", "description": "A reliable pair of boots. Slightly faster."},
+    "Bicycle":        {"emoji": "🚲", "tier": 2,  "boost_cd": 0.5, "boost_luck": 0,  "price": 5_000,        "currency": "money", "description": "Pedal your way to prey."},
+    "Dirt Bike":      {"emoji": "🏍️", "tier": 3,  "boost_cd": 0.7, "boost_luck": 0,  "price": 25_000,       "currency": "money", "description": "Off-road and fast."},
+    "Pickup Truck":   {"emoji": "🚗", "tier": 4,  "boost_cd": 1.0, "boost_luck": 0,  "price": 100_000,      "currency": "money", "description": "Reliable workhorse."},
+    "4x4 Offroader":  {"emoji": "🚙", "tier": 5,  "boost_cd": 1.3, "boost_luck": 5,  "price": 500_000,      "currency": "money", "description": "Conquers any terrain."},
+    "Rowboat":        {"emoji": "🛶", "tier": 6,  "boost_cd": 1.5, "boost_luck": 5,  "price": 1_000_000,    "currency": "money", "description": "Silent on the water."},
+    "Helicopter":     {"emoji": "🚁", "tier": 7,  "boost_cd": 1.7, "boost_luck": 0,  "price": 5_000_000,    "currency": "money", "description": "Scout from above."},
+    "Horse":          {"emoji": "🐴", "tier": 8,  "boost_cd": 1.9, "boost_luck": 10, "price": 10_000_000,   "currency": "money", "description": "A hunter's best friend."},
+    "Military Jeep":  {"emoji": "🛻", "tier": 9,  "boost_cd": 2.1, "boost_luck": 0,  "price": 500,          "currency": "gems",  "description": "Built for the toughest hunts."},
+    "Hovercraft":     {"emoji": "🚀", "tier": 10, "boost_cd": 2.4, "boost_luck": 15, "price": 2_000,        "currency": "gems",  "description": "Endgame speed machine."},
+}
