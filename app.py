@@ -385,6 +385,7 @@ _profile_log_page: dict[str, int] = {}
 _profile_record_page: dict[str, int] = {}
 _ammo_shop_page: dict[str, int] = {}
 _vehicle_shop_page: dict[str, int] = {}
+_tool_shop_page: dict[str, int] = {}
 
 # ─────────────────────────────────────────────
 # IDLE HELPERS
@@ -1382,25 +1383,52 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         ]
 
     elif tab == "tools":
-        owned = d.get("owned_tools", ["Bare Hands"])
-        tool_lines = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
+        owned      = d.get("owned_tools", ["Bare Hands"])
+        all_tools  = get_all_tools_sorted()
+        page       = _tool_shop_page.get(user_id, 0)
+        per_page   = 5
+        total_pages = max(1, (len(all_tools) + per_page - 1) // per_page)
+        page       = max(0, min(page, total_pages - 1))
+        page_tools = all_tools[page * per_page:(page + 1) * per_page]
+
+        lines    = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
         buy_opts = []
-        for name, t in get_all_tools_sorted():
+
+        for name, t in page_tools:
             if name in owned:
                 ps = "✅ Owned"
-                tool_lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
+                lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
             else:
                 ps = f"◈ {t['price']:,}" if t["currency"] == "money" else f"💎{t['price']}"
-                tool_lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
+                lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
                 buy_opts.append({
                     "label": f"{name} (T{t['tier']}) — {ps}",
                     "value": name,
                     "description": t["description"][:100],
                 })
+
+        page_nav_row = {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "◀ Prev",
+            "custom_id": f"shop:tool_prev:{user_id}",
+            "disabled": page == 0,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 2,
+            "label": f"Page {page + 1}/{total_pages}",
+            "custom_id": f"shop:tool_noop:{user_id}",
+            "disabled": True,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 1, "label": "Next ▶",
+            "custom_id": f"shop:tool_next:{user_id}",
+            "disabled": page >= total_pages - 1,
+            "flow": {"actions": []}},
+        ]}
+
         comps = [
-            {"type": 10, "content": "### 🏪 Shop — Tools\n" + "\n\n".join(tool_lines)},
+            {"type": 10, "content": "### 🏪 Shop — Tools\n" + "\n\n".join(lines)},
             {"type": 14, "divider": True, "spacing": 1},
             tab_row,
+            {"type": 14, "divider": True, "spacing": 1},
+            page_nav_row,
             {"type": 14, "divider": True, "spacing": 1},
         ]
         if buy_opts:
@@ -1408,7 +1436,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                 "placeholder": "Select tool to buy...", "min_values": 1, "max_values": 1,
                 "flows": {}, "options": buy_opts[:25]}]})
         else:
-            comps.append({"type": 10, "content": "-# You own all tools!"})
+            comps.append({"type": 10, "content": "-# You own all tools on this page!"})
         comps.append(_back_row(user_id))
 
     elif tab == "vehicles":
@@ -2701,6 +2729,17 @@ async def on_interaction(interaction: discord.Interaction):
                 data[owner_id]["boosts"][boost_key] = current + boost_amt
             save_data_users()
             await update_v2(interaction, build_shop_components(owner_id, "boosts")); return
+
+        if parts[1] == "tool_prev":
+            _tool_shop_page[owner_id] = max(0, _tool_shop_page.get(owner_id, 0) - 1)
+            await update_v2(interaction, build_shop_components(owner_id, "tools")); return
+
+        if parts[1] == "tool_next":
+            _tool_shop_page[owner_id] = _tool_shop_page.get(owner_id, 0) + 1
+            await update_v2(interaction, build_shop_components(owner_id, "tools")); return
+
+        if parts[1] == "tool_noop":
+            await interaction.response.defer(); return
 
         if parts[1] == "tool_buy":
             tool_name = values[0] if values else None
