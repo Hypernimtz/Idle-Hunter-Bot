@@ -38,7 +38,7 @@
         "biome": "village",
         "verify": {
             "needed": false,
-            "time": 135,
+            "time": 131,
             "code": "YcpT"
         },
         "idle": {
@@ -1335,7 +1335,9 @@
         "ammo_inv": {
             "Eternal Cosmos": 982
         },
-        "equipped_ammo": "Eternal Cosmos"
+        "equipped_ammo": "Eternal Cosmos",
+        "vehicle": "None",
+        "owned_vehicles": []
     },
     "1275952632367681566": {
         "money": 101010400,

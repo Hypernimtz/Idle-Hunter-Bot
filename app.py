@@ -385,6 +385,7 @@ _profile_log_page: dict[str, int] = {}
 _profile_record_page: dict[str, int] = {}
 _ammo_shop_page: dict[str, int] = {}
 _vehicle_shop_page: dict[str, int] = {}
+_tool_shop_page: dict[str, int] = {}
 
 # ─────────────────────────────────────────────
 # IDLE HELPERS
@@ -906,7 +907,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Daily",    "emoji": {"name": "📅"},  "value": "daily",    "description": "Claim your daily reward"},
             {"label": "Prestige", "emoji": {"name": "⭐"},  "value": "prestige", "description": "Prestige for permanent boosts"},
             {"label": "Idle",     "emoji": {"name": "💤"},  "value": "idle",     "description": "Manage your idle income"},
-            {"label": "Tools",    "emoji": {"name": "🔧"},  "value": "tools",    "description": "Equip tools and ammo"},
+            {"label": "Equip", "emoji": {"name": "🔧"}, "value": "equip", "description": "Equip tools, ammo and vehicles"},
             {"label": f"Mail{mail_indicator}", "emoji": {"name": "📬"}, "value": "mail", "description": "Check your mailbox"},
             {"label": "Tribe", "emoji": {"id": "1500237653591851080", "name": "Bot_Tribe"}, "value": "tribe", "description": "View your tribe"},
             {"label": "Profile",  "emoji": {"id": "1500237646121930863", "name": "User_Profile"}, "value": "profile", "description": "View your profile"},
@@ -1242,8 +1243,8 @@ def build_biome_panel_components(user_id: str) -> list:
         _back_row(user_id),
     ]}]
 
-# ── TOOLS (equip + ammo) ──────────────────────
-def build_tools_components(user_id: str) -> list:
+# ── EQUIP (tools + ammo + vehicles) ──────────────────────
+def build_equip_components(user_id: str) -> list:
     owned    = data[user_id].get("owned_tools", ["Bare Hands"])
     equipped = data[user_id].get("tool", "Bare Hands")
     t_info   = TOOLS[equipped]
@@ -1336,7 +1337,43 @@ def build_tools_components(user_id: str) -> list:
         comps.append({"type": 14, "divider": True, "spacing": 1})
         comps.append(ammo_dropdown if ammo_dropdown else {"type": 10, "content": f"-# No {AMMO_TYPE_LABELS.get(ammo_type,'ammo')} owned."})
 
+    # Vehicle equip section
+    equipped_vehicle = data[user_id].get("vehicle", "None")
+    owned_vehicles   = data[user_id].get("owned_vehicles", [])
+    v_info_eq        = VEHICLES.get(equipped_vehicle, {})
+
+    if owned_vehicles:
+        vehicle_opts = [
+            {
+                "label": f"{VEHICLES[n]['emoji']} {n}",
+                "value": n,
+                "description": f"-{VEHICLES[n]['boost_cd']}s cooldown · T{VEHICLES[n]['tier']}",
+                "default": n == equipped_vehicle,
+            }
+            for n in owned_vehicles
+        ]
+        vehicle_section = [
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 10, "content": (
+                f"**Vehicle:**\n"
+                f"-# {v_info_eq.get('emoji','🚗')} **{equipped_vehicle}** — -{v_info_eq.get('boost_cd',0)}s cooldown"
+                if equipped_vehicle and equipped_vehicle != "None"
+                else "**Vehicle:**\n-# None equipped."
+            )},
+            {"type": 10, "content": "**Select Vehicle to Equip**"},
+            {"type": 1, "components": [{"type": 3, "custom_id": f"tools:vehicle_equip:{user_id}",
+                "placeholder": "Select vehicle to equip...", "min_values": 1, "max_values": 1,
+                "flows": {}, "options": vehicle_opts[:25]}]},
+        ]
+    else:
+        vehicle_section = [
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 10, "content": "**Vehicle:**\n-# No vehicles owned. Buy one in /shop → Vehicles!"},
+        ]
+
+    comps += vehicle_section
     comps.append(_back_row(user_id))
+
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
 
 # ── SHOP (tabbed: Boosts / Tools / Ammo) ──────
@@ -1382,25 +1419,52 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         ]
 
     elif tab == "tools":
-        owned = d.get("owned_tools", ["Bare Hands"])
-        tool_lines = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
+        owned      = d.get("owned_tools", ["Bare Hands"])
+        all_tools  = get_all_tools_sorted()
+        page       = _tool_shop_page.get(user_id, 0)
+        per_page   = 5
+        total_pages = max(1, (len(all_tools) + per_page - 1) // per_page)
+        page       = max(0, min(page, total_pages - 1))
+        page_tools = all_tools[page * per_page:(page + 1) * per_page]
+
+        lines    = [f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"]
         buy_opts = []
-        for name, t in get_all_tools_sorted():
+
+        for name, t in page_tools:
             if name in owned:
                 ps = "✅ Owned"
-                tool_lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
+                lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
             else:
                 ps = f"◈ {t['price']:,}" if t["currency"] == "money" else f"💎{t['price']}"
-                tool_lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
+                lines.append(f"{t['emoji']} **{name}** (T{t['tier']}) — {ps}\n-# {t['description']}")
                 buy_opts.append({
                     "label": f"{name} (T{t['tier']}) — {ps}",
                     "value": name,
                     "description": t["description"][:100],
                 })
+
+        page_nav_row = {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "◀ Prev",
+            "custom_id": f"shop:tool_prev:{user_id}",
+            "disabled": page == 0,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 2,
+            "label": f"Page {page + 1}/{total_pages}",
+            "custom_id": f"shop:tool_noop:{user_id}",
+            "disabled": True,
+            "flow": {"actions": []}},
+            {"type": 2, "style": 1, "label": "Next ▶",
+            "custom_id": f"shop:tool_next:{user_id}",
+            "disabled": page >= total_pages - 1,
+            "flow": {"actions": []}},
+        ]}
+
         comps = [
-            {"type": 10, "content": "### 🏪 Shop — Tools\n" + "\n\n".join(tool_lines)},
+            {"type": 10, "content": "### 🏪 Shop — Tools\n" + "\n\n".join(lines)},
             {"type": 14, "divider": True, "spacing": 1},
             tab_row,
+            {"type": 14, "divider": True, "spacing": 1},
+            page_nav_row,
             {"type": 14, "divider": True, "spacing": 1},
         ]
         if buy_opts:
@@ -1408,7 +1472,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                 "placeholder": "Select tool to buy...", "min_values": 1, "max_values": 1,
                 "flows": {}, "options": buy_opts[:25]}]})
         else:
-            comps.append({"type": 10, "content": "-# You own all tools!"})
+            comps.append({"type": 10, "content": "-# You own all tools on this page!"})
         comps.append(_back_row(user_id))
 
     elif tab == "vehicles":
@@ -2475,8 +2539,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str, panel: str, 
         await update_v2(interaction, build_biome_panel_components(user_id))
     elif panel == "color":
         await update_v2(interaction, build_color_panel_components(user_id))
-    elif panel == "tools":
-        await update_v2(interaction, build_tools_components(user_id))
+    elif panel == "equip":
+        await update_v2(interaction, build_equip_components(user_id))
     elif panel == "idle":
         await update_v2(interaction, build_idle_components(user_id))
     elif panel == "daily":
@@ -2656,7 +2720,7 @@ async def on_interaction(interaction: discord.Interaction):
                 if get_tool_ammo_type(tool_name) != get_tool_ammo_type(old_tool):
                     data[owner_id]["equipped_ammo"] = None
                 save_data_users()
-            await update_v2(interaction, build_tools_components(owner_id)); return
+            await update_v2(interaction, build_equip_components(owner_id)); return
 
         if parts[1] == "ammo_equip":
             ammo_name = values[0] if values else None
@@ -2667,7 +2731,7 @@ async def on_interaction(interaction: discord.Interaction):
                     save_data_users()
                 else:
                     await send_ephemeral_embed(interaction, "❌ You don't own that ammo.", discord.Color.red()); return
-            await update_v2(interaction, build_tools_components(owner_id)); return
+            await update_v2(interaction, build_equip_components(owner_id)); return
 
     # ── SHOP ──────────────────────────────────
     if parts[0] == "shop":
@@ -2701,6 +2765,17 @@ async def on_interaction(interaction: discord.Interaction):
                 data[owner_id]["boosts"][boost_key] = current + boost_amt
             save_data_users()
             await update_v2(interaction, build_shop_components(owner_id, "boosts")); return
+
+        if parts[1] == "tool_prev":
+            _tool_shop_page[owner_id] = max(0, _tool_shop_page.get(owner_id, 0) - 1)
+            await update_v2(interaction, build_shop_components(owner_id, "tools")); return
+
+        if parts[1] == "tool_next":
+            _tool_shop_page[owner_id] = _tool_shop_page.get(owner_id, 0) + 1
+            await update_v2(interaction, build_shop_components(owner_id, "tools")); return
+
+        if parts[1] == "tool_noop":
+            await interaction.response.defer(); return
 
         if parts[1] == "tool_buy":
             tool_name = values[0] if values else None
@@ -3624,14 +3699,14 @@ async def color_cmd(interaction: discord.Interaction):
     await maybe_send_mail_notification(interaction, user_id)
 
 
-@bot.tree.command(name="tools", description="Equip your hunting tools and ammo")
+@bot.tree.command(name="equip", description="Equip your tools, ammo and vehicles")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
-async def tools_cmd(interaction: discord.Interaction):
+async def equip_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "tools")
-    await send_v2_followup(interaction, build_tools_components(user_id))
+    nav_push(user_id, "equip")
+    await send_v2_followup(interaction, build_equip_components(user_id))
     await maybe_send_mail_notification(interaction, user_id)
 
 
