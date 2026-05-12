@@ -27,7 +27,7 @@ BOT_ADMIN_ID = [
 def is_admin(interaction: discord.Interaction) -> bool:
     return str(interaction.user.id) in BOT_ADMIN_ID
 
-SUGGESTION_CHANNEL_ID = 0  # replace with your channel ID
+SUGGESTION_CHANNEL_ID = 1503581602234765322 # replace with your channel ID
 
 # ─────────────────────────────────────────────
 # DEV MAIL
