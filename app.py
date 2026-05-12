@@ -731,71 +731,6 @@ async def send_ephemeral_embed(interaction, description, color):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ─────────────────────────────────────────────
-# MAINTENANCE CHECK HELPER
-# ─────────────────────────────────────────────
-
-async def check_maintenance(interaction: discord.Interaction) -> bool:
-    """
-    Returns True (and blocks) if in full maintenance mode.
-    If only in warning mode, sends ONE ephemeral notice per user then lets them proceed.
-    """
-    global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
-
-    if str(interaction.user.id) in BOT_ADMIN_ID:
-        await interaction.response.send_message(
-            embed = discord.Embed(
-                title = "Maintenance Bypassed",
-                description = "Reason: You are an admin of the bot.",
-                color = discord.Color.green()
-            ),
-            ephemeral=True
-        )
-        return False
-
-    if interaction.channel_id:
-        maintenance_channels.add(interaction.channel_id)
-
-    if maintenance_mode:
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="🔧 Bot Maintenance",
-                description=(
-                    "**Idle Hunter is currently under maintenance.**\n\n"
-                    f"Reason: {maintenance_message}\n"
-                    "Our team is working hard to improve your hunting experience.\n"
-                    "Please be patient — we'll be back shortly!\n\n"
-                    "-# All your data is safe. See you soon, hunter. 🏕️"
-                ),
-                color=discord.Color.orange()
-            ),
-            ephemeral=True
-        )
-        return True
-
-    if maintenance_warning:
-        user_id = str(interaction.user.id)
-        if user_id not in _maintenance_warned:
-            _maintenance_warned.add(user_id)
-            try:
-                await interaction.followup.send(
-                    embed=discord.Embed(
-                        title="⚠️ Maintenance Soon",
-                        description=(
-                            "**Idle Hunter will enter maintenance shortly.**\n\n"
-                            f"Reason: {maintenance_message}\n\n"
-                            "Please finish any important actions before the bot goes offline.\n"
-                            "-# You will only see this message once."
-                        ),
-                        color=discord.Color.yellow()
-                    ),
-                    ephemeral=True
-                )
-            except Exception:
-                pass
-
-    return False
-
-# ─────────────────────────────────────────────
 # MAIL NOTIFICATION HELPER
 # ─────────────────────────────────────────────
 
@@ -3551,6 +3486,13 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
 
     if interaction.channel_id:
         maintenance_channels.add(interaction.channel_id)
+
+    # Admin bypass
+    if str(interaction.user.id) in BOT_ADMIN_ID:
+        user_id = str(interaction.user.id)
+        init_user(user_id)
+        await update_user_servers(user_id, interaction.guild)
+        return user_id
 
     # Full maintenance — block entirely
     if maintenance_mode:
