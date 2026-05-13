@@ -4047,14 +4047,16 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
 async def _common_init(interaction: discord.Interaction) -> str | None:
     global maintenance_mode, maintenance_warning, maintenance_message, _maintenance_warned
 
-    user_id = str(interaction.user.id)  # ← move to very top
+    user_id = str(interaction.user.id)
 
-    # Admin bypass
+    # Admin bypass — no defer yet
     if user_id in BOT_ADMIN_ID:
         init_user(user_id)
         await update_user_servers(user_id, interaction.guild)
+        await interaction.response.defer()   # ← defer here for admins
         return user_id
 
+    # Maintenance — no defer, immediate response
     if maintenance_mode:
         await interaction.response.send_message(
             embed=discord.Embed(
@@ -4075,6 +4077,7 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
     init_ban_record(user_id)
     await update_user_servers(user_id, interaction.guild)
 
+    # Ban — immediate type:4 response, no defer
     if is_banned(user_id):
         await _raw(interaction, {
             "type": 4,
@@ -4086,6 +4089,7 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
         })
         return None
 
+    # Only defer here, after all immediate-response paths are handled
     await interaction.response.defer()
 
     tick_verify(user_id)
