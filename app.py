@@ -57,65 +57,6 @@ INV_DISPLAY_MAX       = 10
 AMMO_MAX_STACK        = 9_999   # hard cap per ammo type
 
 # ─────────────────────────────────────────────
-# ─── GAMBLE ──────────────────────────────────
-# ─────────────────────────────────────────────
- 
-GAMBLE_COOLDOWN = 5  # seconds between gambles
- 
-# Slot symbols — uses animal emojis if available, falls back to biome emojis
-SLOT_SYMBOLS = (
-    [animal_emoji(a) for a in list(ANIMAL_DATA.keys())[:8]]
-    if ANIMAL_DATA else
-    list(BIOME_EMOJIS.values())[:8]
-)
-# Deduplicate and cap at 6 symbols for clean display
-_seen = []
-for _s in SLOT_SYMBOLS:
-    if _s not in _seen:
-        _seen.append(_s)
-SLOT_SYMBOLS = _seen[:6]
- 
-# Slot payouts (multiplier on bet)
-SLOT_PAYOUTS = {
-    3: 10,   # three of a kind
-    2: 2,    # two of a kind
-    0: 0,    # no match
-}
- 
-# Blackjack deck helpers
-BJ_SUITS  = ["♠", "♥", "♦", "♣"]
-BJ_RANKS  = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
- 
-def _bj_deck() -> list:
-    deck = [f"{r}{s}" for s in BJ_SUITS for r in BJ_RANKS]
-    random.shuffle(deck)
-    return deck
- 
-def _bj_value(card: str) -> int:
-    rank = card[:-1]
-    if rank in ("J", "Q", "K"):
-        return 10
-    if rank == "A":
-        return 11
-    return int(rank)
- 
-def _bj_hand_value(hand: list) -> int:
-    total = sum(_bj_value(c) for c in hand)
-    aces  = sum(1 for c in hand if c[:-1] == "A")
-    while total > 21 and aces:
-        total -= 10
-        aces  -= 1
-    return total
- 
-def _bj_hand_str(hand: list, hide_second: bool = False) -> str:
-    if hide_second and len(hand) >= 2:
-        return f"{hand[0]}  🂠"
-    return "  ".join(hand)
- 
-_bj_state: dict[str, dict] = {}
- 
-
-# ─────────────────────────────────────────────
 # TOOLS
 # ─────────────────────────────────────────────
 
@@ -479,6 +420,66 @@ def init_tribe(tribe_name, user_id):
         "luck_boost": 0, "sell_price_boost": 0, "xp_boost": 0,
     }.items():
         tribe_data[tribe_name].setdefault(k, v)
+
+
+# ─────────────────────────────────────────────
+# ─── GAMBLE ──────────────────────────────────
+# ─────────────────────────────────────────────
+ 
+GAMBLE_COOLDOWN = 5  # seconds between gambles
+ 
+# Slot symbols — uses animal emojis if available, falls back to biome emojis
+SLOT_SYMBOLS = (
+    [animal_emoji(a) for a in list(ANIMAL_DATA.keys())[:8]]
+    if ANIMAL_DATA else
+    list(BIOME_EMOJIS.values())[:8]
+)
+# Deduplicate and cap at 6 symbols for clean display
+_seen = []
+for _s in SLOT_SYMBOLS:
+    if _s not in _seen:
+        _seen.append(_s)
+SLOT_SYMBOLS = _seen[:6]
+ 
+# Slot payouts (multiplier on bet)
+SLOT_PAYOUTS = {
+    3: 10,   # three of a kind
+    2: 2,    # two of a kind
+    0: 0,    # no match
+}
+ 
+# Blackjack deck helpers
+BJ_SUITS  = ["♠", "♥", "♦", "♣"]
+BJ_RANKS  = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+ 
+def _bj_deck() -> list:
+    deck = [f"{r}{s}" for s in BJ_SUITS for r in BJ_RANKS]
+    random.shuffle(deck)
+    return deck
+ 
+def _bj_value(card: str) -> int:
+    rank = card[:-1]
+    if rank in ("J", "Q", "K"):
+        return 10
+    if rank == "A":
+        return 11
+    return int(rank)
+ 
+def _bj_hand_value(hand: list) -> int:
+    total = sum(_bj_value(c) for c in hand)
+    aces  = sum(1 for c in hand if c[:-1] == "A")
+    while total > 21 and aces:
+        total -= 10
+        aces  -= 1
+    return total
+ 
+def _bj_hand_str(hand: list, hide_second: bool = False) -> str:
+    if hide_second and len(hand) >= 2:
+        return f"{hand[0]}  🂠"
+    return "  ".join(hand)
+ 
+_bj_state: dict[str, dict] = {}
+ 
 
 # ─────────────────────────────────────────────
 # BOOST HELPERS
