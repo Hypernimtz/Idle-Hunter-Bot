@@ -4046,7 +4046,35 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
 
 async def _common_init(interaction: discord.Interaction) -> str | None:
     global maintenance_mode, maintenance_warning, maintenance_message, _maintenance_warned
-    
+
+    user_id = str(interaction.user.id)  # ← move to very top
+
+    # Admin bypass
+    if user_id in BOT_ADMIN_ID:
+        init_user(user_id)
+        await update_user_servers(user_id, interaction.guild)
+        return user_id
+
+    if maintenance_mode:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="🔧 Bot Maintenance",
+                description=(
+                    "**Idle Hunter is currently under maintenance.**\n\n"
+                    f"Reason: {maintenance_message}\n"
+                    "Please be patient — we'll be back shortly!\n\n"
+                    "-# All your data is safe. See you soon, hunter. 🏕️"
+                ),
+                color=discord.Color.orange(),
+            ),
+            ephemeral=True,
+        )
+        return None
+
+    init_user(user_id)
+    init_ban_record(user_id)
+    await update_user_servers(user_id, interaction.guild)
+
     if is_banned(user_id):
         await _raw(interaction, {
             "type": 4,
@@ -4059,48 +4087,12 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
         return None
 
     await interaction.response.defer()
- 
-    if interaction.channel_id:
-        maintenance_channels.add(interaction.channel_id)
-        save_config()
- 
-    # Admin bypass — always let admins through
-    if str(interaction.user.id) in BOT_ADMIN_ID:
-        user_id = str(interaction.user.id)
-        init_user(user_id)
-        await update_user_servers(user_id, interaction.guild)
-        return user_id
- 
-    # Full maintenance — block entirely
-    if maintenance_mode:
-        await interaction.followup.send(
-            embed=discord.Embed(
-                title="🔧 Bot Maintenance",
-                description=(
-                    "**Idle Hunter is currently under maintenance.**\n\n"
-                    f"Reason: {maintenance_message}\n"
-                    "Our team is working hard to improve your hunting experience.\n"
-                    "Please be patient — we'll be back shortly!\n\n"
-                    "-# All your data is safe. See you soon, hunter. 🏕️"
-                ),
-                color=discord.Color.orange(),
-            ),
-            ephemeral=True,
-        )
-        return None
- 
-    user_id = str(interaction.user.id)
-    init_user(user_id)
-    init_ban_record(user_id)
-    await update_user_servers(user_id, interaction.guild)
+
     tick_verify(user_id)
-    
-    # ─────────────────────────────────────────
- 
     if data[user_id]["verify"]["needed"]:
         await interaction.followup.send(embed=verify_needed_embed(user_id), ephemeral=True)
         return None
- 
+
     if maintenance_warning and user_id not in _maintenance_warned:
         _maintenance_warned.add(user_id)
         try:
@@ -4110,7 +4102,6 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
                     description=(
                         "**Idle Hunter will enter maintenance shortly.**\n\n"
                         f"Reason: {maintenance_message}\n\n"
-                        "Please finish any important actions before the bot goes offline.\n"
                         "-# You will only see this message once."
                     ),
                     color=discord.Color.yellow(),
@@ -4119,7 +4110,7 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
             )
         except Exception:
             pass
- 
+
     return user_id
 
 
