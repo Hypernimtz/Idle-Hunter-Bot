@@ -29,6 +29,7 @@ def is_admin(interaction: discord.Interaction) -> bool:
 
 SUGGESTION_CHANNEL_ID = 1503581602234765322 # replace with your channel ID
 BAN_APPEAL_CHANNEL_ID = 0  # replace with your channel ID
+REPORTS_CHANNEL_ID = 0
 
 # ─────────────────────────────────────────────
 # DEV MAIL
@@ -54,6 +55,65 @@ PRESTIGE_MIN_MONEY    = 100_000_000_000
 MAX_LOG_ENTRIES       = 50
 INV_DISPLAY_MAX       = 10
 AMMO_MAX_STACK        = 9_999   # hard cap per ammo type
+
+# ─────────────────────────────────────────────
+# ─── GAMBLE ──────────────────────────────────
+# ─────────────────────────────────────────────
+ 
+GAMBLE_COOLDOWN = 5  # seconds between gambles
+ 
+# Slot symbols — uses animal emojis if available, falls back to biome emojis
+SLOT_SYMBOLS = (
+    [animal_emoji(a) for a in list(ANIMAL_DATA.keys())[:8]]
+    if ANIMAL_DATA else
+    list(BIOME_EMOJIS.values())[:8]
+)
+# Deduplicate and cap at 6 symbols for clean display
+_seen = []
+for _s in SLOT_SYMBOLS:
+    if _s not in _seen:
+        _seen.append(_s)
+SLOT_SYMBOLS = _seen[:6]
+ 
+# Slot payouts (multiplier on bet)
+SLOT_PAYOUTS = {
+    3: 10,   # three of a kind
+    2: 2,    # two of a kind
+    0: 0,    # no match
+}
+ 
+# Blackjack deck helpers
+BJ_SUITS  = ["♠", "♥", "♦", "♣"]
+BJ_RANKS  = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+ 
+def _bj_deck() -> list:
+    deck = [f"{r}{s}" for s in BJ_SUITS for r in BJ_RANKS]
+    random.shuffle(deck)
+    return deck
+ 
+def _bj_value(card: str) -> int:
+    rank = card[:-1]
+    if rank in ("J", "Q", "K"):
+        return 10
+    if rank == "A":
+        return 11
+    return int(rank)
+ 
+def _bj_hand_value(hand: list) -> int:
+    total = sum(_bj_value(c) for c in hand)
+    aces  = sum(1 for c in hand if c[:-1] == "A")
+    while total > 21 and aces:
+        total -= 10
+        aces  -= 1
+    return total
+ 
+def _bj_hand_str(hand: list, hide_second: bool = False) -> str:
+    if hide_second and len(hand) >= 2:
+        return f"{hand[0]}  🂠"
+    return "  ".join(hand)
+ 
+_bj_state: dict[str, dict] = {}
+ 
 
 # ─────────────────────────────────────────────
 # TOOLS
@@ -1978,6 +2038,211 @@ def build_prestige_done_components(user_id: str, new_prestige: int) -> list:
         ]},
     ]}]
 
+# ─────────────────────────────────────────────
+# PANEL BUILDERS
+# ─────────────────────────────────────────────
+ 
+def build_gamble_menu(user_id: str) -> list:
+    d = data[user_id]
+    content = (
+        f"### 🎰 Gamble\n"
+        f"Balance: **◈ {d['money']:,}**\n\n"
+        f"-# All games use ◈ money. Bust on blackjack = lose everything."
+    )
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": content},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "🪙 Coinflip",
+             "custom_id": f"gamble:menu:coinflip:{user_id}"},
+            {"type": 2, "style": 1, "label": "🎰 Slots",
+             "custom_id": f"gamble:menu:slots:{user_id}"},
+            {"type": 2, "style": 1, "label": "🃏 Blackjack",
+             "custom_id": f"gamble:menu:blackjack:{user_id}"},
+        ]},
+        _back_row(user_id),
+    ]}]
+ 
+ 
+# ── COINFLIP ──────────────────────────────────
+ 
+def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None) -> list:
+    d = data[user_id]
+    if state == "pick":
+        content = (
+            f"### 🪙 Coinflip\n"
+            f"Balance: **◈ {d['money']:,}**\n\n"
+            f"Pick heads or tails — win to double your bet, lose to lose it all.\n"
+            f"-# Enter your bet amount then pick a side."
+        )
+        comps = [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 1, "label": "Bet & Pick Heads",
+                 "custom_id": f"gamble:cf:heads:{user_id}"},
+                {"type": 2, "style": 1, "label": "Bet & Pick Tails",
+                 "custom_id": f"gamble:cf:tails:{user_id}"},
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"gamble:back:{user_id}"},
+            ]},
+        ]
+    else:
+        won      = result["won"]
+        bet      = result["bet"]
+        flip     = result["flip"]
+        pick     = result["pick"]
+        outcome  = f"**{'Heads' if flip == 'heads' else 'Tails'}!**"
+        if won:
+            body = (
+                f"### 🪙 Coinflip — {'✅ You won!' }\n"
+                f"{outcome} You picked **{'Heads' if pick == 'heads' else 'Tails'}** — correct!\n\n"
+                f"**+◈ {bet:,}** · Balance: **◈ {d['money']:,}**"
+            )
+        else:
+            body = (
+                f"### 🪙 Coinflip — ❌ You lost!\n"
+                f"{outcome} You picked **{'Heads' if pick == 'heads' else 'Tails'}** — wrong!\n\n"
+                f"**-◈ {bet:,}** · Balance: **◈ {d['money']:,}**"
+            )
+        comps = [
+            {"type": 10, "content": body},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 3, "label": "Flip Again",
+                 "custom_id": f"gamble:menu:coinflip:{user_id}"},
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"gamble:back:{user_id}"},
+            ]},
+        ]
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+ 
+ 
+# ── SLOTS ─────────────────────────────────────
+ 
+def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> list:
+    d = data[user_id]
+    if state == "bet":
+        symbols_preview = "  ".join(SLOT_SYMBOLS)
+        content = (
+            f"### 🎰 Slots\n"
+            f"Balance: **◈ {d['money']:,}**\n\n"
+            f"Symbols: {symbols_preview}\n\n"
+            f"**Payouts:**\n"
+            f"-# Three of a kind → **×10**\n"
+            f"-# Two of a kind → **×2**\n"
+            f"-# No match → **lose bet**"
+        )
+        comps = [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 3, "label": "🎰 Spin!",
+                 "custom_id": f"gamble:slots:spin:{user_id}"},
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"gamble:back:{user_id}"},
+            ]},
+        ]
+    else:
+        reels    = result["reels"]
+        bet      = result["bet"]
+        payout   = result["payout"]
+        mult     = result["mult"]
+        reel_str = f"[ {reels[0]} | {reels[1]} | {reels[2]} ]"
+ 
+        if mult == 10:
+            outcome = f"✅ **Three of a kind!** ×10 · **+◈ {payout - bet:,}**"
+        elif mult == 2:
+            outcome = f"✅ **Two of a kind!** ×2 · **+◈ {payout - bet:,}**"
+        else:
+            outcome = f"❌ **No match.** · **-◈ {bet:,}**"
+ 
+        body = (
+            f"### 🎰 Slots\n"
+            f"{reel_str}\n\n"
+            f"{outcome}\n"
+            f"Balance: **◈ {d['money']:,}**"
+        )
+        comps = [
+            {"type": 10, "content": body},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 3, "label": "🎰 Spin Again",
+                 "custom_id": f"gamble:slots:spin:{user_id}"},
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"gamble:back:{user_id}"},
+            ]},
+        ]
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+ 
+ 
+# ── BLACKJACK ─────────────────────────────────
+ 
+def build_blackjack_panel(user_id: str) -> list:
+    st      = _bj_state.get(user_id)
+    d       = data[user_id]
+ 
+    if not st:
+        content = (
+            f"### 🃏 Blackjack\n"
+            f"Balance: **◈ {d['money']:,}**\n\n"
+            f"Get closer to 21 than the dealer without going over.\n"
+            f"**Bust = lose your entire bet.**\n\n"
+            f"-# Dealer stands on 17. Blackjack pays ×2.5."
+        )
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 3, "label": "🃏 Place Bet & Deal",
+                 "custom_id": f"gamble:bj:deal:{user_id}"},
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"gamble:back:{user_id}"},
+            ]},
+        ]}]
+ 
+    player_val = _bj_hand_value(st["player"])
+    dealer_val = _bj_hand_value(st["dealer"])
+    bet        = st["bet"]
+    done       = st.get("done", False)
+ 
+    if not done:
+        content = (
+            f"### 🃏 Blackjack · Bet: ◈ {bet:,}\n\n"
+            f"**Your hand:** {_bj_hand_str(st['player'])} — **{player_val}**\n"
+            f"**Dealer:** {_bj_hand_str(st['dealer'], hide_second=True)}\n\n"
+            f"-# Balance: ◈ {d['money']:,}"
+        )
+        action_row = {"type": 1, "components": [
+            {"type": 2, "style": 3, "label": "Hit",
+             "custom_id": f"gamble:bj:hit:{user_id}"},
+            {"type": 2, "style": 1, "label": "Stand",
+             "custom_id": f"gamble:bj:stand:{user_id}"},
+        ]}
+    else:
+        outcome = st.get("outcome", "")
+        net     = st.get("net", 0)
+        sign    = "+" if net >= 0 else ""
+        content = (
+            f"### 🃏 Blackjack · {outcome}\n\n"
+            f"**Your hand:** {_bj_hand_str(st['player'])} — **{player_val}**\n"
+            f"**Dealer:** {_bj_hand_str(st['dealer'])} — **{dealer_val}**\n\n"
+            f"**{sign}◈ {net:,}** · Balance: **◈ {d['money']:,}**"
+        )
+        action_row = {"type": 1, "components": [
+            {"type": 2, "style": 3, "label": "🃏 Play Again",
+             "custom_id": f"gamble:menu:blackjack:{user_id}"},
+            {"type": 2, "style": 2, "label": "◀ Back",
+             "custom_id": f"gamble:back:{user_id}"},
+        ]}
+ 
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": content},
+        {"type": 14, "divider": True, "spacing": 1},
+        action_row,
+    ]}]
+ 
+
 # ── HELP ──────────────────────────────────────
 def build_help_components(user_id: str) -> list:
     cmds = sorted(bot.tree.get_commands(), key=lambda c: c.name)
@@ -3712,6 +3977,96 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_ephemeral_embed(interaction, "❌ No appeal chances left.", discord.Color.red()); return
             await interaction.response.send_modal(BanAppealModal(owner_id)); return
 
+    if parts[0] == "gamble":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_embed(interaction, "Not yours.", discord.Color.red()); return
+
+        init_user(owner_id)
+
+        # Cooldown check (skip for menu/back navigation)
+        if parts[1] not in ("menu", "back"):
+            now          = time.time()
+            last_gamble  = data[owner_id].get("last_gamble", 0)
+            if now - last_gamble < GAMBLE_COOLDOWN:
+                remaining = GAMBLE_COOLDOWN - (now - last_gamble)
+                await send_ephemeral_embed(
+                    interaction,
+                    f"⏳ Wait **{remaining:.1f}s** before gambling again.",
+                    discord.Color.orange(),
+                ); return
+
+        if parts[1] == "back":
+            await update_v2(interaction, build_gamble_menu(owner_id)); return
+
+        if parts[1] == "menu":
+            game = parts[2]
+            if game == "coinflip":
+                await update_v2(interaction, build_coinflip_panel(owner_id)); return
+            if game == "slots":
+                await update_v2(interaction, build_slots_panel(owner_id)); return
+            if game == "blackjack":
+                _bj_state.pop(owner_id, None)   # clear any old game
+                await update_v2(interaction, build_blackjack_panel(owner_id)); return
+
+        # ── Coinflip ──────────────────────────────
+        if parts[1] == "cf":
+            pick = parts[2]  # "heads" or "tails"
+            await interaction.response.send_modal(CoinflipBetModal(owner_id, pick)); return
+
+        # ── Slots ─────────────────────────────────
+        if parts[1] == "slots" and parts[2] == "spin":
+            await interaction.response.send_modal(SlotsBetModal(owner_id)); return
+
+        # ── Blackjack ─────────────────────────────
+        if parts[1] == "bj":
+            action = parts[2]
+
+            if action == "deal":
+                await interaction.response.send_modal(BlackjackBetModal(owner_id)); return
+
+            st = _bj_state.get(owner_id)
+            if not st or st.get("done"):
+                await update_v2(interaction, build_blackjack_panel(owner_id)); return
+
+            if action == "hit":
+                card = st["deck"].pop()
+                st["player"].append(card)
+                val  = _bj_hand_value(st["player"])
+                if val > 21:
+                    # Bust — already deducted bet on deal, nothing to refund
+                    st.update({"done": True, "outcome": "💥 Bust!", "net": -st["bet"]})
+                elif val == 21:
+                    # Auto-stand on 21
+                    action = "stand"   # fall through to stand logic below
+                else:
+                    save_data_users()
+                    await update_v2(interaction, build_blackjack_panel(owner_id)); return
+
+            if action == "stand":
+                st = _bj_state.get(owner_id)
+                # Dealer draws until 17+
+                while _bj_hand_value(st["dealer"]) < 17:
+                    st["dealer"].append(st["deck"].pop())
+                p_val = _bj_hand_value(st["player"])
+                d_val = _bj_hand_value(st["dealer"])
+                bet   = st["bet"]
+                if d_val > 21 or p_val > d_val:
+                    payout = bet * 2
+                    data[owner_id]["money"] += payout
+                    data[owner_id]["total_money_earned"] = (
+                        data[owner_id].get("total_money_earned", 0) + bet
+                    )
+                    st.update({"done": True, "outcome": "✅ You win!", "net": bet})
+                elif p_val == d_val:
+                    data[owner_id]["money"] += bet   # push — refund
+                    st.update({"done": True, "outcome": "🤝 Push!", "net": 0})
+                else:
+                    st.update({"done": True, "outcome": "❌ Dealer wins.", "net": -bet})
+
+            save_data_users()
+            await update_v2(interaction, build_blackjack_panel(owner_id)); return
+
     # ── PROFILE ───────────────────────────────
     if parts[0] == "profile":
         owner_id = parts[-1]
@@ -4039,6 +4394,131 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
             "✅ Your appeal has been submitted. Admins will review it shortly.",
             discord.Color.green(),
         )
+
+# ─────────────────────────────────────────────
+# MODALS
+# ─────────────────────────────────────────────
+ 
+class CoinflipBetModal(discord.ui.Modal, title="Coinflip — Place Your Bet"):
+    bet_input = discord.ui.TextInput(
+        label="Bet amount (◈)",
+        placeholder="e.g. 1000, 50K, 1M",
+        required=True,
+        max_length=20,
+    )
+    def __init__(self, user_id: str, pick: str):
+        super().__init__()
+        self.user_id = str(user_id)
+        self.pick    = pick  # "heads" or "tails"
+ 
+    async def on_submit(self, interaction: discord.Interaction):
+        parsed = parse_amount(self.bet_input.value)
+        if not parsed or parsed <= 0:
+            await send_ephemeral_embed(interaction, "❌ Invalid amount.", discord.Color.red()); return
+        if data[self.user_id]["money"] < parsed:
+            await send_ephemeral_embed(interaction, f"❌ Not enough ◈.", discord.Color.red()); return
+ 
+        flip = random.choice(["heads", "tails"])
+        won  = flip == self.pick
+ 
+        if won:
+            data[self.user_id]["money"] += parsed
+        else:
+            data[self.user_id]["money"] -= parsed
+        data[self.user_id]["total_money_earned"] = (
+            data[self.user_id].get("total_money_earned", 0) + parsed if won
+            else data[self.user_id].get("total_money_earned", 0)
+        )
+        data[self.user_id]["last_gamble"] = time.time()
+        save_data_users()
+ 
+        result = {"won": won, "bet": parsed, "flip": flip, "pick": self.pick}
+        await update_v2(interaction, build_coinflip_panel(self.user_id, "result", result))
+ 
+ 
+class SlotsBetModal(discord.ui.Modal, title="Slots — Place Your Bet"):
+    bet_input = discord.ui.TextInput(
+        label="Bet amount (◈)",
+        placeholder="e.g. 1000, 50K, 1M",
+        required=True,
+        max_length=20,
+    )
+    def __init__(self, user_id: str):
+        super().__init__()
+        self.user_id = str(user_id)
+ 
+    async def on_submit(self, interaction: discord.Interaction):
+        parsed = parse_amount(self.bet_input.value)
+        if not parsed or parsed <= 0:
+            await send_ephemeral_embed(interaction, "❌ Invalid amount.", discord.Color.red()); return
+        if data[self.user_id]["money"] < parsed:
+            await send_ephemeral_embed(interaction, f"❌ Not enough ◈.", discord.Color.red()); return
+ 
+        reels = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
+        counts = max(reels.count(s) for s in set(reels))
+ 
+        mult   = SLOT_PAYOUTS.get(counts if counts >= 2 else 0, 0)
+        payout = parsed * mult
+ 
+        data[self.user_id]["money"] -= parsed       # deduct bet
+        data[self.user_id]["money"] += payout       # add winnings (0 if no match)
+        if payout > parsed:
+            data[self.user_id]["total_money_earned"] = (
+                data[self.user_id].get("total_money_earned", 0) + (payout - parsed)
+            )
+        data[self.user_id]["last_gamble"] = time.time()
+        save_data_users()
+ 
+        result = {"reels": reels, "bet": parsed, "payout": payout, "mult": mult}
+        await update_v2(interaction, build_slots_panel(self.user_id, "result", result))
+ 
+ 
+class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
+    bet_input = discord.ui.TextInput(
+        label="Bet amount (◈)",
+        placeholder="e.g. 1000, 50K, 1M",
+        required=True,
+        max_length=20,
+    )
+    def __init__(self, user_id: str):
+        super().__init__()
+        self.user_id = str(user_id)
+ 
+    async def on_submit(self, interaction: discord.Interaction):
+        parsed = parse_amount(self.bet_input.value)
+        if not parsed or parsed <= 0:
+            await send_ephemeral_embed(interaction, "❌ Invalid amount.", discord.Color.red()); return
+        if data[self.user_id]["money"] < parsed:
+            await send_ephemeral_embed(interaction, f"❌ Not enough ◈.", discord.Color.red()); return
+ 
+        deck   = _bj_deck()
+        player = [deck.pop(), deck.pop()]
+        dealer = [deck.pop(), deck.pop()]
+ 
+        _bj_state[self.user_id] = {
+            "bet": parsed, "deck": deck,
+            "player": player, "dealer": dealer,
+            "done": False,
+        }
+        data[self.user_id]["money"]      -= parsed
+        data[self.user_id]["last_gamble"] = time.time()
+        save_data_users()
+ 
+        # Check immediate blackjack
+        if _bj_hand_value(player) == 21:
+            payout = int(parsed * 2.5)
+            data[self.user_id]["money"] += payout
+            data[self.user_id]["total_money_earned"] = (
+                data[self.user_id].get("total_money_earned", 0) + (payout - parsed)
+            )
+            save_data_users()
+            _bj_state[self.user_id].update({
+                "done": True,
+                "outcome": "🃏 Blackjack!",
+                "net": payout - parsed,
+            })
+ 
+        await update_v2(interaction, build_blackjack_panel(self.user_id))
 
 # ─────────────────────────────────────────────
 # SLASH COMMANDS
@@ -4559,6 +5039,118 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
     )
 
 # ─────────────────────────────────────────────
+# /report COMMAND
+# ─────────────────────────────────────────────
+
+@bot.tree.command(name="report", description="Report a user or a bug")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(
+    type="What are you reporting?",
+    target_user="User to report (leave empty for bug reports)",
+    description="Describe the issue in detail",
+)
+@app_commands.choices(type=[
+    app_commands.Choice(name="User",  value="user"),
+    app_commands.Choice(name="Bug",   value="bug"),
+])
+async def report_cmd(
+    interaction: discord.Interaction,
+    type: str,
+    description: str,
+    target_user: discord.User = None,
+):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+
+    # Validate user reports have a target
+    if type == "user" and target_user is None:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description="❌ Please specify a user to report.",
+                color=discord.Color.red(),
+            ),
+            ephemeral=True,
+        )
+        return
+
+    if type == "user" and str(target_user.id) == user_id:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description="❌ You can't report yourself.",
+                color=discord.Color.red(),
+            ),
+            ephemeral=True,
+        )
+        return
+
+    # Cooldown — 1 report per 30 minutes
+    now          = time.time()
+    last_report  = data[user_id].get("last_report", 0)
+    cooldown     = 1800
+    if now - last_report < cooldown:
+        remaining = int(cooldown - (now - last_report))
+        mins, secs = remaining // 60, remaining % 60
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"❌ You can submit another report in **{mins}m {secs}s**.",
+                color=discord.Color.red(),
+            ),
+            ephemeral=True,
+        )
+        return
+
+    if len(description.strip()) < 20:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description="❌ Description must be at least **20 characters**.",
+                color=discord.Color.red(),
+            ),
+            ephemeral=True,
+        )
+        return
+
+    data[user_id]["last_report"] = now
+    save_data_users()
+
+    channel = bot.get_channel(REPORTS_CHANNEL_ID)
+    if channel:
+        try:
+            if type == "user":
+                title = "🚨 User Report"
+                body  = (
+                    f"**Reported by:** {interaction.user.display_name} (`{user_id}`)\n"
+                    f"**Reported user:** {target_user.display_name} (`{target_user.id}`)\n\n"
+                    f"**Description:**\n{description.strip()}"
+                )
+                color = discord.Color.red()
+            else:
+                title = "🐛 Bug Report"
+                body  = (
+                    f"**Reported by:** {interaction.user.display_name} (`{user_id}`)\n"
+                    f"**Level:** {data[user_id]['level']} · "
+                    f"**Prestige:** {data[user_id].get('prestige', 0)}\n\n"
+                    f"**Description:**\n{description.strip()}"
+                )
+                color = discord.Color.orange()
+
+            await channel.send(embed=discord.Embed(title=title, description=body, color=color))
+        except Exception as e:
+            print("Report channel send error:", e)
+
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="✅ Report Submitted",
+            description=(
+                "Your report has been sent to the moderation team. Thank you!\n"
+                "-# Abuse of this system may result in a ban."
+            ),
+            color=discord.Color.green(),
+        ),
+        ephemeral=True,
+    )
+
+# ─────────────────────────────────────────────
 # /tutorial COMMAND
 # ─────────────────────────────────────────────
  
@@ -4599,6 +5191,18 @@ async def tutorial_cmd(interaction: discord.Interaction, toggle: str):
         "allowed_mentions": {"parse": []},
     })
  
+# ─────────────────────────────────────────────
+# /gamble COMMAND
+# ─────────────────────────────────────────────
+ 
+@bot.tree.command(name="gamble", description="Try your luck — coinflip, slots, or blackjack")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def gamble_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    await send_v2_followup(interaction, build_gamble_menu(user_id))
+    await maybe_send_mail_notification(interaction, user_id)
 
 # ─────────────────────────────────────────────
 # ADMIN COMMANDS
