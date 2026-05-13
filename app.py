@@ -1,10 +1,16 @@
-import asyncio, discord, random, time, json, string
+import asyncio, discord, random, time, json, string, requests
 from discord.http import Route
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from game_data import *
+
+from dotenv import load_dotenv
+import os
+load_dotenv("token.env")
+
+BOT_TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -27,9 +33,19 @@ BOT_ADMIN_ID = [
 def is_admin(interaction: discord.Interaction) -> bool:
     return str(interaction.user.id) in BOT_ADMIN_ID
 
+ADMIN_CMDS = [
+    "ban",
+    "warn",
+    "check_maintenance",
+    "bot_shutdown",
+    "bot_resume",
+    "unban",
+    "setdevmail",
+]
+
 SUGGESTION_CHANNEL_ID = 1503581602234765322 # replace with your channel ID
-BAN_APPEAL_CHANNEL_ID = 0  # replace with your channel ID
-REPORTS_CHANNEL_ID = 0
+BAN_APPEAL_CHANNEL_ID = 1503975028570718298  # replace with your channel ID
+REPORTS_CHANNEL_ID = 1503975073797771284
 
 # ─────────────────────────────────────────────
 # DEV MAIL
@@ -330,6 +346,7 @@ maintenance_warning = _m["warning"]
 maintenance_message = _m["message"]
 maintenance_channels: set[int] = set(_m["channels"])
 _maintenance_warned: set[str]  = set(_m["warned"])
+maintenance_time = 0
 
 # ─────────────────────────────────────────────
 # VERIFY HELPERS
@@ -352,6 +369,7 @@ def init_user(user_id: str):
     user_id = str(user_id)
     today   = today_utc()
     defaults = {
+        "username": get_username(user_id),
         "money": 10000, "level": 1, "xp": 0, "inv": [],
         "gems": 100, "premium": False, "hunt_cd": 0, "daily_cd": 0,
         "color": "green", "biome": "village", "tribe": None, "tribe_inv": None,
@@ -701,8 +719,39 @@ def is_banned(user_id: str) -> bool:
 def get_ban(user_id: str) -> dict:
     return data.get(user_id, {}).get("ban", {})
 
-# Tutorial HELPERS
+# ─────────────────────────────────────────────
+# USERNAME HELPERS
+# ─────────────────────────────────────────────
 
+def get_username(user_id: int) -> str:
+    global BOT_TOKEN
+
+    # Check if user exists in data AND has a username cached
+    if user_id not in data or data[user_id].get("username", "") == "":
+        url = f"https://discord.com/api/v10/users/{user_id}"
+        headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+
+        response = requests.get(url, headers=headers)
+        get = response.json()
+
+        if "username" not in get:
+            return "Unknown User"  # API returned an error (e.g. invalid ID)
+
+        username = get["username"]
+
+        # Cache it so you don't re-fetch next time
+        if user_id in data:
+            data[user_id]["username"] = username
+
+        return username
+
+    else:
+        return data[user_id]["username"]
+
+
+# ─────────────────────────────────────────────
+# TUTORIAL HELPERS
+# ─────────────────────────────────────────────
  
 TUTORIAL_STEPS = [
     "hunt",
@@ -1057,7 +1106,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
 
     stats = (
         f"### {USER_EMOJIS['profile']} {display_name}'s Menu\n"
-        f"{USER_EMOJIS['levels']} Lv.**{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
+        f"{USER_EMOJIS['levels']} Lv. **{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
         f"⭐ Prestige **{prestige}**\n"
         f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n\n"
         f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · "
@@ -1148,7 +1197,7 @@ def build_profile_components(user_id: str, display_name: str, active_panel: str 
 
     stats = (
         f"### {USER_EMOJIS['profile']} {display_name}'s Profile\n"
-        f"{USER_EMOJIS['levels']} Lv.**{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
+        f"{USER_EMOJIS['levels']} Lv. **{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
         f"⭐ Prestige **{prestige}**\n"
         f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n"
         f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · "
@@ -1311,7 +1360,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     stats_block = (
         f"-# **◈ {result['balance']:,}**\n"
         f"-# {USER_EMOJIS['xp']} **+{result['total_xp']:,} XP**\n"
-        f"-# {USER_EMOJIS['levels']} Lv.**{result['level']:,}** "
+        f"-# {USER_EMOJIS['levels']} Lv. **{result['level']:,}** "
         f"({result['xp']:,}/{result['xp_needed']:,})\n"
         f"-# {BIOME_EMOJIS[result['biome']]} {result['biome_name']}\n"
         f"-# 🎒 Inventory: **{inv_count}** · Total sell value: **◈ {sell_val:,}**"
@@ -2424,7 +2473,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
         if sort_mode == "level":
             all_m.sort(key=lambda x: data.get(x[0], {}).get("level", 0), reverse=True)
         icons = {"leader": TRIBE_EMOJIS["leader"], "officer": TRIBE_EMOJIS["officer"], "member": "🧑"}
-        return "\n".join(f"{icons[r]} <@{uid}> — Lv.**{data.get(uid,{}).get('level','?')}**" for uid, r in all_m)
+        return "\n".join(f"{icons[r]} `{get_username(uid)}` — Lv. **{data.get(uid,{}).get('level','?')}**" for uid, r in all_m)
 
     total_m = 1 + len(td["roles"]["officer"]) + len(td["roles"]["members"])
 
@@ -2432,7 +2481,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
         desc_line = f"\n📝 *{td['description']}*\n" if td.get("description") else ""
         content   = (
             f"### {TRIBE_EMOJIS['tribe']} {tribe_name}{desc_line}\n"
-            f"{USER_EMOJIS['levels']} Lv.**{td['level']}** · {USER_EMOJIS['xp']} **{td['xp']} XP**\n"
+            f"{USER_EMOJIS['levels']} Lv. **{td['level']}** · {USER_EMOJIS['xp']} **{td['xp']} XP**\n"
             f"{TRIBE_EMOJIS['members']} **{total_m}/{td['max_members']}**\n"
             f"{TRIBE_EMOJIS['luck_boost']} **{td['luck_boost']}%** · "
             f"{TRIBE_EMOJIS['sell_boost']} **{td['sell_price_boost']}%** · "
@@ -2553,7 +2602,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
                     "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
-        opts = [{"label": f"Kick @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
+        opts = [{"label": f"Kick @{data.get(uid,{}).get('_display_name', uid)} (Lv. {data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": f"### {TRIBE_EMOJIS['kick']} Kick Member\n-# Select the member to kick."},
@@ -2578,7 +2627,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
                     "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
-        opts = [{"label": f"Promote @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
+        opts = [{"label": f"Promote @{data.get(uid,{}).get('_display_name', uid)} (Lv. {data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": f"### {TRIBE_EMOJIS['officer']} Promote Member\n-# Select a member to promote to Officer."},
@@ -2603,7 +2652,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
                     "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
-        opts = [{"label": f"Demote @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
+        opts = [{"label": f"Demote @{data.get(uid,{}).get('_display_name', uid)} (Lv. {data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"User ID: {uid}"} for uid in targets[:25]]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": f"### {TRIBE_EMOJIS['demote']} Demote Officer\n-# Select an officer to demote to Member."},
@@ -2628,7 +2677,7 @@ def build_tribe_components(user_id: str, tribe_name: str, page: str = "main", so
                 {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back",
                     "custom_id": f"tribe:nav:actions:{user_id}", }]},
             ]}]
-        opts = [{"label": f"Transfer to @{data.get(uid,{}).get('_display_name', uid)} (Lv.{data.get(uid,{}).get('level','?')})",
+        opts = [{"label": f"Transfer to @{data.get(uid,{}).get('_display_name', uid)} (Lv. {data.get(uid,{}).get('level','?')})",
                  "value": uid, "description": f"Officer — ID: {uid}"} for uid in targets[:25]]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": f"### {TRIBE_EMOJIS['leader']} Transfer Leadership\n-# Select an officer to become the new leader."},
@@ -2699,7 +2748,7 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
             val     = fn(uid)
             val_str = f"◈ {val:,}" if stat == "Money" else f"**{val:,}**"
             you     = " ← you" if uid == user_id else ""
-            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} <@{uid}> — {val_str}{you}")
+            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} `{get_username(uid)}` — {val_str}{you}")
         vpos   = next((i for i, u in enumerate(ranked) if u == user_id), None)
         footer = f"-# Your rank: **#{vpos+1}**" if vpos is not None else "-# Not ranked."
         scope_label = f"{guild.name} Server" if scope == "server" and guild else "Global"
@@ -2726,7 +2775,7 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
             lv  = tribe_data[tname].get("level", 1)
             cnt = 1 + len(tribe_data[tname]["roles"]["officer"]) + len(tribe_data[tname]["roles"]["members"])
             you = " ← your tribe" if tname == vtribe else ""
-            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} **{tname}** — Lv.{lv} · {cnt} members{you}")
+            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} **{tname}** — Lv. {lv} · {cnt} members{you}")
         vpos   = next((i for i, t in enumerate(ranked) if t == vtribe), None)
         footer = f"-# Your tribe rank: **#{vpos+1}**" if vpos is not None else "-# Not ranked."
         scope_label = f"{guild.name} Server" if scope == "server" and guild else "Global"
@@ -2786,7 +2835,7 @@ def build_record_v2_components(user_id: str, biome_idx: int = 0) -> list:
     if user_level < biome_req:
         content = (
             f"### {BIOME_EMOJIS[biome_key]} {BIOME_NAMES[biome_key]} — Record Book\n"
-            f"🔒 **Locked**\n-# Unlocks at Level **{biome_req}**. (You: Lv.{user_level})"
+            f"🔒 **Locked**\n-# Unlocks at Level **{biome_req}**. (You: Lv. {user_level})"
         )
     else:
         record = data[user_id].get("record", {})
@@ -2827,7 +2876,7 @@ def build_record_standalone_v2_components(viewer_id: str, target_id: str, biome_
     if user_level < biome_req:
         content = (
             f"### {BIOME_EMOJIS[biome_key]} {BIOME_NAMES[biome_key]} — {target_name}'s Record\n"
-            f"🔒 **Locked**\n-# Unlocks at Level **{biome_req}**. (Current: Lv.{user_level})"
+            f"🔒 **Locked**\n-# Unlocks at Level **{biome_req}**. (Current: Lv. {user_level})"
         )
     else:
         record = data[target_id].get("record", {})
@@ -2994,7 +3043,7 @@ def build_personal_leaderboard_components(user_id: str) -> list:
         f"{USER_EMOJIS['levels']} **Level:** #{level_rank:,}/{total_players:,}\n"
         f"🎯 **Animals Caught:** #{caught_rank:,}/{total_players:,}"
         f"{tribe_section}\n\n"
-        f"-# ◈ {d['money']:,} · Lv.{d['level']} · {d.get('total_caught', 0):,} caught"
+        f"-# ◈ {d['money']:,} · Lv. {d['level']} · {d.get('total_caught', 0):,} caught"
     )
     row_1 = {"type": 1, "components":[
         {"type": 2, "style": 1, "label": "Main Profile",
@@ -3194,7 +3243,7 @@ async def on_interaction(interaction: discord.Interaction):
             await update_v2(interaction, [{"type": 17, "accent_color": _accent(owner_id),
                 "spoiler": False, "components": [{"type": 10, "content":
                     "### 🔕 Tips turned off.\n"
-                    "-# Use `/tutorial on` to turn them back on any time."
+                    f"-# Use </tutorial:{COMMAND_ID['tutorial']}> to turn them back on any time."
                 }]}])
             return
 
@@ -3211,14 +3260,14 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.send_message(embed=verify_needed_embed(owner_id), ephemeral=True); return
             if result.get("tool_locked"):
                 await send_ephemeral_embed(interaction,
-                    f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. Use `/tools`.",
+                    f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. Use </equip:{COMMAND_ID["equip"]}>",
                     discord.Color.red()); return
             if result.get("no_ammo"):
                 ran_out = result.get("ran_out", False)
                 atype   = result.get("ammo_type", "ammo")
                 msg     = (f"💥 You ran out of {atype}! Your ammo was unequipped.\n"
                            if ran_out else
-                           f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in /shop → Ammo!")
+                           f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in </shop:{COMMAND_ID["shop"]}> → Ammo! or Equip some in </equip:{COMMAND_ID["equip"]}>")
                 await send_ephemeral_embed(interaction, msg, discord.Color.orange()); return
             if not result["ok"]:
                 remaining = result.get("remaining", 3)
@@ -3261,7 +3310,7 @@ async def on_interaction(interaction: discord.Interaction):
                     atype   = result.get("ammo_type", "ammo")
                     msg     = (f"💥 You ran out of {atype}! Your ammo was unequipped.\n"
                                if ran_out else
-                               f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in /shop → Ammo!")
+                               f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in </shop:{COMMAND_ID["shop"]}> → Ammo! or Equip some in </equip:{COMMAND_ID["equip"]}>")
                     await send_ephemeral_embed(interaction, msg, discord.Color.orange()); return
                 if not result["ok"]:
                     remaining = result.get("remaining", 3)
@@ -3747,7 +3796,7 @@ async def on_interaction(interaction: discord.Interaction):
                             description=(
                                 f"**{interaction.user.display_name}** sent you **{amt_str}**!\n\n"
                                 f"> {message}\n\n"
-                                f"-# Use `/mail` to view your gift mail."
+                                f"-# Use </mail:{COMMAND_ID["mail"]}> to view your gift mail."
                             ),
                             color=discord.Color.green()
                         )
@@ -4287,7 +4336,7 @@ class TribeInviteModal(discord.ui.Modal, title="Invite a Player"):
                 title=f"{TRIBE_EMOJIS['invite']} Tribe Invite",
                 description=(
                     f"You've been invited to **{self.tribe_name}** by **{interaction.user.display_name}**!\n\n"
-                    f"Use `/mail` to accept or decline."
+                    f"Use </mail:{COMMAND_ID["mail"]}> to accept or decline."
                 ),
                 color=v2_color(self.user_id)))
         except Exception:
@@ -4580,10 +4629,11 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
 
     if maintenance_warning and user_id not in _maintenance_warned:
         _maintenance_warned.add(user_id)
+        UNIX_TIME = int(time.time()) + (maintenance_time * 60)
         try:
             await interaction.followup.send(
                 embed=discord.Embed(
-                    title="⚠️ Maintenance Soon",
+                    title=f"⚠️ Maintenance in <t:{UNIX_TIME}:R>",
                     description=(
                         "**Idle Hunter will enter maintenance shortly.**\n\n"
                         f"Reason: {maintenance_message}\n\n"
@@ -4653,14 +4703,14 @@ async def hunt_cmd(interaction: discord.Interaction):
         await interaction.followup.send(embed=verify_needed_embed(user_id), ephemeral=True); return
     if result.get("tool_locked"):
         await interaction.followup.send(embed=discord.Embed(
-            description=f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. Use `/tools`.",
+            description=f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. Use </shop:{COMMAND_ID["shop"]}> or </equip:{COMMAND_ID["equip"]}>.",
             color=discord.Color.red()), ephemeral=True); return
     if result.get("no_ammo"):
         ran_out = result.get("ran_out", False)
         atype   = result.get("ammo_type", "ammo")
         msg     = (f"💥 You ran out of {atype}! Your ammo was unequipped.\n"
                    if ran_out else
-                   f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in /shop → Ammo!")
+                   f"⚠️ **{result['tool_name']}** needs {atype} equipped. Buy some in </shop:{COMMAND_ID["shop"]}> → Ammo! or Equip some in </equip:{COMMAND_ID["equip"]}>!")
         await interaction.followup.send(embed=discord.Embed(description=msg, color=discord.Color.orange()), ephemeral=True); return
     if not result["ok"]:
         remaining = result.get("remaining", 3)
@@ -4782,7 +4832,7 @@ async def tribe_cmd(interaction: discord.Interaction):
 
     if not tribe_nm and tribe_inv and tribe_inv in tribe_data:
         await interaction.followup.send(embed=discord.Embed(
-            description="You have a pending tribe invite! Use `/mail` to accept or decline.",
+            description=f"You have a pending tribe invite! Use </mail:{COMMAND_ID["mail"]}> to accept or decline.",
             color=discord.Color.yellow()), ephemeral=True)
         return
 
@@ -5175,9 +5225,9 @@ async def tutorial_cmd(interaction: discord.Interaction, toggle: str):
         data[user_id]["tutorial"]["seen"] = []
     save_data_users()
  
-    msg = ("### ✅ Tutorial tips on!\nI'll guide you through each new step as you play."
+    msg = (f"### ✅ Tutorial tips on!\nI'll guide you through each new step as you play."
            if toggle == "on" else
-           "### 🔕 Tutorial tips off.\n-# Use `/tutorial on` to turn them back on.")
+           f"### 🔕 Tutorial tips off.\n-# Use </tutorials:{COMMAND_ID["tutorials"]}> to turn them back on.")
  
     await interaction.response.defer()
     route = Route(
@@ -5232,18 +5282,21 @@ async def change_update_cmd(interaction: discord.Interaction, message: str = "")
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
 @app_commands.describe(
-    time="Minutes until maintenance starts",
+    time_min="Minutes until maintenance starts",
     message="Reason for maintenance"
 )
-async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message: str):
-    global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message
+async def bot_shutdown_cmd(interaction: discord.Interaction, time_min: int, message: str):
+    global maintenance_mode, maintenance_warning, maintenance_channels, maintenance_message, maintenance_time
 
     maintenance_warning = True
     maintenance_message = message
+    maintenance_time = time_min
     save_config()
 
+    UNIX_TIME = int(time.time()) + (time_min * 60)
+
     start_embed = discord.Embed(
-        title=f"🔧 Maintenance Starting in {time} minutes",
+        title=f"🔧 Maintenance Starting <t:{UNIX_TIME}:R>",
         description=(
             "**Idle Hunter will enter maintenance soon.**\n\n"
             f"Reason: {message}\n"
@@ -5252,10 +5305,10 @@ async def bot_shutdown_cmd(interaction: discord.Interaction, time: int, message:
         color=discord.Color.orange()
     )
 
-    await interaction.response.send_message(embed=start_embed)
+    await interaction.response.send_message(embed=start_embed, ephemeral=True)
 
     async def start_maintenance():
-        await asyncio.sleep(time * 60)
+        await asyncio.sleep(time_min * 60)
         global maintenance_mode
         maintenance_mode = True
         save_config()
@@ -5293,7 +5346,6 @@ async def bot_resume_cmd(interaction: discord.Interaction):
     maintenance_warning = False
     maintenance_message = ""
     _maintenance_warned.clear()
-    maintenance_channels.clear()
     save_config()
 
     announcement = discord.Embed(
@@ -5317,10 +5369,39 @@ async def bot_resume_cmd(interaction: discord.Interaction):
     maintenance_channels.clear()
 
     try:
-        await interaction.response.send_message(embed=announcement)
+        await interaction.response.send_message(embed=announcement, ephemeral=True)
     except Exception:
         pass
 
+@bot.tree.command(name="check_maintenance", description="Checks the current maintenance status")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+async def check_maintenance(interaction: discord.Interaction):
+    if maintenance_mode:
+        status = "🔴 **Active** — bot is in maintenance mode."
+    elif maintenance_warning:
+        UNIX_TIME = int(time.time()) + (maintenance_time * 60)
+        status = f"🟡 **Warning active** — maintenance starts <t:{UNIX_TIME}:R>."
+    else:
+        status = "🟢 **None** — bot is running normally."
+
+    warned_count = len(_maintenance_warned)
+
+    await interaction.response.send_message(
+        embed=discord.Embed(
+            title="🔧 Maintenance Status",
+            description=(
+                f"**Status:** {status}\n"
+                f"**Reason:** {maintenance_message or 'N/A'}\n"
+                f"**Time until maintenance:** {maintenance_time} min\n"
+                f"**Users warned:** {warned_count}\n"
+                f"**Channels:** {len(maintenance_channels)}"
+            ),
+            color=discord.Color.orange() if maintenance_mode or maintenance_warning else discord.Color.green(),
+        ),
+        ephemeral=True,
+    )
 
 @bot.tree.command(name="setdevmail", description="Sets the developer mail message")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -5350,6 +5431,7 @@ async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
     embed = discord.Embed(
         title="📢 Dev Mail Set",
         description=(
+            "✅ Developer mail updated.\n\n"
             f"Message set to:\n\n{DEV_MAIL}"
             if DEV_MAIL else
             "Dev mail cleared."
@@ -5358,12 +5440,7 @@ async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
     )
 
     try:
-        await interaction.user.send(embed=embed)
-    except Exception:
-        pass
-
-    try:
-        await interaction.response.send_message("✅ Developer mail updated.", ephemeral=True)
+        await interaction.response.send_message(embed = embed, ephemeral=True)
     except Exception:
         pass
 
@@ -5580,7 +5657,4 @@ async def on_command_error(ctx, error):
 # RUN
 # ─────────────────────────────────────────────
 
-from dotenv import load_dotenv
-import os
-load_dotenv("token.env")
-bot.run(os.getenv("TOKEN"))
+bot.run(BOT_TOKEN)

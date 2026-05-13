@@ -1,0 +1,11 @@
+{
+    "dev_mail": "",
+    "update": "",
+    "maintenance": {
+        "mode": true,
+        "warning": true,
+        "message": "hi",
+        "channels": [],
+        "warned": []
+    }
+}

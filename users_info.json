@@ -21,7 +21,7 @@
         "biome": "celestial_peaks",
         "verify": {
             "needed": false,
-            "time": 107,
+            "time": 104,
             "code": "YcpT"
         },
         "idle": {
@@ -2219,7 +2219,13 @@
         "ammo_inv": {},
         "equipped_ammo": null,
         "vehicle": "None",
-        "owned_vehicles": []
+        "owned_vehicles": [],
+        "username": "_hypernimtz_",
+        "tutorial": {
+            "prompted": false,
+            "enabled": false,
+            "seen": []
+        }
     },
     "1275952632367681566": {
         "money": 101010400,
@@ -2276,7 +2282,8 @@
         "total_caught": 3,
         "daily_last_claim_date_utc": "",
         "daily_streak": 0,
-        "mail_dev_content_read": ""
+        "mail_dev_content_read": "",
+        "username": "magimrime"
     },
     "922684194377850911": {
         "money": 49080449,
@@ -3607,7 +3614,8 @@
         "total_money_earned": 17790,
         "mail_read_dev": false,
         "mail_dev_content_read": "",
-        "_display_name": "r\ud806\udcf2mi"
+        "_display_name": "r\ud806\udcf2mi",
+        "username": "itsremi"
     },
     "1360803643934113972": {
         "money": 45440455270,
@@ -3769,7 +3777,8 @@
         "best_daily_streak": 0,
         "total_money_earned": 825,
         "mail_read_dev": false,
-        "_display_name": "Golden Knight (Quit Fighting)"
+        "_display_name": "Golden Knight (Quit Fighting)",
+        "username": "golden_knight_theking"
     },
     "1199593017603006534": {
         "money": 11798,
@@ -3840,7 +3849,8 @@
             }
         ],
         "last_daily_date": "2026-05-07",
-        "mail_dev_content_read": ""
+        "mail_dev_content_read": "",
+        "username": "blehslays"
     },
     "1338235291370000397": {
         "money": 11854985,
@@ -6257,7 +6267,8 @@
         "ammo_inv": {},
         "equipped_ammo": null,
         "vehicle": "None",
-        "owned_vehicles": []
+        "owned_vehicles": [],
+        "username": "tianshu123"
     },
     "1206829042607718464": {
         "money": 15241,
@@ -7750,7 +7761,8 @@
         "mail_read_dev": false,
         "mail_dev_content_read": "",
         "_display_name": "versailles",
-        "mail_dev_notice_seen": ""
+        "mail_dev_notice_seen": "",
+        "username": "achsenmachte12"
     },
     "1161861348385378334": {
         "money": 10000,
@@ -7795,7 +7807,8 @@
         "best_daily_streak": 0,
         "total_money_earned": 0,
         "mail_read_dev": false,
-        "mail_dev_content_read": ""
+        "mail_dev_content_read": "",
+        "username": "notme52413"
     },
     "1323902714299678805": {
         "money": 10000,
@@ -7851,7 +7864,8 @@
                 "ts": 1778302781,
                 "read": false
             }
-        ]
+        ],
+        "username": "yuggy0715_37320"
     },
     "1128780466087006218": {
         "money": 10000,
@@ -7898,6 +7912,7 @@
         "best_daily_streak": 0,
         "total_money_earned": 0,
         "mail_read_dev": false,
-        "mail_dev_content_read": ""
+        "mail_dev_content_read": "",
+        "username": "recthefox_thefoxgod"
     }
 }
