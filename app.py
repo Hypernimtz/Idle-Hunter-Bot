@@ -5,7 +5,7 @@ from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from game_data import *
-
+from backend import *
 from dotenv import load_dotenv
 import os
 load_dotenv("token.env")
@@ -192,7 +192,29 @@ def _accent(user_id: str) -> int:
 # ─────────────────────────────────────────────
 
 def xp_for_level(level: int) -> int:
-    return 1000 + (level - 1) * 10
+    """Piecewise progression curve to avoid flat late game.
+
+    Each bracket starts from the prior bracket's boundary value so XP
+    requirements stay monotonically increasing across level boundaries.
+    """
+    lvl = max(1, level)
+
+    # Bracket 1: 1-100
+    if lvl <= 100:
+        return int(200 + (lvl ** 1.35) * 22)
+
+    # Keep later brackets anchored to prior boundary XP to avoid drops.
+    xp_at_100 = int(200 + (100 ** 1.35) * 22)
+
+    # Bracket 2: 101-500
+    if lvl <= 500:
+        return xp_at_100 + int(((lvl - 100) ** 1.5) * 18)
+
+    xp_at_500 = xp_at_100 + int(((500 - 100) ** 1.5) * 18)
+
+    # Bracket 3: 501+
+    return xp_at_500 + int(((lvl - 500) ** 1.7) * 20)
+
 
 # ─────────────────────────────────────────────
 # AMOUNT PARSER
@@ -216,33 +238,59 @@ def parse_amount(raw: str) -> int | None:
 # PERSISTENCE
 # ─────────────────────────────────────────────
 
-def save_data_users():
-    with open("users_info.json", "w") as f:
-        json.dump(data, f, indent=4)
+def backup_all_runtime_files() -> None:
+    for path in (USERS_FILE, TRIBE_FILE, CONFIG_FILE, LOTTERY_FILE):
+        backup_json_file(path, BACKUP_DIR)
+        prune_backups(path, BACKUP_DIR, MAX_BACKUPS_PER_FILE)
 
-def load_data_users():
-    try:
-        with open("users_info.json", "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+
+def save_data_users() -> None:
+    save_with_retries(USERS_FILE, data)
+
+
+def save_data_tribe() -> None:
+    save_with_retries(TRIBE_FILE, tribe_data)
+
+
+async def mutate_users_state(mutator) -> None:
+    async with state_lock:
+        mutator()
+        save_data_users()
+
+
+async def mutate_users_and_tribes_state(mutator) -> None:
+    async with state_lock:
+        mutator()
+        save_data_users()
+        save_data_tribe()
+
+
+def load_data_users() -> dict:
+    payload = load_json_file(USERS_FILE, {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_data_tribe() -> dict:
+    payload = load_json_file(TRIBE_FILE, {})
+    if not isinstance(payload, dict):
         return {}
+    defaults = {
+        "description": None, "creator": "0",
+        "roles": {"leader": "0", "officer": [], "members": []},
+        "banned": [], "level": 1, "xp": 0, "invites": [],
+        "premium": False, "max_members": 5,
+        "luck_boost": 0, "sell_price_boost": 0, "xp_boost": 0,
+    }
+    for _, tribe in list(payload.items()):
+        if isinstance(tribe, dict):
+            for k, v in defaults.items():
+                tribe.setdefault(k, v)
+            roles = tribe.setdefault("roles", {})
+            roles.setdefault("leader", tribe.get("creator", "0"))
+            roles.setdefault("officer", [])
+            roles.setdefault("members", [])
+    return payload
 
-data = load_data_users()
-
-def save_data_tribe():
-    with open("tribe_info.json", "w") as f:
-        json.dump(tribe_data, f, indent=4)
-
-def load_data_tribe():
-    try:
-        with open("tribe_info.json", "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-tribe_data = load_data_tribe()
-
-CONFIG_FILE = "config.json"
 
 def save_config():
     with open(CONFIG_FILE, "w") as f:
@@ -271,6 +319,10 @@ def load_config() -> dict:
                 "message": "", "channels": [], "warned": [],
             }
         }
+
+# Load everything in the correct order
+data       = load_data_users()
+tribe_data = load_data_tribe()
 
 _cfg                = load_config()
 DEV_MAIL            = _cfg["dev_mail"]
@@ -1555,8 +1607,6 @@ def build_menu_components(user_id: str, display_name: str) -> list:
          "url": f"https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"},
         {"type": 2, "style": 1, "label": "📖 Help",
          "custom_id": f"menu:help:{user_id}"},
-        {"type": 2, "style": 1, "label": "🎟️ Lottery",
-         "custom_id": f"menu:lottery:{user_id}"},
     ]}
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
