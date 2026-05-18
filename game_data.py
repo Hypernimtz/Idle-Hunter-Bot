@@ -1,245 +1,272 @@
 import discord
 
+# ─────────────────────────────────────────────
+# BIOMES
+# ─────────────────────────────────────────────
+
 BIOME_LEVELS = [
-    ("village", 1), 
-    ("forest", 10), 
-    ("woods", 25), 
-    ("small_desert", 50),
-    ("large_desert", 100), 
-    ("tundra", 150), 
-    ("jungle", 200), 
-    ("swamp", 275),
-    ("volcanic_highlands", 350),
-    ("cursed_ruins", 450), 
-    ("rainbow", 600),
-    ("abyssal_depths", 800), 
-    ("celestial_peaks", 1000),
+    ("village",             1),
+    ("forest",             10),
+    ("woods",              25),
+    ("small_desert",       50),
+    ("large_desert",      100),
+    ("tundra",            150),
+    ("jungle",            200),
+    ("swamp",             275),
+    ("volcanic_highlands",350),
+    ("cursed_ruins",      450),
+    ("rainbow",           600),
+    ("abyssal_depths",    800),
+    ("celestial_peaks",  1000),
 ]
 
 BIOME_EMOJIS = {
-    "village": "<:Village:1499198420387369090>", 
-    "forest": "<:Forest:1499200283593674975>",
-    "woods": "<:Woods:1499201326142455938>", 
-    "small_desert": "<:Small_Desert:1499201560473763850>",
-    "large_desert": "<:Large_Desert:1499204067929620543>", 
-    "tundra": "<:Tundra:1499230188389797888>",
-    "jungle": "<:Jungle:1499230354362470490>", 
-    "swamp": "<:Swamp:1499230538056335460>",
-    "volcanic_highlands": "<:Volcanic_Highlands:1499230604825202871>",
-    "cursed_ruins": "<:Cursed_Ruins:1499230731376005223>", 
-    "rainbow": "<:Rainbow:1499943967620599979>",
-    "abyssal_depths": "<:Abyssal_Depths:1499230862250610748>",
-    "celestial_peaks": "<:Celestial_Peaks:1499230958295973929>",
+    "village":             "<:Village:1499198420387369090>",
+    "forest":              "<:Forest:1499200283593674975>",
+    "woods":               "<:Woods:1499201326142455938>",
+    "small_desert":        "<:Small_Desert:1499201560473763850>",
+    "large_desert":        "<:Large_Desert:1499204067929620543>",
+    "tundra":              "<:Tundra:1499230188389797888>",
+    "jungle":              "<:Jungle:1499230354362470490>",
+    "swamp":               "<:Swamp:1499230538056335460>",
+    "volcanic_highlands":  "<:Volcanic_Highlands:1499230604825202871>",
+    "cursed_ruins":        "<:Cursed_Ruins:1499230731376005223>",
+    "rainbow":             "<:Rainbow:1499943967620599979>",
+    "abyssal_depths":      "<:Abyssal_Depths:1499230862250610748>",
+    "celestial_peaks":     "<:Celestial_Peaks:1499230958295973929>",
 }
 
 BIOME_NAMES = {
-    "village": "Village", 
-    "forest": "Forest", 
-    "woods": "Woods",
-    "small_desert": "Small Desert", 
-    "large_desert": "Large Desert",
-    "tundra": "Tundra", 
-    "jungle": "Jungle", 
-    "swamp": "Swamp",
-    "volcanic_highlands": "Volcanic Highlands", 
-    "cursed_ruins": "Cursed Ruins",
-    "rainbow": "Rainbow Realm", 
-    "abyssal_depths": "Abyssal Depths",
-    "celestial_peaks": "Celestial Peaks",
+    "village":             "Village",
+    "forest":              "Forest",
+    "woods":               "Woods",
+    "small_desert":        "Small Desert",
+    "large_desert":        "Large Desert",
+    "tundra":              "Tundra",
+    "jungle":              "Jungle",
+    "swamp":               "Swamp",
+    "volcanic_highlands":  "Volcanic Highlands",
+    "cursed_ruins":        "Cursed Ruins",
+    "rainbow":             "Rainbow Realm",
+    "abyssal_depths":      "Abyssal Depths",
+    "celestial_peaks":     "Celestial Peaks",
 }
 
 BIOME_ANIMALS = {
     "village": [
         "Rat", "Mouse", "Stray Cat", "Pigeon", "Crow", "Rabbit", "Fox",
-        "Stray Dog", "Squirrel", "Sparrow"
+        "Stray Dog", "Squirrel", "Sparrow",
     ],
     "forest": [
         "Deer", "Wild Boar", "Wolf", "Bear", "Elk", "Lynx", "Badger",
-        "Pheasant", "Owl", "Hare"
+        "Pheasant", "Owl", "Hare",
     ],
     "woods": [
         "Moose", "Timber Wolf", "Black Bear", "Wild Turkey", "Coyote",
-        "Raccoon", "Porcupine", "Snapping Turtle", "Grouse", "Mink"
+        "Raccoon", "Porcupine", "Snapping Turtle", "Grouse", "Mink",
     ],
     "small_desert": [
         "Scorpion", "Sand Viper", "Vulture", "Fennec Fox", "Armadillo",
-        "Roadrunner", "Lizard", "Camel Spider", "Jerboa", "Coyote"
+        "Roadrunner", "Lizard", "Camel Spider", "Jerboa", "Coyote",
     ],
     "large_desert": [
         "Sandstorm Serpent", "Desert Lion", "Giant Scorpion", "Dust Hyena",
         "Sand Golem Crab", "Camel", "Dune Stalker Wolf", "Golden Eagle",
-        "Desert Lynx", "Mirage Phantom"
+        "Desert Lynx", "Mirage Phantom",
     ],
     "tundra": [
         "Arctic Wolf", "Polar Bear", "Snowy Owl", "Reindeer", "Arctic Fox",
-        "Musk Ox", "Wolverine", "Seal", "Walrus", "Snow Leopard"
+        "Musk Ox", "Wolverine", "Seal", "Walrus", "Snow Leopard",
     ],
     "jungle": [
         "Jaguar", "Anaconda", "Poison Dart Frog", "Toucan", "Panther",
         "Wild Boar", "Silverback Gorilla", "Komodo Dragon", "Piranha",
-        "Giant Centipede"
+        "Giant Centipede",
     ],
     "swamp": [
         "Alligator", "Snapping Turtle", "Giant Frog", "Swamp Viper",
         "Mudskipper", "Black Panther", "Leech Hydra", "Bog Bear",
-        "Marsh Hawk", "Will-o-Wisp Serpent"
+        "Marsh Hawk", "Will-o-Wisp Serpent",
     ],
     "volcanic_highlands": [
         "Lava Lizard", "Magma Boar", "Ember Wolf", "Ash Vulture",
         "Cinder Crab", "Obsidian Serpent", "Flame Lynx", "Molten Golem",
-        "Fire Hawk", "Inferno Bear"
+        "Fire Hawk", "Inferno Bear",
     ],
     "cursed_ruins": [
         "Skeleton Archer", "Shadow Wolf", "Bone Drake", "Cursed Knight",
         "Wraith Stag", "Plague Rat", "Stone Golem", "Phantom Lynx",
-        "Soul Serpent", "Ancient Guardian"
+        "Soul Serpent", "Ancient Guardian",
     ],
     "rainbow": [
         "Prismatic Butterfly", "Chromatic Fox", "Rainbow Serpent",
         "Aurora Deer", "Spectrum Wolf", "Iridescent Hawk", "Prism Panther",
-        "Hue Shifter Frog", "Kaleidoscope Crab", "The Living Rainbow"
+        "Hue Shifter Frog", "Kaleidoscope Crab", "The Living Rainbow",
     ],
     "abyssal_depths": [
         "Deep Sea Kraken", "Abyss Shark", "Shadow Eel", "Void Manta",
         "Leviathan Crab", "Bioluminescent Jellyfish", "Depth Stalker",
-        "Abyssal Serpent", "Trench Golem", "Darkness Whale"
+        "Abyssal Serpent", "Trench Golem", "Darkness Whale",
     ],
     "celestial_peaks": [
         "Storm Eagle", "Cloud Serpent", "Thunder Elk", "Sky Leviathan",
         "Divine Wolf", "Astral Panther", "Heavenly Dragon", "Celestial Bear",
-        "Void Phoenix", "The Eternal Hunter"
+        "Void Phoenix", "The Eternal Hunter",
     ],
 }
 
+# ─────────────────────────────────────────────
+# ANIMALS
+# ─────────────────────────────────────────────
+
 ANIMAL_DATA = {
-    "Rat": {"value": 30, "rarity": "common", "emoji": ""},
-    "Mouse": {"value": 25, "rarity": "common", "emoji": ""},
-    "Stray Cat": {"value": 60, "rarity": "uncommon", "emoji": ""},
-    "Pigeon": {"value": 20, "rarity": "common", "emoji": ""},
-    "Crow": {"value": 35, "rarity": "common", "emoji": ""},
-    "Rabbit": {"value": 80, "rarity": "uncommon", "emoji": ""},
-    "Fox": {"value": 120, "rarity": "rare", "emoji": ""},
-    "Stray Dog": {"value": 55, "rarity": "common", "emoji": ""},
-    "Squirrel": {"value": 40, "rarity": "common", "emoji": ""},
-    "Sparrow": {"value": 18, "rarity": "common", "emoji": ""},
-    "Deer": {"value": 150, "rarity": "common", "emoji": ""},
-    "Wild Boar": {"value": 180, "rarity": "common", "emoji": ""},
-    "Wolf": {"value": 300, "rarity": "uncommon", "emoji": ""},
-    "Bear": {"value": 400, "rarity": "rare", "emoji": ""},
-    "Elk": {"value": 200, "rarity": "common", "emoji": ""},
-    "Lynx": {"value": 350, "rarity": "rare", "emoji": ""},
-    "Badger": {"value": 130, "rarity": "common", "emoji": ""},
-    "Pheasant": {"value": 110, "rarity": "common", "emoji": ""},
-    "Owl": {"value": 220, "rarity": "uncommon", "emoji": ""},
-    "Hare": {"value": 90, "rarity": "common", "emoji": ""},
-    "Moose": {"value": 500, "rarity": "uncommon", "emoji": ""},
-    "Timber Wolf": {"value": 450, "rarity": "uncommon", "emoji": ""},
-    "Black Bear": {"value": 600, "rarity": "rare", "emoji": ""},
-    "Wild Turkey": {"value": 250, "rarity": "common", "emoji": ""},
-    "Coyote": {"value": 300, "rarity": "common", "emoji": ""},
-    "Raccoon": {"value": 200, "rarity": "common", "emoji": ""},
-    "Porcupine": {"value": 220, "rarity": "common", "emoji": ""},
-    "Snapping Turtle": {"value": 350, "rarity": "uncommon", "emoji": ""},
-    "Grouse": {"value": 210, "rarity": "common", "emoji": ""},
-    "Mink": {"value": 400, "rarity": "uncommon", "emoji": ""},
-    "Scorpion": {"value": 500, "rarity": "common", "emoji": ""},
-    "Sand Viper": {"value": 700, "rarity": "uncommon", "emoji": ""},
-    "Vulture": {"value": 600, "rarity": "common", "emoji": ""},
-    "Fennec Fox": {"value": 800, "rarity": "uncommon", "emoji": ""},
-    "Armadillo": {"value": 550, "rarity": "common", "emoji": ""},
-    "Roadrunner": {"value": 450, "rarity": "common", "emoji": ""},
-    "Lizard": {"value": 400, "rarity": "common", "emoji": ""},
-    "Camel Spider": {"value": 750, "rarity": "uncommon", "emoji": ""},
-    "Jerboa": {"value": 500, "rarity": "common", "emoji": ""},
-    "Sandstorm Serpent": {"value": 1200, "rarity": "rare", "emoji": ""},
-    "Desert Lion": {"value": 1500, "rarity": "rare", "emoji": ""},
-    "Giant Scorpion": {"value": 1000, "rarity": "uncommon", "emoji": ""},
-    "Dust Hyena": {"value": 900, "rarity": "uncommon", "emoji": ""},
-    "Sand Golem Crab": {"value": 1100, "rarity": "rare", "emoji": ""},
-    "Camel": {"value": 700, "rarity": "common", "emoji": ""},
-    "Dune Stalker Wolf": {"value": 1300, "rarity": "rare", "emoji": ""},
-    "Golden Eagle": {"value": 1000, "rarity": "uncommon", "emoji": ""},
-    "Desert Lynx": {"value": 1100, "rarity": "rare", "emoji": ""},
-    "Mirage Phantom": {"value": 2000, "rarity": "epic", "emoji": ""},
-    "Arctic Wolf": {"value": 1500, "rarity": "uncommon", "emoji": ""},
-    "Polar Bear": {"value": 2000, "rarity": "rare", "emoji": ""},
-    "Snowy Owl": {"value": 1200, "rarity": "uncommon", "emoji": ""},
-    "Reindeer": {"value": 1000, "rarity": "common", "emoji": ""},
-    "Arctic Fox": {"value": 1300, "rarity": "uncommon", "emoji": ""},
-    "Musk Ox": {"value": 900, "rarity": "common", "emoji": ""},
-    "Wolverine": {"value": 1600, "rarity": "rare", "emoji": ""},
-    "Seal": {"value": 800, "rarity": "common", "emoji": ""},
-    "Walrus": {"value": 1100, "rarity": "uncommon", "emoji": ""},
-    "Snow Leopard": {"value": 2500, "rarity": "epic", "emoji": ""},
-    "Jaguar": {"value": 2500, "rarity": "rare", "emoji": ""},
-    "Anaconda": {"value": 2000, "rarity": "rare", "emoji": ""},
-    "Poison Dart Frog": {"value": 1500, "rarity": "uncommon", "emoji": ""},
-    "Toucan": {"value": 1200, "rarity": "common", "emoji": ""},
-    "Panther": {"value": 3000, "rarity": "epic", "emoji": ""},
-    "Silverback Gorilla": {"value": 3500, "rarity": "epic", "emoji": ""},
-    "Komodo Dragon": {"value": 2800, "rarity": "rare", "emoji": ""},
-    "Piranha": {"value": 1800, "rarity": "uncommon", "emoji": ""},
-    "Giant Centipede": {"value": 2200, "rarity": "rare", "emoji": ""},
-    "Alligator": {"value": 3000, "rarity": "rare", "emoji": ""},
-    "Giant Frog": {"value": 2000, "rarity": "uncommon", "emoji": ""},
-    "Swamp Viper": {"value": 2500, "rarity": "rare", "emoji": ""},
-    "Mudskipper": {"value": 1500, "rarity": "common", "emoji": ""},
-    "Black Panther": {"value": 4000, "rarity": "epic", "emoji": ""},
-    "Leech Hydra": {"value": 5000, "rarity": "epic", "emoji": ""},
-    "Bog Bear": {"value": 3500, "rarity": "rare", "emoji": ""},
-    "Marsh Hawk": {"value": 2200, "rarity": "uncommon", "emoji": ""},
-    "Will-o-Wisp Serpent": {"value": 6000, "rarity": "legendary", "emoji": ""},
-    "Lava Lizard": {"value": 4000, "rarity": "uncommon", "emoji": ""},
-    "Magma Boar": {"value": 4500, "rarity": "rare", "emoji": ""},
-    "Ember Wolf": {"value": 5000, "rarity": "rare", "emoji": ""},
-    "Ash Vulture": {"value": 3500, "rarity": "uncommon", "emoji": ""},
-    "Cinder Crab": {"value": 4000, "rarity": "uncommon", "emoji": ""},
-    "Obsidian Serpent": {"value": 6000, "rarity": "epic", "emoji": ""},
-    "Flame Lynx": {"value": 5500, "rarity": "epic", "emoji": ""},
-    "Molten Golem": {"value": 8000, "rarity": "legendary", "emoji": ""},
-    "Fire Hawk": {"value": 5000, "rarity": "rare", "emoji": ""},
-    "Inferno Bear": {"value": 7000, "rarity": "epic", "emoji": ""},
-    "Skeleton Archer": {"value": 6000, "rarity": "uncommon", "emoji": ""},
-    "Shadow Wolf": {"value": 7000, "rarity": "rare", "emoji": ""},
-    "Bone Drake": {"value": 10000, "rarity": "epic", "emoji": ""},
-    "Cursed Knight": {"value": 8000, "rarity": "rare", "emoji": ""},
-    "Wraith Stag": {"value": 9000, "rarity": "epic", "emoji": ""},
-    "Plague Rat": {"value": 5000, "rarity": "uncommon", "emoji": ""},
-    "Stone Golem": {"value": 8500, "rarity": "rare", "emoji": ""},
-    "Phantom Lynx": {"value": 11000, "rarity": "epic", "emoji": ""},
-    "Soul Serpent": {"value": 12000, "rarity": "legendary", "emoji": ""},
-    "Ancient Guardian": {"value": 15000, "rarity": "legendary", "emoji": ""},
-    "Prismatic Butterfly": {"value": 12000, "rarity": "rare", "emoji": ""},
-    "Chromatic Fox": {"value": 15000, "rarity": "rare", "emoji": ""},
-    "Rainbow Serpent": {"value": 18000, "rarity": "epic", "emoji": ""},
-    "Aurora Deer": {"value": 14000, "rarity": "rare", "emoji": ""},
-    "Spectrum Wolf": {"value": 20000, "rarity": "epic", "emoji": ""},
-    "Iridescent Hawk": {"value": 13000, "rarity": "rare", "emoji": ""},
-    "Prism Panther": {"value": 22000, "rarity": "epic", "emoji": ""},
-    "Hue Shifter Frog": {"value": 16000, "rarity": "rare", "emoji": ""},
-    "Kaleidoscope Crab": {"value": 25000, "rarity": "legendary", "emoji": ""},
-    "The Living Rainbow": {"value": 50000, "rarity": "mythic", "emoji": ""},
-    "Deep Sea Kraken": {"value": 25000, "rarity": "epic", "emoji": ""},
-    "Abyss Shark": {"value": 20000, "rarity": "rare", "emoji": ""},
-    "Shadow Eel": {"value": 18000, "rarity": "rare", "emoji": ""},
-    "Void Manta": {"value": 22000, "rarity": "epic", "emoji": ""},
-    "Leviathan Crab": {"value": 28000, "rarity": "epic", "emoji": ""},
-    "Bioluminescent Jellyfish": {"value": 15000, "rarity": "rare", "emoji": ""},
-    "Depth Stalker": {"value": 24000, "rarity": "epic", "emoji": ""},
-    "Abyssal Serpent": {"value": 30000, "rarity": "legendary", "emoji": ""},
-    "Trench Golem": {"value": 35000, "rarity": "legendary", "emoji": ""},
-    "Darkness Whale": {"value": 50000, "rarity": "mythic", "emoji": ""},
-    "Storm Eagle": {"value": 40000, "rarity": "epic", "emoji": ""},
-    "Cloud Serpent": {"value": 45000, "rarity": "epic", "emoji": ""},
-    "Thunder Elk": {"value": 35000, "rarity": "rare", "emoji": ""},
-    "Sky Leviathan": {"value": 60000, "rarity": "legendary", "emoji": ""},
-    "Divine Wolf": {"value": 55000, "rarity": "legendary", "emoji": ""},
-    "Astral Panther": {"value": 65000, "rarity": "legendary", "emoji": ""},
-    "Heavenly Dragon": {"value": 80000, "rarity": "mythic", "emoji": ""},
-    "Celestial Bear": {"value": 50000, "rarity": "legendary", "emoji": ""},
-    "Void Phoenix": {"value": 90000, "rarity": "mythic", "emoji": ""},
-    "The Eternal Hunter": {"value": 150000, "rarity": "mythic", "emoji": ""},
+    # Village
+    "Rat":              {"value":     30, "rarity": "common",    "emoji": ""},
+    "Mouse":            {"value":     25, "rarity": "common",    "emoji": ""},
+    "Stray Cat":        {"value":     60, "rarity": "uncommon",  "emoji": ""},
+    "Pigeon":           {"value":     20, "rarity": "common",    "emoji": ""},
+    "Crow":             {"value":     35, "rarity": "common",    "emoji": ""},
+    "Rabbit":           {"value":     80, "rarity": "uncommon",  "emoji": ""},
+    "Fox":              {"value":    120, "rarity": "rare",      "emoji": ""},
+    "Stray Dog":        {"value":     55, "rarity": "common",    "emoji": ""},
+    "Squirrel":         {"value":     40, "rarity": "common",    "emoji": ""},
+    "Sparrow":          {"value":     18, "rarity": "common",    "emoji": ""},
+    # Forest
+    "Deer":             {"value":    150, "rarity": "common",    "emoji": ""},
+    "Wild Boar":        {"value":    180, "rarity": "common",    "emoji": ""},
+    "Wolf":             {"value":    300, "rarity": "uncommon",  "emoji": ""},
+    "Bear":             {"value":    400, "rarity": "rare",      "emoji": ""},
+    "Elk":              {"value":    200, "rarity": "common",    "emoji": ""},
+    "Lynx":             {"value":    350, "rarity": "rare",      "emoji": ""},
+    "Badger":           {"value":    130, "rarity": "common",    "emoji": ""},
+    "Pheasant":         {"value":    110, "rarity": "common",    "emoji": ""},
+    "Owl":              {"value":    220, "rarity": "uncommon",  "emoji": ""},
+    "Hare":             {"value":     90, "rarity": "common",    "emoji": ""},
+    # Woods
+    "Moose":            {"value":    500, "rarity": "uncommon",  "emoji": ""},
+    "Timber Wolf":      {"value":    450, "rarity": "uncommon",  "emoji": ""},
+    "Black Bear":       {"value":    600, "rarity": "rare",      "emoji": ""},
+    "Wild Turkey":      {"value":    250, "rarity": "common",    "emoji": ""},
+    "Coyote":           {"value":    300, "rarity": "common",    "emoji": ""},
+    "Raccoon":          {"value":    200, "rarity": "common",    "emoji": ""},
+    "Porcupine":        {"value":    220, "rarity": "common",    "emoji": ""},
+    "Snapping Turtle":  {"value":    350, "rarity": "uncommon",  "emoji": ""},
+    "Grouse":           {"value":    210, "rarity": "common",    "emoji": ""},
+    "Mink":             {"value":    400, "rarity": "uncommon",  "emoji": ""},
+    # Small Desert
+    "Scorpion":         {"value":    500, "rarity": "common",    "emoji": ""},
+    "Sand Viper":       {"value":    700, "rarity": "uncommon",  "emoji": ""},
+    "Vulture":          {"value":    600, "rarity": "common",    "emoji": ""},
+    "Fennec Fox":       {"value":    800, "rarity": "uncommon",  "emoji": ""},
+    "Armadillo":        {"value":    550, "rarity": "common",    "emoji": ""},
+    "Roadrunner":       {"value":    450, "rarity": "common",    "emoji": ""},
+    "Lizard":           {"value":    400, "rarity": "common",    "emoji": ""},
+    "Camel Spider":     {"value":    750, "rarity": "uncommon",  "emoji": ""},
+    "Jerboa":           {"value":    500, "rarity": "common",    "emoji": ""},
+    # Large Desert
+    "Sandstorm Serpent":{"value":  1_200, "rarity": "rare",      "emoji": ""},
+    "Desert Lion":      {"value":  1_500, "rarity": "rare",      "emoji": ""},
+    "Giant Scorpion":   {"value":  1_000, "rarity": "uncommon",  "emoji": ""},
+    "Dust Hyena":       {"value":    900, "rarity": "uncommon",  "emoji": ""},
+    "Sand Golem Crab":  {"value":  1_100, "rarity": "rare",      "emoji": ""},
+    "Camel":            {"value":    700, "rarity": "common",    "emoji": ""},
+    "Dune Stalker Wolf":{"value":  1_300, "rarity": "rare",      "emoji": ""},
+    "Golden Eagle":     {"value":  1_000, "rarity": "uncommon",  "emoji": ""},
+    "Desert Lynx":      {"value":  1_100, "rarity": "rare",      "emoji": ""},
+    "Mirage Phantom":   {"value":  2_000, "rarity": "epic",      "emoji": ""},
+    # Tundra
+    "Arctic Wolf":      {"value":  1_500, "rarity": "uncommon",  "emoji": ""},
+    "Polar Bear":       {"value":  2_000, "rarity": "rare",      "emoji": ""},
+    "Snowy Owl":        {"value":  1_200, "rarity": "uncommon",  "emoji": ""},
+    "Reindeer":         {"value":  1_000, "rarity": "common",    "emoji": ""},
+    "Arctic Fox":       {"value":  1_300, "rarity": "uncommon",  "emoji": ""},
+    "Musk Ox":          {"value":    900, "rarity": "common",    "emoji": ""},
+    "Wolverine":        {"value":  1_600, "rarity": "rare",      "emoji": ""},
+    "Seal":             {"value":    800, "rarity": "common",    "emoji": ""},
+    "Walrus":           {"value":  1_100, "rarity": "uncommon",  "emoji": ""},
+    "Snow Leopard":     {"value":  2_500, "rarity": "epic",      "emoji": ""},
+    # Jungle
+    "Jaguar":           {"value":  2_500, "rarity": "rare",      "emoji": ""},
+    "Anaconda":         {"value":  2_000, "rarity": "rare",      "emoji": ""},
+    "Poison Dart Frog": {"value":  1_500, "rarity": "uncommon",  "emoji": ""},
+    "Toucan":           {"value":  1_200, "rarity": "common",    "emoji": ""},
+    "Panther":          {"value":  3_000, "rarity": "epic",      "emoji": ""},
+    "Silverback Gorilla":{"value": 3_500, "rarity": "epic",      "emoji": ""},
+    "Komodo Dragon":    {"value":  2_800, "rarity": "rare",      "emoji": ""},
+    "Piranha":          {"value":  1_800, "rarity": "uncommon",  "emoji": ""},
+    "Giant Centipede":  {"value":  2_200, "rarity": "rare",      "emoji": ""},
+    # Swamp
+    "Alligator":        {"value":  3_000, "rarity": "rare",      "emoji": ""},
+    "Giant Frog":       {"value":  2_000, "rarity": "uncommon",  "emoji": ""},
+    "Swamp Viper":      {"value":  2_500, "rarity": "rare",      "emoji": ""},
+    "Mudskipper":       {"value":  1_500, "rarity": "common",    "emoji": ""},
+    "Black Panther":    {"value":  4_000, "rarity": "epic",      "emoji": ""},
+    "Leech Hydra":      {"value":  5_000, "rarity": "epic",      "emoji": ""},
+    "Bog Bear":         {"value":  3_500, "rarity": "rare",      "emoji": ""},
+    "Marsh Hawk":       {"value":  2_200, "rarity": "uncommon",  "emoji": ""},
+    "Will-o-Wisp Serpent":{"value":6_000, "rarity": "legendary", "emoji": ""},
+    # Volcanic Highlands
+    "Lava Lizard":      {"value":  4_000, "rarity": "uncommon",  "emoji": ""},
+    "Magma Boar":       {"value":  4_500, "rarity": "rare",      "emoji": ""},
+    "Ember Wolf":       {"value":  5_000, "rarity": "rare",      "emoji": ""},
+    "Ash Vulture":      {"value":  3_500, "rarity": "uncommon",  "emoji": ""},
+    "Cinder Crab":      {"value":  4_000, "rarity": "uncommon",  "emoji": ""},
+    "Obsidian Serpent": {"value":  6_000, "rarity": "epic",      "emoji": ""},
+    "Flame Lynx":       {"value":  5_500, "rarity": "epic",      "emoji": ""},
+    "Molten Golem":     {"value":  8_000, "rarity": "legendary", "emoji": ""},
+    "Fire Hawk":        {"value":  5_000, "rarity": "rare",      "emoji": ""},
+    "Inferno Bear":     {"value":  7_000, "rarity": "epic",      "emoji": ""},
+    # Cursed Ruins
+    "Skeleton Archer":  {"value":  6_000, "rarity": "uncommon",  "emoji": ""},
+    "Shadow Wolf":      {"value":  7_000, "rarity": "rare",      "emoji": ""},
+    "Bone Drake":       {"value": 10_000, "rarity": "epic",      "emoji": ""},
+    "Cursed Knight":    {"value":  8_000, "rarity": "rare",      "emoji": ""},
+    "Wraith Stag":      {"value":  9_000, "rarity": "epic",      "emoji": ""},
+    "Plague Rat":       {"value":  5_000, "rarity": "uncommon",  "emoji": ""},
+    "Stone Golem":      {"value":  8_500, "rarity": "rare",      "emoji": ""},
+    "Phantom Lynx":     {"value": 11_000, "rarity": "epic",      "emoji": ""},
+    "Soul Serpent":     {"value": 12_000, "rarity": "legendary", "emoji": ""},
+    "Ancient Guardian": {"value": 15_000, "rarity": "legendary", "emoji": ""},
+    # Rainbow
+    "Prismatic Butterfly":{"value":12_000,"rarity": "rare",      "emoji": ""},
+    "Chromatic Fox":    {"value": 15_000, "rarity": "rare",      "emoji": ""},
+    "Rainbow Serpent":  {"value": 18_000, "rarity": "epic",      "emoji": ""},
+    "Aurora Deer":      {"value": 14_000, "rarity": "rare",      "emoji": ""},
+    "Spectrum Wolf":    {"value": 20_000, "rarity": "epic",      "emoji": ""},
+    "Iridescent Hawk":  {"value": 13_000, "rarity": "rare",      "emoji": ""},
+    "Prism Panther":    {"value": 22_000, "rarity": "epic",      "emoji": ""},
+    "Hue Shifter Frog": {"value": 16_000, "rarity": "rare",      "emoji": ""},
+    "Kaleidoscope Crab":{"value": 25_000, "rarity": "legendary", "emoji": ""},
+    "The Living Rainbow":{"value":50_000, "rarity": "mythic",    "emoji": ""},
+    # Abyssal Depths
+    "Deep Sea Kraken":  {"value": 25_000, "rarity": "epic",      "emoji": ""},
+    "Abyss Shark":      {"value": 20_000, "rarity": "rare",      "emoji": ""},
+    "Shadow Eel":       {"value": 18_000, "rarity": "rare",      "emoji": ""},
+    "Void Manta":       {"value": 22_000, "rarity": "epic",      "emoji": ""},
+    "Leviathan Crab":   {"value": 28_000, "rarity": "epic",      "emoji": ""},
+    "Bioluminescent Jellyfish":{"value":15_000,"rarity":"rare",  "emoji": ""},
+    "Depth Stalker":    {"value": 24_000, "rarity": "epic",      "emoji": ""},
+    "Abyssal Serpent":  {"value": 30_000, "rarity": "legendary", "emoji": ""},
+    "Trench Golem":     {"value": 35_000, "rarity": "legendary", "emoji": ""},
+    "Darkness Whale":   {"value": 50_000, "rarity": "mythic",    "emoji": ""},
+    # Celestial Peaks
+    "Storm Eagle":      {"value": 40_000, "rarity": "epic",      "emoji": ""},
+    "Cloud Serpent":    {"value": 45_000, "rarity": "epic",      "emoji": ""},
+    "Thunder Elk":      {"value": 35_000, "rarity": "rare",      "emoji": ""},
+    "Sky Leviathan":    {"value": 60_000, "rarity": "legendary", "emoji": ""},
+    "Divine Wolf":      {"value": 55_000, "rarity": "legendary", "emoji": ""},
+    "Astral Panther":   {"value": 65_000, "rarity": "legendary", "emoji": ""},
+    "Heavenly Dragon":  {"value": 80_000, "rarity": "mythic",    "emoji": ""},
+    "Celestial Bear":   {"value": 50_000, "rarity": "legendary", "emoji": ""},
+    "Void Phoenix":     {"value": 90_000, "rarity": "mythic",    "emoji": ""},
+    "The Eternal Hunter":{"value":150_000,"rarity": "mythic",    "emoji": ""},
 }
+
+ANIMAL_EMOJI = ""
+
+# ─────────────────────────────────────────────
+# EMOJIS / ICONS
+# ─────────────────────────────────────────────
 
 UPGRADE_EMOJI = "<:Bot_Upgrade:1500237654891958394>"
 
@@ -286,7 +313,9 @@ USER_EMOJIS = {
     "level_up":   "<:XP_Level_Up:1500239747744792606>",
 }
 
-ANIMAL_EMOJI = ""
+# ─────────────────────────────────────────────
+# TOOLS
+# ─────────────────────────────────────────────
 
 TOOLS = {
     "Bare Hands": {
@@ -307,7 +336,7 @@ TOOLS = {
     },
     "Hunting Knife": {
         "description": "A sharp blade for close encounters.",
-        "tier": 3, "price": 2000, "currency": "money",
+        "tier": 3, "price": 2_000, "currency": "money",
         "boost_luck": 2, "boost_xp": 2,
         "emoji": "🔪",
         "multi_catch": 1,
@@ -315,7 +344,7 @@ TOOLS = {
     },
     "Spear": {
         "description": "A wooden spear with a bone tip.",
-        "tier": 4, "price": 8000, "currency": "money",
+        "tier": 4, "price": 8_000, "currency": "money",
         "boost_luck": 3, "boost_xp": 3,
         "emoji": "🗡️",
         "multi_catch": 1,
@@ -323,7 +352,7 @@ TOOLS = {
     },
     "Shortbow": {
         "description": "A basic bow for forest hunting.",
-        "tier": 5, "price": 25000, "currency": "money",
+        "tier": 5, "price": 25_000, "currency": "money",
         "boost_luck": 4, "boost_xp": 5,
         "emoji": "🏹",
         "multi_catch": 2,
@@ -331,7 +360,7 @@ TOOLS = {
     },
     "Longbow": {
         "description": "Greater range and precision.",
-        "tier": 6, "price": 80000, "currency": "money",
+        "tier": 6, "price": 80_000, "currency": "money",
         "boost_luck": 5, "boost_xp": 6,
         "emoji": "🏹",
         "multi_catch": 2,
@@ -339,7 +368,7 @@ TOOLS = {
     },
     "Crossbow": {
         "description": "Mechanical precision for tough prey.",
-        "tier": 7, "price": 250000, "currency": "money",
+        "tier": 7, "price": 250_000, "currency": "money",
         "boost_luck": 6, "boost_xp": 8,
         "emoji": "🎯",
         "multi_catch": 2,
@@ -347,7 +376,7 @@ TOOLS = {
     },
     "Musket": {
         "description": "A flintlock for serious hunters.",
-        "tier": 8, "price": 750000, "currency": "money",
+        "tier": 8, "price": 750_000, "currency": "money",
         "boost_luck": 7, "boost_xp": 10,
         "emoji": "🔫",
         "multi_catch": 2,
@@ -355,7 +384,7 @@ TOOLS = {
     },
     "Hunting Rifle": {
         "description": "A bolt-action rifle for big game.",
-        "tier": 9, "price": 2000000, "currency": "money",
+        "tier": 9, "price": 2_000_000, "currency": "money",
         "boost_luck": 9, "boost_xp": 12,
         "emoji": "🔫",
         "multi_catch": 3,
@@ -363,7 +392,7 @@ TOOLS = {
     },
     "Shotgun": {
         "description": "Devastating at close range.",
-        "tier": 10, "price": 5000000, "currency": "money",
+        "tier": 10, "price": 5_000_000, "currency": "money",
         "boost_luck": 10, "boost_xp": 14,
         "emoji": "🔫",
         "multi_catch": 3,
@@ -371,7 +400,7 @@ TOOLS = {
     },
     "Sniper Rifle": {
         "description": "Long-range precision firearm.",
-        "tier": 11, "price": 50, "currency": "gems",
+        "tier": 11, "price": 10_000_000, "currency": "money",
         "boost_luck": 12, "boost_xp": 16,
         "emoji": "🎯",
         "multi_catch": 3,
@@ -379,7 +408,7 @@ TOOLS = {
     },
     "Tranq Gun": {
         "description": "Sedates prey, raising rare catch chance.",
-        "tier": 12, "price": 80, "currency": "gems",
+        "tier": 12, "price": 25_000_000, "currency": "money",
         "boost_luck": 15, "boost_xp": 18,
         "emoji": "💉",
         "multi_catch": 3,
@@ -387,7 +416,7 @@ TOOLS = {
     },
     "Plasma Caster": {
         "description": "Energy weapon from a distant future.",
-        "tier": 13, "price": 120, "currency": "gems",
+        "tier": 13, "price": 50_000_000, "currency": "money",
         "boost_luck": 18, "boost_xp": 22,
         "emoji": "⚡",
         "multi_catch": 4,
@@ -395,7 +424,7 @@ TOOLS = {
     },
     "Gravity Trap": {
         "description": "A field device that bends space to capture prey.",
-        "tier": 14, "price": 180, "currency": "gems",
+        "tier": 14, "price": 100_000_000, "currency": "money",
         "boost_luck": 22, "boost_xp": 26,
         "emoji": "🌀",
         "multi_catch": 4,
@@ -435,7 +464,7 @@ TOOLS = {
     },
     "Dragon Cannon": {
         "description": "A cannon powered by dragonfire.",
-        "tier": 19, "price": 1000, "currency": "gems",
+        "tier": 19, "price": 1_000, "currency": "gems",
         "boost_luck": 46, "boost_xp": 52,
         "emoji": "🐉",
         "multi_catch": 5,
@@ -443,47 +472,44 @@ TOOLS = {
     },
     "Cosmic RPG": {
         "description": "The ultimate weapon — fires concentrated star energy.",
-        "tier": 20, "price": 1500, "currency": "gems",
+        "tier": 20, "price": 1_500, "currency": "gems",
         "boost_luck": 55, "boost_xp": 60,
         "emoji": "🚀",
         "multi_catch": 6,
         "ammo_type": "cosmic_round",
     },
+    "Nuke Launcher": {
+        "description": "LAUNCHES NUKES — BADA-BOOM!",
+        "tier": 100, "price": 10_000, "currency": "gems",
+        "boost_luck": 1_000, "boost_xp": 1_000,
+        "emoji": "💥",
+        "multi_catch": 10,
+        "ammo_type": "nuke_only",
+    },
 }
 
 BIOME_TOOL_TIER = {
-    "village": 1, 
-    "forest": 2, 
-    "woods": 3, 
-    "small_desert": 4,
-    "large_desert": 5, 
-    "tundra": 6, 
-    "jungle": 7, 
-    "swamp": 8,
-    "volcanic_highlands": 10, 
-    "cursed_ruins": 13, 
-    "rainbow": 15,
-    "abyssal_depths": 17, 
-    "celestial_peaks": 19,
+    "village":             1,
+    "forest":              2,
+    "woods":               3,
+    "small_desert":        4,
+    "large_desert":        5,
+    "tundra":              6,
+    "jungle":              7,
+    "swamp":               8,
+    "volcanic_highlands": 10,
+    "cursed_ruins":       13,
+    "rainbow":            15,
+    "abyssal_depths":     17,
+    "celestial_peaks":    19,
 }
 
 # ─────────────────────────────────────────────
-# AMMO SYSTEM
+# AMMO
 # ─────────────────────────────────────────────
-# ammo_type groups: arrow, bolt, bullet, tranq_dart, energy_cell, soul_shard, cosmic_round
-# Each type has multiple tiers: one money-bought (weak), one gems-bought (strong)
-# Boosts are per-hunt percentages applied on top of tool boosts.
-# Stat focus per type:
-#   arrow        → luck + xp
-#   bolt         → luck + sell
-#   bullet       → sell + xp
-#   tranq_dart   → luck only (big)
-#   energy_cell  → xp + sell
-#   soul_shard   → all three (moderate)
-#   cosmic_round → all three (large)
 
 AMMO = {
-    # ── ARROWS (Shortbow, Longbow) ────────────
+    # ── ARROWS (Shortbow, Longbow) ──────────────────────────────
     "Wooden Arrow": {
         "ammo_type": "arrow",
         "description": "Basic fletched arrow. Steady but unremarkable.",
@@ -513,7 +539,7 @@ AMMO = {
         "boost_luck": 50, "boost_sell": 0, "boost_xp": 50,
     },
 
-    # ── BOLTS (Crossbow) ──────────────────────
+    # ── BOLTS (Crossbow) ────────────────────────────────────────
     "Crude Bolt": {
         "ammo_type": "bolt",
         "description": "Hastily carved bolt. Functional at best.",
@@ -543,7 +569,7 @@ AMMO = {
         "boost_luck": 50, "boost_sell": 50, "boost_xp": 0,
     },
 
-    # ── BULLETS (Musket, Hunting Rifle, Shotgun, Sniper Rifle) ───
+    # ── BULLETS (Musket, Hunting Rifle, Shotgun, Sniper Rifle) ──
     "Lead Ball": {
         "ammo_type": "bullet",
         "description": "Old-fashioned lead round. Gets the job done.",
@@ -573,7 +599,7 @@ AMMO = {
         "boost_luck": 20, "boost_sell": 50, "boost_xp": 45,
     },
 
-    # ── TRANQ DARTS (Tranq Gun) ───────────────
+    # ── TRANQ DARTS (Tranq Gun) ─────────────────────────────────
     "Basic Tranq": {
         "ammo_type": "tranq_dart",
         "description": "Standard sedative — increases rare catch chance.",
@@ -603,7 +629,7 @@ AMMO = {
         "boost_luck": 50, "boost_sell": 0, "boost_xp": 0,
     },
 
-    # ── ENERGY CELLS (Plasma Caster, Gravity Trap) ───
+    # ── ENERGY CELLS (Plasma Caster, Gravity Trap) ──────────────
     "Charged Cell": {
         "ammo_type": "energy_cell",
         "description": "Standard power cell. Efficient energy output.",
@@ -633,7 +659,7 @@ AMMO = {
         "boost_luck": 10, "boost_sell": 50, "boost_xp": 50,
     },
 
-    # ── SOUL SHARDS (Soul Snare, Void Bow) ────
+    # ── SOUL SHARDS (Soul Snare, Void Bow) ──────────────────────
     "Fractured Shard": {
         "ammo_type": "soul_shard",
         "description": "A cracked soul fragment — modest all-round boost.",
@@ -663,7 +689,7 @@ AMMO = {
         "boost_luck": 48, "boost_sell": 48, "boost_xp": 48,
     },
 
-    # ── COSMIC ROUNDS (Celestial Lance, Mythic Net, Dragon Cannon, Cosmic RPG) ───
+    # ── COSMIC ROUNDS (Celestial Lance, Mythic Net, Dragon Cannon, Cosmic RPG) ──
     "Star Slug": {
         "ammo_type": "cosmic_round",
         "description": "Forged from meteorite — exceptional all-round power.",
@@ -692,16 +718,24 @@ AMMO = {
         "price": 65, "currency": "gems",
         "boost_luck": 50, "boost_sell": 50, "boost_xp": 50,
     },
+
+    # ── NUKES (Nuke Launcher) ────────────────────────────────────
+    "Nuke": {
+        "ammo_type": "nuke_only",
+        "description": "NUKE goes BADA-BOOM",
+        "emoji": "💣",
+        "price": 500, "currency": "gems",
+        "boost_luck": 0, "boost_sell": 1_000, "boost_xp": 0,
+    },
 }
 
-# Map ammo_type → compatible tool names (for shop display filtering)
+# Map ammo_type → compatible tool names (for shop display)
 AMMO_TYPE_TOOLS: dict[str, list[str]] = {}
 for _tname, _tdata in TOOLS.items():
     _at = _tdata.get("ammo_type")
     if _at:
         AMMO_TYPE_TOOLS.setdefault(_at, []).append(_tname)
 
-# Map ammo_type → display label
 AMMO_TYPE_LABELS = {
     "arrow":        "Arrows",
     "bolt":         "Bolts",
@@ -710,85 +744,86 @@ AMMO_TYPE_LABELS = {
     "energy_cell":  "Energy Cells",
     "soul_shard":   "Soul Shards",
     "cosmic_round": "Cosmic Rounds",
+    "nuke_only":    "Nukes",
 }
 
-AMMO_MAX_STACK = 9999
+AMMO_MAX_STACK = 9_999
 
-TIPS = [
-    "Join a tribe to get Luck, Sell, and XP boosts!",
-    "Higher biomes give bigger money rewards per hunt!",
-    "Rare catches triple your money and double your XP!",
-    "Use /idle to earn ◈ while you're away!",
-    "Stack idle hours for massive passive income!",
-    "Unlock new biomes as you level up with /biome!",
-    "Your color is purely cosmetic — change it any time with /color!",
-    "Buy boosts from /shop to improve your hunting!",
-    "Upgrade your tools to unlock higher biomes!",
-    "Prestige at level 1200 for permanent boost multipliers!",
-    "Check /record to track every animal you've ever caught!",
-    "Use /leaderboard to see how you rank globally!",
-    "Higher tier tools let you catch multiple animals per hunt!",
-    "Check /log to review your recent hunt history!",
-    "Use /daily every day to build up your streak bonus!",
-    "Equip ammo in /tools for extra Luck, Sell, and XP boosts!",
-    "Ammo is consumed per hunt — stock up before long sessions!",
-    "Gem-bought ammo gives up to 50% boosts on top of your tool!",
-    "Running out of ammo? Head to /shop → Ammo tab!",
-    "Some ammo types focus on specific stats — pick what you need!",
-]
+# ─────────────────────────────────────────────
+# VEHICLES
+# ─────────────────────────────────────────────
 
-COMMAND_ID = {
-    "biome": "1499948413608001698",
-    "color": "1498883355079344158",
-    "daily": "1501740931840344116",
-    "equip": "1503563684704944223",
-    "gift": "1499960573864050721",
-    "help": "1499960573864050723",
-    "hunt": "1499563402585182289",
-    "id": "1499963837401530520",
-    "idle": "1499948413608001699",
-    "invite": "1501740931840344121",
-    "leaderboard": "1500335302601084959",
-    "log": "1501740931840344117",
-    "mail": "1502518159855321138",
-    "menu": "1501740931840344115",
-    "prestige": "1500335302601084961",
-    "profile": "1499960573864050720",
-    "record": "1500335302601084960",
-    "shop": "1499960573864050719",
-    "tools": "1500335302601084958",
-    "tribe": "1499962495341953184",
-    "tutorials": "1503916432134639697",
-    "verify": "1499948413608001696",
-    "bot_shutdown": "1502786816036704372",
-    "bot_resume": "1502786816036704373",
-    "setdevmail": "1502786816036704374",
+VEHICLES = {
+    "Trail Boots":   {"emoji": "🥾", "tier":  1, "boost_cd": 0.3, "boost_luck":  0, "price":    500, "currency": "money", "description": "A reliable pair of boots. Slightly faster."},
+    "Bicycle":       {"emoji": "🚲", "tier":  2, "boost_cd": 0.5, "boost_luck":  0, "price":  5_000, "currency": "money", "description": "Pedal your way to prey."},
+    "Dirt Bike":     {"emoji": "🏍️", "tier":  3, "boost_cd": 0.7, "boost_luck":  0, "price": 25_000, "currency": "money", "description": "Off-road and fast."},
+    "Pickup Truck":  {"emoji": "🚗", "tier":  4, "boost_cd": 1.0, "boost_luck":  0, "price": 100_000, "currency": "money", "description": "Reliable workhorse."},
+    "4x4 Offroader": {"emoji": "🚙", "tier":  5, "boost_cd": 1.3, "boost_luck":  5, "price": 500_000, "currency": "money", "description": "Conquers any terrain."},
+    "Rowboat":       {"emoji": "🛶", "tier":  6, "boost_cd": 1.5, "boost_luck":  5, "price": 1_000_000, "currency": "money", "description": "Silent on the water."},
+    "Helicopter":    {"emoji": "🚁", "tier":  7, "boost_cd": 1.7, "boost_luck":  0, "price": 5_000_000, "currency": "money", "description": "Scout from above."},
+    "Horse":         {"emoji": "🐴", "tier":  8, "boost_cd": 1.9, "boost_luck": 10, "price": 10_000_000, "currency": "money", "description": "A hunter's best friend."},
+    "Military Jeep": {"emoji": "🛻", "tier":  9, "boost_cd": 2.1, "boost_luck":  0, "price": 500,       "currency": "gems",  "description": "Built for the toughest hunts."},
+    "Hovercraft":    {"emoji": "🚀", "tier": 10, "boost_cd": 2.4, "boost_luck": 15, "price": 2_000,     "currency": "gems",  "description": "Endgame speed machine."},
 }
 
+# ─────────────────────────────────────────────
+# SHOP BOOST ITEMS
+# ─────────────────────────────────────────────
+
+SHOP_BOOST_ITEMS = {
+    "Lucky Charm": {
+        "description": "Increases your personal luck by 5%.",
+        "price": 20, "currency": "gems",
+        "max_qty": 10,
+        "boost_key": "luck", "boost_amt": 5,
+    },
+    "Sellmaster Scroll": {
+        "description": "Increases your personal sell price by 5%.",
+        "price": 20, "currency": "gems",
+        "max_qty": 10,
+        "boost_key": "sell", "boost_amt": 5,
+    },
+    "XP Tome": {
+        "description": "Increases your personal XP gain by 5%.",
+        "price": 20, "currency": "gems",
+        "max_qty": 10,
+        "boost_key": "xp", "boost_amt": 5,
+    },
+}
+
+# ─────────────────────────────────────────────
+# DAILY TIERS
+# ─────────────────────────────────────────────
+
+# (min_level, money_min, money_max, gems_min, gems_max)
 DAILY_TIERS = [
-    (    1,        500,        2_000,      5,       15),
-    (   50,      2_000,       10_000,     10,       30),
-    (  100,     10_000,       50_000,     20,       60),
-    (  250,     50_000,      200_000,     40,      100),
-    (  500,    200_000,    1_000_000,     80,      200),
-    ( 1000,  1_000_000,   10_000_000,    150,      400),
-    ( 1200, 10_000_000,  100_000_000,    300,      800),
+    (    1,         500,         2_000,   5,   15),
+    (   50,       2_000,        10_000,  10,   30),
+    (  100,      10_000,        50_000,  20,   60),
+    (  250,      50_000,       200_000,  40,  100),
+    (  500,     200_000,     1_000_000,  80,  200),
+    ( 1000,   1_000_000,    10_000_000, 150,  400),
+    ( 1200,  10_000_000,   100_000_000, 300,  800),
 ]
+
+# ─────────────────────────────────────────────
+# COLORS
+# ─────────────────────────────────────────────
 
 COLORS = {
-    "green":       discord.Color(0x2ECC71), 
+    "green":       discord.Color(0x2ECC71),
     "dark green":  discord.Color(0x1E8449),
-    "brown":       discord.Color(0x8B4513), 
+    "brown":       discord.Color(0x8B4513),
     "yellow":      discord.Color(0xF4D03F),
-    "dark yellow": discord.Color(0xB7950B), 
+    "dark yellow": discord.Color(0xB7950B),
     "light blue":  discord.Color(0xAED6F1),
-    "lime green":  discord.Color(0x39D353), 
+    "lime green":  discord.Color(0x39D353),
     "dark brown":  discord.Color(0x4A2C0A),
-    "orange":      discord.Color(0xE67E22), 
+    "orange":      discord.Color(0xE67E22),
     "purple":      discord.Color(0x8E44AD),
-    "dark blue":   discord.Color(0x1A237E), 
+    "dark blue":   discord.Color(0x1A237E),
     "rainbow":     discord.Color(0xFFB9FF),
-    "platinum":    discord.Color(0xE5E4E2), 
+    "platinum":    discord.Color(0xE5E4E2),
     "colorless":   discord.Color(0x2F3136),
 }
 
@@ -810,69 +845,286 @@ COLOR_EMOJIS = {
 }
 
 COLOR_LABELS = {
-    "green": "Green", 
-    "dark green": "Dark Green", 
-    "brown": "Brown",
-    "yellow": "Yellow",
-    "dark yellow": "Dark Yellow", 
-    "light blue": "Light Blue",
-    "lime green": "Lime Green", 
-    "dark brown": "Dark Brown", 
-    "orange": "Orange",
-    "purple": "Purple", 
-    "dark blue": "Dark Blue", 
-    "rainbow": "Rainbow",
-    "platinum": "Platinum", 
-    "colorless": "Colorless",
+    "green":       "Green",
+    "dark green":  "Dark Green",
+    "brown":       "Brown",
+    "yellow":      "Yellow",
+    "dark yellow": "Dark Yellow",
+    "light blue":  "Light Blue",
+    "lime green":  "Lime Green",
+    "dark brown":  "Dark Brown",
+    "orange":      "Orange",
+    "purple":      "Purple",
+    "dark blue":   "Dark Blue",
+    "rainbow":     "Rainbow",
+    "platinum":    "Platinum",
+    "colorless":   "Colorless",
 }
 
 COLOR_DESCRIPTIONS = {
-    "green": "Apply a village-inspired green tone, reflecting early life and simplicity.",
-    "dark green": "Apply a forest-green tone, inspired by deep woodland environments.",
-    "brown": "Apply an earthy brown tone, grounded in natural survival landscapes.",
-    "dark brown": "Apply a deep woods tone, reflecting dense forest and ancient timber regions.",
-    "yellow": "Apply a bright village sunlight tone, representing open fields and early progress.",
+    "green":       "Apply a village-inspired green tone, reflecting early life and simplicity.",
+    "dark green":  "Apply a forest-green tone, inspired by deep woodland environments.",
+    "brown":       "Apply an earthy brown tone, grounded in natural survival landscapes.",
+    "dark brown":  "Apply a deep woods tone, reflecting dense forest and ancient timber regions.",
+    "yellow":      "Apply a bright village sunlight tone, representing open fields and early progress.",
     "dark yellow": "Apply a muted forest-edge glow, inspired by aged woodlands and dusk light.",
-    "light blue": "Apply a calm tundra sky tone, reflecting cold and open environments.",
-    "dark blue": "Apply a deep oceanic abyss tone, inspired by abyssal depths and pressure zones.",
-    "lime green": "Apply a vibrant jungle energy tone, reflecting dense and thriving ecosystems.",
-    "orange": "Apply a volcanic highlands tone, inspired by heat, lava fields, and eruption zones.",
-    "purple": "Apply a cursed ruins tone, reflecting corrupted and ancient forgotten lands.",
-    "rainbow": "Apply a rare spectrum tone, inspired by chaotic rainbow biome energy.",
-    "platinum": "Apply a celestial peaks tone, representing divine elevation and endgame mastery.",
-    "colorless": "Remove biome influence and return to neutral default state.",
+    "light blue":  "Apply a calm tundra sky tone, reflecting cold and open environments.",
+    "dark blue":   "Apply a deep oceanic abyss tone, inspired by abyssal depths and pressure zones.",
+    "lime green":  "Apply a vibrant jungle energy tone, reflecting dense and thriving ecosystems.",
+    "orange":      "Apply a volcanic highlands tone, inspired by heat, lava fields, and eruption zones.",
+    "purple":      "Apply a cursed ruins tone, reflecting corrupted and ancient forgotten lands.",
+    "rainbow":     "Apply a rare spectrum tone, inspired by chaotic rainbow biome energy.",
+    "platinum":    "Apply a celestial peaks tone, representing divine elevation and endgame mastery.",
+    "colorless":   "Remove biome influence and return to neutral default state.",
 }
 
-SHOP_BOOST_ITEMS = {
-    "Lucky Charm": {
-        "description": "Increases your personal luck by 5%.",
-        "price": 20, "currency": "gems",
-        "max_qty": 10,
-        "boost_key": "luck", "boost_amt": 5
-    },
-    "Sellmaster Scroll": {
-        "description": "Increases your personal sell price by 5%.",
-        "price": 20, "currency": "gems",
-        "max_qty": 10,
-        "boost_key": "sell", "boost_amt": 5
-    },
-    "XP Tome": {
-        "description": "Increases your personal XP gain by 5%.",
-        "price": 20, "currency": "gems",
-        "max_qty": 10,
-        "boost_key": "xp", "boost_amt": 5
-    },
+# ─────────────────────────────────────────────
+# GAMBLE
+# ─────────────────────────────────────────────
+
+ROULETTE_COLORS    = ["red", "black", "green"]  # equal 1/3 each
+
+# (label, unused_weight, payout_multiplier)
+ROULETTE_BET_TYPES = {
+    "red":   ("🔴 Red",   4, 2),
+    "black": ("⚫ Black", 8, 2),
+    "green": ("🟢 Green", 3, 5),
 }
 
-VEHICLES = {
-    "Trail Boots":    {"emoji": "🥾", "tier": 1,  "boost_cd": 0.3, "boost_luck": 0,  "price": 500,          "currency": "money", "description": "A reliable pair of boots. Slightly faster."},
-    "Bicycle":        {"emoji": "🚲", "tier": 2,  "boost_cd": 0.5, "boost_luck": 0,  "price": 5_000,        "currency": "money", "description": "Pedal your way to prey."},
-    "Dirt Bike":      {"emoji": "🏍️", "tier": 3,  "boost_cd": 0.7, "boost_luck": 0,  "price": 25_000,       "currency": "money", "description": "Off-road and fast."},
-    "Pickup Truck":   {"emoji": "🚗", "tier": 4,  "boost_cd": 1.0, "boost_luck": 0,  "price": 100_000,      "currency": "money", "description": "Reliable workhorse."},
-    "4x4 Offroader":  {"emoji": "🚙", "tier": 5,  "boost_cd": 1.3, "boost_luck": 5,  "price": 500_000,      "currency": "money", "description": "Conquers any terrain."},
-    "Rowboat":        {"emoji": "🛶", "tier": 6,  "boost_cd": 1.5, "boost_luck": 5,  "price": 1_000_000,    "currency": "money", "description": "Silent on the water."},
-    "Helicopter":     {"emoji": "🚁", "tier": 7,  "boost_cd": 1.7, "boost_luck": 0,  "price": 5_000_000,    "currency": "money", "description": "Scout from above."},
-    "Horse":          {"emoji": "🐴", "tier": 8,  "boost_cd": 1.9, "boost_luck": 10, "price": 10_000_000,   "currency": "money", "description": "A hunter's best friend."},
-    "Military Jeep":  {"emoji": "🛻", "tier": 9,  "boost_cd": 2.1, "boost_luck": 0,  "price": 500,          "currency": "gems",  "description": "Built for the toughest hunts."},
-    "Hovercraft":     {"emoji": "🚀", "tier": 10, "boost_cd": 2.4, "boost_luck": 15, "price": 2_000,        "currency": "gems",  "description": "Endgame speed machine."},
+RPS_CHOICES = {"rock": "✊", "paper": "🖐️", "scissors": "✌️"}
+RPS_BEATS   = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
+
+# ─────────────────────────────────────────────
+# SLOTS — keyed to match actual BIOME_LEVELS keys
+# (min_bet, max_bet, win_chance_pct, win_multiplier)
+# ─────────────────────────────────────────────
+
+SLOT_BIOME_CONFIG = {
+    "village":             (        100,         10_000, 45, 2.0),
+    "forest":              (        500,         50_000, 42, 2.2),
+    "woods":               (      1_000,        100_000, 40, 2.5),
+    "small_desert":        (      2_500,        250_000, 37, 2.8),
+    "large_desert":        (      5_000,        500_000, 35, 3.0),
+    "tundra":              (     10_000,      1_000_000, 32, 3.5),
+    "jungle":              (     25_000,      2_500_000, 30, 3.8),
+    "swamp":               (     50_000,      5_000_000, 28, 4.0),
+    "volcanic_highlands":  (    100_000,     10_000_000, 25, 4.5),
+    "cursed_ruins":        (    250_000,     25_000_000, 22, 5.0),
+    "rainbow":             (    500_000,     50_000_000, 18, 6.0),
+    "abyssal_depths":      (  1_000_000,    100_000_000, 15, 7.0),
+    "celestial_peaks":     (  2_500_000,    250_000_000, 12, 8.0),
+}
+
+# ─────────────────────────────────────────────
+# TIPS
+# ─────────────────────────────────────────────
+
+TIPS = [
+    "Join a tribe to get Luck, Sell, and XP boosts!",
+    "Higher biomes give bigger money rewards per hunt!",
+    "Rare catches triple your money and double your XP!",
+    "Use /idle to earn ◈ while you're away!",
+    "Stack idle hours for massive passive income!",
+    "Unlock new biomes as you level up with /biome!",
+    "Your color is purely cosmetic — change it any time with /color!",
+    "Buy boosts from /shop to improve your hunting!",
+    "Upgrade your tools to unlock higher biomes!",
+    "Prestige at level 1000 for permanent boost multipliers!",
+    "Check /record to track every animal you've ever caught!",
+    "Use /leaderboard to see how you rank globally!",
+    "Higher tier tools let you catch multiple animals per hunt!",
+    "Check /log to review your recent hunt history!",
+    "Use /daily every day to build up your streak bonus!",
+    "Equip ammo in /equip for extra Luck, Sell, and XP boosts!",
+    "Ammo is consumed per hunt — stock up before long sessions!",
+    "Gem-bought ammo gives up to 50% boosts on top of your tool!",
+    "Running out of ammo? Head to /shop → Ammo tab!",
+    "Some ammo types focus on specific stats — pick what you need!",
+]
+
+# ─────────────────────────────────────────────
+# COMMAND IDs
+# ─────────────────────────────────────────────
+
+COMMAND_ID = {
+    "biome":        "1499948413608001698",
+    "color":        "1498883355079344158",
+    "daily":        "1501740931840344116",
+    "equip":        "1503563684704944223",
+    "gift":         "1499960573864050721",
+    "help":         "1499960573864050723",
+    "hunt":         "1499563402585182289",
+    "id":           "1499963837401530520",
+    "idle":         "1499948413608001699",
+    "invite":       "1501740931840344121",
+    "leaderboard":  "1500335302601084959",
+    "log":          "1501740931840344117",
+    "mail":         "1502518159855321138",
+    "menu":         "1501740931840344115",
+    "prestige":     "1500335302601084961",
+    "profile":      "1499960573864050720",
+    "record":       "1500335302601084960",
+    "shop":         "1499960573864050719",
+    "tools":        "1500335302601084958",
+    "tribe":        "1499962495341953184",
+    "tutorial":     "1503916432134639697",
+    "verify":       "1499948413608001696",
+    "bot_shutdown": "1502786816036704372",
+    "bot_resume":   "1502786816036704373",
+    "setdevmail":   "1502786816036704374",
+}
+
+# ─────────────────────────────────────────────
+# BADGES
+# ─────────────────────────────────────────────
+
+BADGES = {
+    "ammo_master":      {"label": "Ammo Master",          "abbr": "AM", "stat": "ammo_used",        "gold": 1_000_000,  "plat": 5_000_000},
+    "ammo_variety":     {"label": "Ammo Variety",         "abbr": "AV", "stat": "ammo_variety",     "gold": 1,          "plat": None},
+    "daily_daily_g":    {"label": "Daily Daily",          "abbr": "DD", "stat": "daily_streak",     "gold": 730,        "plat": 1825},
+    "legendary_hunter": {"label": "Legendary Hunter",     "abbr": "LH", "stat": "animals_caught",   "gold": 1_000_000,  "plat": 5_000_000},
+    "game_master":      {"label": "Game Master",          "abbr": "GM", "stat": "game_master",      "gold": 1,          "plat": 2},
+    "bj_dealer":        {"label": "Blackjack Dealer",     "abbr": "BD", "stat": "bj_wins",          "gold": 10_000,     "plat": 100_000},
+    "cf_tosser":        {"label": "Coinflip Tosser",      "abbr": "CT", "stat": "cf_wins",          "gold": 10_000,     "plat": 100_000},
+    "rl_spinner":       {"label": "Roulette Spinner",     "abbr": "RS", "stat": "rl_wins",          "gold": 10_000,     "plat": 100_000},
+    "slots_machine":    {"label": "Slots Human-Machine",  "abbr": "SH", "stat": "slots_wins",       "gold": 10_000,     "plat": 100_000},
+    "rps_npc":          {"label": "RPS NPC",              "abbr": "RN", "stat": "rps_wins",         "gold": 10_000,     "plat": 100_000},
+    "lottery_winner":   {"label": "Lottery Winner",       "abbr": "LW", "stat": "lottery_wins",     "gold": 100,        "plat": 1_000},
+    "prestige_master":  {"label": "Prestige Master",      "abbr": "PM", "stat": "prestige",         "gold": 10,         "plat": 50},
+    "xp_explosion":     {"label": "XP Explosion",         "abbr": "XE", "stat": "total_xp_earned",  "gold": 100_000,    "plat": 500_000},
+    "events_completer": {"label": "Events Completer",     "abbr": "EC", "stat": "events_completed", "gold": 10,         "plat": 20},
+    "leveler":          {"label": "Leveler",              "abbr": "LV", "stat": "level",            "gold": 1_000,      "plat": 10_000},
+}
+
+# ─────────────────────────────────────────────
+# ACHIEVEMENTS
+#
+# Format expected by check.py:
+#   dict[str, list[tuple[int, list[tuple[str, int]]]]]
+#   key  → achievement name
+#   list → [(threshold, [(reward_type, reward_amount), ...]), ...]
+#           reward_type is "money" or "gems"
+#
+# Titles are stored separately in ACHIEVEMENT_TITLES below.
+# "gamble" entry is intentionally a plain dict — check.py skips it
+# via the `if not isinstance(tiers, list): continue` guard.
+# ─────────────────────────────────────────────
+
+ACHIEVEMENTS: dict[str, list[tuple[int, list[tuple[str, int]]]] | dict] = {
+
+    # ── Daily Streak ──────────────────────────────────────────────
+    "daily_streak": [
+        (       1,  [("money",              10_000)]),
+        (      20,  [("money",              20_000)]),
+        (      50,  [("money",              50_000)]),
+        (      67,  [("money",              67_000)]),
+        (     100,  [("money",           1_000_000), ("gems",                  100)]),
+        (     183,  [("money",           5_000_000)]),
+        (     365,  [("money",          10_000_000), ("gems",                  334)]),
+        (     500,  [("money",         100_000_000), ("gems",                  500)]),
+        (     666,  [("money",         666_666_666), ("gems",                  666)]),
+        (     730,  [("money",                   0)]),  # title-only
+        (   1_000,  [("money",       1_000_000_000)]),
+        (   1_827,  [("money",      10_000_000_000), ("gems",                1_000)]),
+        (   2_557,  [("money",     100_000_000_000)]),
+        (   3_652,  [("money",   1_000_000_000_000), ("gems",               10_000)]),
+    ],
+
+    # ── Animals Caught ────────────────────────────────────────────
+    "animals_caught": [
+        (       100, [("money",              50_000)]),
+        (       250, [("money",             100_000)]),
+        (       500, [("money",             500_000)]),
+        (     1_000, [("gems",                  250)]),
+        (     1_500, [("money",           1_000_000)]),
+        (     2_000, [("money",           2_000_000)]),
+        (     3_000, [("money",           5_000_000)]),
+        (     5_000, [("money",          10_000_000)]),
+        (     7_500, [("money",          50_000_000)]),
+        (    10_000, [("money",         100_000_000)]),
+        (    20_000, [("money",         500_000_000)]),
+        (    35_000, [("money",       1_000_000_000)]),
+        (    50_000, [("money",       5_000_000_000)]),
+        (    75_000, [("money",      20_000_000_000)]),
+        (   100_000, [("money",      50_000_000_000)]),
+        (   300_000, [("money",     100_000_000_000)]),
+        (   650_000, [("money",     500_000_000_000)]),
+        ( 1_000_000, [("money",   1_000_000_000_000)]),
+        (10_000_000, [("gems",               10_000)]),
+    ],
+
+    # ── Ammo Used ─────────────────────────────────────────────────
+    "ammo_used": [
+        (       100, [("money",             100_000)]),
+        (       250, [("money",             500_000)]),
+        (       500, [("money",           1_000_000)]),
+        (     1_000, [("money",           5_000_000)]),
+        (     5_000, [("money",          40_000_000)]),
+        (    10_000, [("money",         100_000_000)]),
+        (    50_000, [("money",       1_000_000_000)]),
+        (   100_000, [("money",      10_000_000_000)]),
+    ],
+
+    # ── Buy All Tools ─────────────────────────────────────────────
+    "tools_bought_all": [
+        (1, [("money", 100_000_000)]),
+    ],
+
+    # ── Use All Tools ─────────────────────────────────────────────
+    "tools_used_all": [
+        (1, [("money", 250_000_000)]),
+    ],
+
+    # ── Gamble — intentionally a plain dict so bot.py skips it ───
+    # (the isinstance(tiers, list) guard in bot.py handles this)
+    "gamble": {},
+}
+
+# ─────────────────────────────────────────────
+# ACHIEVEMENT TITLES
+#
+# Format: dict[ach_key, dict[str(threshold), title_str]]
+# Matches ACHIEVEMENT_TITLES.get(ach_key, {}).get(str(threshold))
+# in bot.py.
+# ─────────────────────────────────────────────
+
+ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
+
+    "daily_streak": {
+        "1":     "I have claimed a daily!",
+        "50":    "I'm on fire!",
+        "100":   "100 Days of Hunting",
+        "365":   "Year-Long Hunter",
+        "666":   "Satan",
+        "730":   "2 years now...",
+        "1827":  "5 Year Veteran",
+        "2557":  "Still Going Strong",
+        "3652":  "A Decade of Hunts",
+    },
+
+    "animals_caught": {
+        "500":       "HUNT",
+        "1000":      "Still Hunting...",
+        "5000":      "HUNT HUNT",
+        "10000":     "Can't Stop (Hunting)",
+        "50000":     "HUNT HUNT HUNT",
+        "100000":    "Never Touch Grass",
+        "1000000":   "Legendary Hunter",
+        "10000000":  "God of Hunters",
+    },
+
+    "ammo_used": {
+        "100":    "I See Shells on the Ground",
+        "1000":   "This Place is Covered in Shells",
+        "10000":  "Moving HQ",
+        "100000": "Shells Are the New Dirt",
+    },
+
+    "tools_bought_all": {
+        "1": "Ultimate Blacksmith",
+    },
+
+    "tools_used_all": {
+        "1": "Tool Consumer",
+    },
 }
