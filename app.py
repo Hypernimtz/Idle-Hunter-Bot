@@ -565,7 +565,6 @@ _tool_shop_page:       dict[str, int]  = {}
 _ach_page:             dict[str, int]  = {}
 _badge_page:           dict[str, int]  = {}
 _tribe_sort:           dict[str, str]  = {}
-_nav_stack:            dict[str, list] = {}
 gift_cache:            dict[str, dict] = {}
 
 # ─────────────────────────────────────────────
@@ -1046,22 +1045,6 @@ def verify_needed_components(user_id: str) -> list:
 async def check_everything(interaction: discord.Interaction, user_id: str):
     await check_achievements_and_badges(interaction, user_id)
     await maybe_send_mail_notification(interaction, user_id)
-
-# ─────────────────────────────────────────────
-# BACK STACK
-# ─────────────────────────────────────────────
-
-def nav_push(user_id: str, panel: str):
-    stack = _nav_stack.setdefault(user_id, [])
-    if not stack or stack[-1] != panel:
-        stack.append(panel)
-
-def nav_pop(user_id: str) -> str:
-    stack = _nav_stack.get(user_id, ["menu"])
-    if len(stack) > 1:
-        stack.pop()
-        return stack[-1] if stack else "menu"
-    return "menu"
 
 # ─────────────────────────────────────────────
 # HUNT LOGIC
@@ -3872,7 +3855,6 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
 async def _navigate(interaction: discord.Interaction, user_id: str,
                     panel: str, display_name: str = ""):
     dn = display_name or interaction.user.display_name
-    nav_push(user_id, panel)
     if panel == "menu":
         await smart_update_v2(interaction, build_menu_components(user_id, dn))
     elif panel == "shop":
@@ -4058,7 +4040,7 @@ async def on_interaction(interaction: discord.Interaction):
             init_user(owner_id)
             result = run_hunt(owner_id)
             if result.get("verify"):
-                await send_ephemeral_v2(interaction, 
+                await send_ephemeral_v2(interaction,
                     f"🔒 **Verification Required**\nUse </verify:{COMMAND_ID.get('verify','0')}> with code `{data[owner_id]['verify']['code']}`",
                     0xE67E22)
                 return
@@ -4076,7 +4058,6 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, msg, 0xE67E22)
                 return
             if not result["ok"]:
-                remaining = result.get("remaining", 3)
                 await send_ephemeral_v2(interaction,
                     f"⏳ Hunt again <t:{result.get('cooldown_ts', int(time.time()+3))}:R>.",
                     0xE67E22)
@@ -4097,8 +4078,7 @@ async def on_interaction(interaction: discord.Interaction):
 
         if parts[1] == "back":
             await interaction.response.defer()
-            prev = nav_pop(owner_id)
-            await _navigate(interaction, owner_id, prev, interaction.user.display_name)
+            await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
 
     # ── MENU NAV ──────────────────────────────
@@ -4112,7 +4092,6 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "nav":
             await interaction.response.defer()
             panel = values[0] if values else "menu"
-            nav_push(owner_id, "menu")
             if panel == "hunt":
                 init_user(owner_id)
                 result = run_hunt(owner_id)
@@ -4141,7 +4120,6 @@ async def on_interaction(interaction: discord.Interaction):
                     return
                 save_data_users()
                 data[owner_id]["_display_name"] = interaction.user.display_name
-                nav_push(owner_id, "hunt")
                 await smart_update_v2(interaction, build_hunt_components(owner_id, result))
                 return
             else:
@@ -4150,7 +4128,6 @@ async def on_interaction(interaction: discord.Interaction):
 
         if parts[1] == "help":
             await interaction.response.defer()
-            nav_push(owner_id, "menu")
             await smart_update_v2(interaction, build_help_components(owner_id))
             return
         return
@@ -4165,7 +4142,6 @@ async def on_interaction(interaction: discord.Interaction):
         await interaction.response.defer()
         action = parts[1]
         if action in ("back", "menu"):
-            _nav_stack[owner_id] = ["menu"]
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
         return
 
@@ -4220,7 +4196,7 @@ async def on_interaction(interaction: discord.Interaction):
         await smart_update_v2(interaction, build_biome_panel_components(owner_id))
         return
 
-# ── TOOLS ─────────────────────────────────
+    # ── TOOLS ─────────────────────────────────
     if parts[0] == "tools":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
@@ -4268,6 +4244,26 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
             return
+
+        # Modals must be the initial response — handle before defer
+        if parts[1] == "ammo_buy_acc":
+            ammo_name = parts[2]
+            if ammo_name not in AMMO:
+                await interaction.response.defer()
+                await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
+                return
+            await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name))
+            return
+
+        if parts[1] == "ammo_buy":
+            ammo_name = values[0] if values else None
+            if not ammo_name or ammo_name not in AMMO:
+                await interaction.response.defer()
+                await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
+                return
+            await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name))
+            return
+
         await interaction.response.defer()
 
         if parts[1] == "tab_dd":
@@ -4369,22 +4365,6 @@ async def on_interaction(interaction: discord.Interaction):
             data[owner_id]["tool"] = tool_name
             save_data_users()
             await smart_update_v2(interaction, build_shop_components(owner_id, "tools"))
-            return
-
-        if parts[1] == "ammo_buy_acc":
-            ammo_name = parts[2]
-            if ammo_name not in AMMO:
-                await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
-                return
-            await interaction.followup.send_modal(AmmoBuyModal(owner_id, ammo_name))
-            return
-
-        if parts[1] == "ammo_buy":
-            ammo_name = values[0] if values else None
-            if not ammo_name or ammo_name not in AMMO:
-                await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
-                return
-            await interaction.followup.send_modal(AmmoBuyModal(owner_id, ammo_name))
             return
 
         if parts[1] == "ammo_prev":
@@ -4746,13 +4726,37 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         tribe_nm = data[owner_id].get("tribe")
         if not tribe_nm or tribe_nm not in tribe_data:
+            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "You're not in a tribe.", 0xE74C3C)
             return
         sort = _tribe_sort.get(owner_id, "rank")
+
+        # Modals before defer
+        if action in ("action_select", "action"):
+            sub = (values[0] if action == "action_select"
+                   else (parts[2] if len(parts) > 2 else None))
+
+            if sub == "invite":
+                await interaction.response.send_modal(TribeInviteModal(owner_id, tribe_nm))
+                return
+
+            if sub == "set_desc":
+                await interaction.response.send_modal(TribeSetDescModal(owner_id, tribe_nm))
+                return
+
+            if sub == "leave":
+                td_l    = tribe_data[tribe_nm]
+                total_m = 1 + len(td_l["roles"]["officer"]) + len(td_l["roles"]["members"])
+                is_ldr  = td_l["roles"]["leader"] == owner_id
+                if is_ldr and total_m > 1:
+                    await interaction.response.send_modal(TribeLeaveLeaderModal(owner_id, tribe_nm))
+                    return
+                # Non-modal leave falls through to defer below
+
+        await interaction.response.defer()
 
         if action == "nav":
             page = parts[2]
@@ -4815,13 +4819,32 @@ async def on_interaction(interaction: discord.Interaction):
             if not sub:
                 return
 
+            # invite, set_desc, leave (modal) already handled above
+            if sub == "kick":
+                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "kick_picker", sort))
+                return
+
+            if sub == "banlist":
+                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "banlist", sort))
+                return
+
+            if sub == "promote":
+                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "promote_picker", sort))
+                return
+
+            if sub == "demote":
+                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "demote_picker", sort))
+                return
+
+            if sub == "transfer":
+                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "transfer_picker", sort))
+                return
+
             if sub == "leave":
                 td_l    = tribe_data[tribe_nm]
                 total_m = 1 + len(td_l["roles"]["officer"]) + len(td_l["roles"]["members"])
                 is_ldr  = td_l["roles"]["leader"] == owner_id
-                if is_ldr and total_m > 1:
-                    await interaction.followup.send_modal(TribeLeaveLeaderModal(owner_id, tribe_nm))
-                    return
+                # is_ldr + total_m > 1 already sent modal above; handle remaining cases:
                 if is_ldr and total_m == 1:
                     del tribe_data[tribe_nm]
                     data[owner_id]["tribe"] = None
@@ -4836,34 +4859,6 @@ async def on_interaction(interaction: discord.Interaction):
                 save_data_users()
                 save_data_tribe()
                 await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
-                return
-
-            if sub == "invite":
-                await interaction.followup.send_modal(TribeInviteModal(owner_id, tribe_nm))
-                return
-
-            if sub == "kick":
-                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "kick_picker", sort))
-                return
-
-            if sub == "banlist":
-                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "banlist", sort))
-                return
-
-            if sub == "set_desc":
-                await interaction.followup.send_modal(TribeSetDescModal(owner_id, tribe_nm))
-                return
-
-            if sub == "promote":
-                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "promote_picker", sort))
-                return
-
-            if sub == "demote":
-                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "demote_picker", sort))
-                return
-
-            if sub == "transfer":
-                await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "transfer_picker", sort))
                 return
 
             return
@@ -4920,12 +4915,7 @@ async def on_interaction(interaction: discord.Interaction):
 
         if action == "action":
             sub = parts[2]
-            if sub == "invite":
-                await interaction.followup.send_modal(TribeInviteModal(owner_id, tribe_nm))
-                return
-            if sub == "set_desc":
-                await interaction.followup.send_modal(TribeSetDescModal(owner_id, tribe_nm))
-                return
+            # invite, set_desc, leave (modal) already handled above
             if sub == "banlist":
                 await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "banlist", sort))
                 return
@@ -4933,9 +4923,6 @@ async def on_interaction(interaction: discord.Interaction):
                 td_l    = tribe_data[tribe_nm]
                 total_m = 1 + len(td_l["roles"]["officer"]) + len(td_l["roles"]["members"])
                 is_ldr  = td_l["roles"]["leader"] == owner_id
-                if is_ldr and total_m > 1:
-                    await interaction.followup.send_modal(TribeLeaveLeaderModal(owner_id, tribe_nm))
-                    return
                 if is_ldr and total_m == 1:
                     del tribe_data[tribe_nm]
                     data[owner_id]["tribe"] = None
@@ -5355,28 +5342,34 @@ async def on_interaction(interaction: discord.Interaction):
 
         panel = parts[1]
         if panel == "main":
-            nav_push(owner_id, "profile")
             await smart_update_v2(interaction, build_profile_components(owner_id, interaction.user.display_name, "main"))
             return
         if panel == "inventory":
-            nav_push(owner_id, "profile:inventory")
             await smart_update_v2(interaction, build_inventory_components(owner_id, interaction.user.display_name))
             return
         if panel == "statistics":
-            nav_push(owner_id, "profile:statistics")
             await smart_update_v2(interaction, build_statistics_components(owner_id, interaction.user.display_name))
             return
         if panel == "leaderboard":
-            nav_push(owner_id, "profile:leaderboard")
             await smart_update_v2(interaction, build_personal_leaderboard_components(owner_id))
             return
         if panel == "log":
-            nav_push(owner_id, "profile:log")
             log_page = _profile_log_page.get(owner_id, 0)
             await smart_update_v2(interaction, build_log_v2_components(owner_id, log_page))
             return
-        nav_push(owner_id, "profile")
         await _navigate(interaction, owner_id, panel, interaction.user.display_name)
+        return
+
+    # ── VERIFY REFRESH ────────────────────────────
+    if parts[0] == "verify":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await interaction.response.defer()
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            return
+        await interaction.response.defer()
+        if parts[1] == "refresh":
+            await smart_update_v2(interaction, build_verify_v2(owner_id))
         return
 
     # ── LOG PROFILE ───────────────────────────
@@ -5889,7 +5882,6 @@ class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
 async def menu_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    _nav_stack[user_id] = ["menu"]
     await send_v2_followup(interaction, build_menu_components(user_id, interaction.user.display_name))
     await check_everything(interaction, str(interaction.user.id))
 
@@ -5903,7 +5895,6 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
     target    = user or interaction.user
     target_id = str(target.id)
     init_user(target_id)
-    nav_push(viewer_id, "profile")
     await send_v2_followup(interaction,
         build_profile_components(target_id, target.display_name, viewer_id=viewer_id))
     await check_everything(interaction, viewer_id)
@@ -5942,7 +5933,6 @@ async def hunt_cmd(interaction: discord.Interaction):
     await maybe_tutorial_optin(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "sell")
     data[user_id]["_display_name"] = interaction.user.display_name
-    nav_push(user_id, "hunt")
     await send_v2_followup(interaction, build_hunt_components(user_id, result))
     await check_everything(interaction, user_id)
 
@@ -5977,7 +5967,6 @@ async def events_cmd(interaction: discord.Interaction):
 async def shop_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "shop")
     await send_v2_followup(interaction, build_shop_components(user_id, "boosts"))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "shop_ammo")
@@ -5988,7 +5977,6 @@ async def shop_cmd(interaction: discord.Interaction):
 async def biome_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "biome")
     await send_v2_followup(interaction, build_biome_panel_components(user_id))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "shop_tools")
@@ -5999,7 +5987,6 @@ async def biome_cmd(interaction: discord.Interaction):
 async def color_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "color")
     await send_v2_followup(interaction, build_color_panel_components(user_id))
     await check_everything(interaction, user_id)
 
@@ -6009,7 +5996,6 @@ async def color_cmd(interaction: discord.Interaction):
 async def equip_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "equip")
     await send_v2_followup(interaction, build_equip_components(user_id))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "equip")
@@ -6020,7 +6006,6 @@ async def equip_cmd(interaction: discord.Interaction):
 async def idle_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "idle")
     await send_v2_followup(interaction, build_idle_components(user_id))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "idle")
@@ -6031,7 +6016,6 @@ async def idle_cmd(interaction: discord.Interaction):
 async def daily_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "daily")
     await send_v2_followup(interaction, build_daily_components(user_id))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "daily")
@@ -6042,7 +6026,6 @@ async def daily_cmd(interaction: discord.Interaction):
 async def prestige_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "prestige")
     await send_v2_followup(interaction, build_prestige_components(user_id))
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "prestige")
@@ -6053,7 +6036,6 @@ async def prestige_cmd(interaction: discord.Interaction):
 async def mail_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "mail")
     await send_v2_followup(interaction, build_mail_components(user_id, "tribe"))
 
 @bot.tree.command(name="tribe", description="View your current tribe and options")
@@ -6062,7 +6044,6 @@ async def mail_cmd(interaction: discord.Interaction):
 async def tribe_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    nav_push(user_id, "tribe")
     tribe_nm  = data[user_id].get("tribe")
     tribe_inv = data[user_id].get("tribe_inv")
     if not tribe_nm and tribe_inv and tribe_inv in tribe_data:
@@ -6169,7 +6150,6 @@ async def gift_cmd(interaction: discord.Interaction,
     if data[sender_id][format] < parsed:
         await send_ephemeral_v2(interaction, f"❌ Not enough {icon}!", 0xE74C3C)
         return
-    nav_push(sender_id, "gift")
     await send_v2_followup(interaction,
         build_gift_confirm_components(sender_id, user, format, parsed, sent_message))
 
@@ -6246,7 +6226,6 @@ async def id_cmd(interaction: discord.Interaction, user: discord.User = None):
 async def help_cmd(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     init_user(user_id)
-    nav_push(user_id, "help")
     await interaction.response.defer()
     await send_v2_followup(interaction, build_help_components(user_id))
     await check_everything(interaction, user_id)
