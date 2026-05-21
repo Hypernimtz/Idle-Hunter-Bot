@@ -4,10 +4,12 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 from collections import Counter
+from backend import _flush_users
 from game_data import *
 from backend import *
+from economy import *
 from dotenv import load_dotenv
-import os
+import os, csv
 load_dotenv("token.env")
 
 BOT_TOKEN = os.getenv("TOKEN")
@@ -57,9 +59,9 @@ LOTTERY_TICKET_COST   = 10_000
 GAMBLE_COOLDOWN       = 0
 V2_FLAGS              = 32768
 
-def show_incorrect_user_message(interaction: discord.Interaction):
+def show_incorrect_user_message(user_id: str):
     return (
-        f"This panel is controlled by <@{str(interaction.user.id)}>.\n"
+        f"This panel is controlled by <@{user_id}>.\n"
         "If you want to view it, you will have to run the original command yourself."
     )
 
@@ -187,34 +189,6 @@ def color_display_name(color_key: str) -> str:
 def _accent(user_id: str) -> int:
     return int(v2_color(user_id)) or 0x2ECC71
 
-# ─────────────────────────────────────────────
-# XP FORMULA
-# ─────────────────────────────────────────────
-
-def xp_for_level(level: int) -> int:
-    """Piecewise progression curve to avoid flat late game.
-
-    Each bracket starts from the prior bracket's boundary value so XP
-    requirements stay monotonically increasing across level boundaries.
-    """
-    lvl = max(1, level)
-
-    # Bracket 1: 1-100
-    if lvl <= 100:
-        return int(200 + (lvl ** 1.35) * 22)
-
-    # Keep later brackets anchored to prior boundary XP to avoid drops.
-    xp_at_100 = int(200 + (100 ** 1.35) * 22)
-
-    # Bracket 2: 101-500
-    if lvl <= 500:
-        return xp_at_100 + int(((lvl - 100) ** 1.5) * 18)
-
-    xp_at_500 = xp_at_100 + int(((500 - 100) ** 1.5) * 18)
-
-    # Bracket 3: 501+
-    return xp_at_500 + int(((lvl - 500) ** 1.7) * 20)
-
 
 # ─────────────────────────────────────────────
 # AMOUNT PARSER
@@ -250,19 +224,6 @@ def save_data_users() -> None:
 
 def save_data_tribe() -> None:
     save_with_retries(TRIBE_FILE, tribe_data)
-
-
-async def mutate_users_state(mutator) -> None:
-    async with state_lock:
-        mutator()
-        save_data_users()
-
-
-async def mutate_users_and_tribes_state(mutator) -> None:
-    async with state_lock:
-        mutator()
-        save_data_users()
-        save_data_tribe()
 
 
 def load_data_users() -> dict:
@@ -320,8 +281,11 @@ def load_config() -> dict:
             }
         }
 
+register_save_callbacks(save_data_users, save_data_tribe)
+
 # Load everything in the correct order
 data       = load_data_users()
+data = migrate_all_users(data)
 tribe_data = load_data_tribe()
 
 _cfg                = load_config()
@@ -381,7 +345,7 @@ def init_user(user_id: str):
     user_id = str(user_id)
     today   = today_utc()
     defaults = {
-        "username": get_username(user_id),
+        "schema_version": CURRENT_SCHEMA,"username": get_username(user_id),
         "money": 10000, "level": 1, "xp": 0, "inv": [],
         "gems": 100, "premium": False, "hunt_cd": 0, "daily_cd": 0,
         "color": "green", "biome": "village", "tribe": None, "tribe_inv": None,
@@ -470,6 +434,30 @@ def init_tribe(tribe_name, user_id):
         "luck_boost": 0, "sell_price_boost": 0, "xp_boost": 0,
     }.items():
         tribe_data[tribe_name].setdefault(k, v)
+
+def add_money(user_id: str, amount: int, source: str) -> None:
+    data[user_id]["money"] += amount
+    if amount != 0:
+        log_economy_event(user_id, source, amount, data[user_id]["money"])
+
+def spend_money(user_id: str, amount: int, source: str) -> bool:
+    if data[user_id]["money"] < amount:
+        return False
+    data[user_id]["money"] -= amount
+    log_economy_event(user_id, source, -amount, data[user_id]["money"])
+    return True
+
+def spend_gems(user_id: str, amount: int, source: str) -> bool:
+    if data[user_id]["gems"] < amount:
+        return False
+    data[user_id]["gems"] -= amount
+    log_economy_event(user_id, source, -amount, data[user_id]["gems"], currency="gems")
+    return True
+
+def add_gems(user_id: str, amount: int, source: str) -> None:
+    data[user_id]["gems"] += amount
+    if amount != 0:
+        log_economy_event(user_id, source, amount, data[user_id]["gems"], currency="gems")
 
 # ─────────────────────────────────────────────
 # BADGE / ACHIEVEMENT STAT HELPERS
@@ -575,7 +563,7 @@ async def run_lottery_draw():
     global lottery_data
     ld      = lottery_data
     tickets = ld.get("tickets", {})
-    pool    = ld.get("pool", 0)
+    pool    = round(ld.get("pool", 0) * 0.8)
     total_t = sum(tickets.values())
 
     next_ts = lottery_next_midnight()
@@ -594,14 +582,18 @@ async def run_lottery_draw():
     winner_tickets = tickets[winner_id]
     chance_pct     = (winner_tickets / total_t) * 100
     cost           = winner_tickets * LOTTERY_TICKET_COST
-    profit         = pool - cost
+    profit         = (pool - cost)
 
     init_user(winner_id)
-    data[winner_id]["money"] += pool
-    data[winner_id]["stats"]["lottery_wins"] = data[winner_id]["stats"].get("lottery_wins", 0) + 1
-    data[winner_id]["total_money_earned"] = data[winner_id].get("total_money_earned", 0) + pool
-    save_data_users()
-
+    async with user_transaction(winner_id):
+        add_money(winner_id, pool, "lottery")
+        data[winner_id]["stats"]["lottery_wins"] = (
+            data[winner_id]["stats"].get("lottery_wins", 0) + 1
+        )
+        data[winner_id]["total_money_earned"] = (
+            data[winner_id].get("total_money_earned", 0) + pool
+        )
+    # save_data_users() ← DELETE this line
     winner_name = get_username(winner_id)
 
     sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
@@ -704,7 +696,7 @@ def collect_idle(user_id: str) -> int:
         return 0
     now    = time.time()
     earned = int(((now - idle["started_at"]) / 3600) * idle_rate_per_hour(user_id) * idle["stacks"])
-    data[user_id]["money"] += earned
+    add_money(user_id, earned, "idle")
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + earned
     idle["started_at"] = now
     return earned
@@ -731,13 +723,6 @@ def add_log_entry(user_id: str, entry: dict):
 # ─────────────────────────────────────────────
 # DAILY HELPERS
 # ─────────────────────────────────────────────
-
-def get_daily_tier(level: int) -> dict:
-    tier = DAILY_TIERS[0]
-    for t in DAILY_TIERS:
-        if level >= t[0]:
-            tier = t
-    return {"money_min": tier[1], "money_max": tier[2], "gems_min": tier[3], "gems_max": tier[4]}
 
 def next_midnight_ts() -> int:
     now = datetime.now(timezone.utc)
@@ -1168,7 +1153,7 @@ def sell_all_inv(user_id: str) -> dict:
     total      = sum(int(ANIMAL_DATA.get(a, {}).get("value", 0) * (1 + sell_boost / 100)) for a in inv)
     count      = len(inv)
     data[user_id]["inv"]    = []
-    data[user_id]["money"] += total
+    add_money(user_id, total, "sell all")
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + total
     return {"total": total, "count": count}
 
@@ -3833,8 +3818,6 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
             notifs.append(("🏆 Platinum Badge Earned!",
                 "**Game Master** `[GM🏆]`\nYou've completed everything. Legendary.", 0xE8E8E8))
 
-    save_data_users()
-
     for title, body, color in notifs:
         try:
             route = Route("POST", "/webhooks/{application_id}/{token}",
@@ -3987,7 +3970,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         init_tutorial(owner_id)
@@ -4032,13 +4015,14 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         if parts[1] == "again":
             await interaction.response.defer()
             init_user(owner_id)
-            result = run_hunt(owner_id)
+            async with get_user_lock(owner_id):
+                result = run_hunt(owner_id)
             if result.get("verify"):
                 await send_ephemeral_v2(interaction,
                     f"🔒 **Verification Required**\nUse </verify:{COMMAND_ID.get('verify','0')}> with code `{data[owner_id]['verify']['code']}`",
@@ -4062,7 +4046,6 @@ async def on_interaction(interaction: discord.Interaction):
                     f"⏳ Hunt again <t:{result.get('cooldown_ts', int(time.time()+3))}:R>.",
                     0xE67E22)
                 return
-            save_data_users()
             data[owner_id]["_display_name"] = interaction.user.display_name
             await smart_update_v2(interaction, build_hunt_components(owner_id, result))
             return
@@ -4070,8 +4053,8 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "sell_all":
             await interaction.response.defer()
             init_user(owner_id)
-            sold = sell_all_inv(owner_id)
-            save_data_users()
+            async with user_transaction(owner_id):
+                sold = sell_all_inv(owner_id)
             await maybe_tutorial_tip(interaction, owner_id, "biome")
             await smart_update_v2(interaction, build_hunt_sold_components(owner_id, sold))
             return
@@ -4086,7 +4069,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         if parts[1] == "nav":
@@ -4094,7 +4077,8 @@ async def on_interaction(interaction: discord.Interaction):
             panel = values[0] if values else "menu"
             if panel == "hunt":
                 init_user(owner_id)
-                result = run_hunt(owner_id)
+                async with user_transaction(owner_id):
+                    result = run_hunt(owner_id)
                 if result.get("verify"):
                     await send_ephemeral_v2(interaction,
                         f"🔒 **Verification Required**\nUse </verify:{COMMAND_ID.get('verify','0')}> with code `{data[owner_id]['verify']['code']}`",
@@ -4137,7 +4121,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
         action = parts[1]
@@ -4150,7 +4134,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
         color_key = values[0] if values else None
@@ -4166,7 +4150,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         if data[owner_id]["level"] < 1200:
             await interaction.response.defer()
@@ -4180,7 +4164,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id  = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
         biome_key = values[0] if values else None
@@ -4201,7 +4185,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -4242,7 +4226,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         # Modals must be the initial response — handle before defer
@@ -4289,15 +4273,13 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, f"Max {item_name} already owned.", 0xE74C3C)
                 return
             if item["currency"] == "gems":
-                if data[owner_id]["gems"] < item["price"]:
+                if not spend_gems(owner_id, item["price"], "shop boost"):
                     await send_ephemeral_v2(interaction, f"Need 💎{item['price']}.", 0xE74C3C)
                     return
-                data[owner_id]["gems"] -= item["price"]
             else:
-                if data[owner_id]["money"] < item["price"]:
+                if not spend_money(owner_id, item["price"], "shop boost"):
                     await send_ephemeral_v2(interaction, f"Need ◈ {item['price']:,}.", 0xE74C3C)
                     return
-                data[owner_id]["money"] -= item["price"]
             if boost_key:
                 data[owner_id]["boosts"][boost_key] = current + boost_amt
             save_data_users()
@@ -4326,19 +4308,21 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, "Already owned.", 0xE74C3C)
                 return
             t = TOOLS[tool_name]
-            if t["currency"] == "gems":
-                if data[owner_id]["gems"] < t["price"]:
-                    await send_ephemeral_v2(interaction, f"Need 💎{t['price']}.", 0xE74C3C)
-                    return
-                data[owner_id]["gems"] -= t["price"]
-            else:
-                if data[owner_id]["money"] < t["price"]:
-                    await send_ephemeral_v2(interaction, f"Need ◈ {t['price']:,}.", 0xE74C3C)
-                    return
-                data[owner_id]["money"] -= t["price"]
-            data[owner_id]["owned_tools"].append(tool_name)
-            data[owner_id]["tool"] = tool_name
-            save_data_users()
+            # Pre-check
+            if t["currency"] == "gems" and data[owner_id]["gems"] < t["price"]:
+                await send_ephemeral_v2(interaction, f"Need 💎{t['price']}.", 0xE74C3C)
+                return
+            if t["currency"] == "money" and data[owner_id]["money"] < t["price"]:
+                await send_ephemeral_v2(interaction, f"Need ◈ {t['price']:,}.", 0xE74C3C)
+                return
+ 
+            async with user_transaction(owner_id):
+                if t["currency"] == "gems":
+                    spend_gems(owner_id, t["price"], "shop tool")
+                else:
+                    spend_money(owner_id, t["price"], "shop tool")
+                data[owner_id]["owned_tools"].append(tool_name)
+                data[owner_id]["tool"] = tool_name
             await smart_update_v2(interaction, build_shop_components(owner_id, "tools"))
             return
 
@@ -4355,12 +4339,12 @@ async def on_interaction(interaction: discord.Interaction):
                 if data[owner_id]["gems"] < t["price"]:
                     await send_ephemeral_v2(interaction, f"Need 💎{t['price']}.", 0xE74C3C)
                     return
-                data[owner_id]["gems"] -= t["price"]
+                spend_money(owner_id, t["price"], "tool shop")
             else:
                 if data[owner_id]["money"] < t["price"]:
                     await send_ephemeral_v2(interaction, f"Need ◈ {t['price']:,}.", 0xE74C3C)
                     return
-                data[owner_id]["money"] -= t["price"]
+                spend_money(owner_id, t["price"], "tool shop")
             data[owner_id]["owned_tools"].append(tool_name)
             data[owner_id]["tool"] = tool_name
             save_data_users()
@@ -4406,12 +4390,12 @@ async def on_interaction(interaction: discord.Interaction):
                 if data[owner_id]["gems"] < v["price"]:
                     await send_ephemeral_v2(interaction, f"Need 💎{v['price']}.", 0xE74C3C)
                     return
-                data[owner_id]["gems"] -= v["price"]
+                spend_money(owner_id, v["price"], "vehicle shop")
             else:
                 if data[owner_id]["money"] < v["price"]:
                     await send_ephemeral_v2(interaction, f"Need ◈ {v['price']:,}.", 0xE74C3C)
                     return
-                data[owner_id]["money"] -= v["price"]
+                spend_money(owner_id, v["price"], "vehicle shop")
             data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
             data[owner_id]["vehicle"] = vehicle_name
             save_data_users()
@@ -4439,12 +4423,12 @@ async def on_interaction(interaction: discord.Interaction):
                 if data[owner_id]["gems"] < v["price"]:
                     await send_ephemeral_v2(interaction, f"Need 💎{v['price']}.", 0xE74C3C)
                     return
-                data[owner_id]["gems"] -= v["price"]
+                spend_money(owner_id, v["price"], "vehicle shop")
             else:
                 if data[owner_id]["money"] < v["price"]:
                     await send_ephemeral_v2(interaction, f"Need ◈ {v['price']:,}.", 0xE74C3C)
                     return
-                data[owner_id]["money"] -= v["price"]
+                spend_money(owner_id, v["price"], "vehicle shop")
             data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
             data[owner_id]["vehicle"] = vehicle_name
             save_data_users()
@@ -4464,13 +4448,13 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
         if parts[1] == "collect":
-            collect_idle(owner_id)
-            save_data_users()
+            async with user_transaction(owner_id):
+                collect_idle(owner_id)
             await smart_update_v2(interaction, build_idle_components(owner_id))
             return
 
@@ -4480,12 +4464,12 @@ async def on_interaction(interaction: discord.Interaction):
             if data[owner_id]["money"] < cost:
                 await send_ephemeral_v2(interaction, f"Need ◈ {cost:,}.", 0xE74C3C)
                 return
-            collect_idle(owner_id)
-            data[owner_id]["money"] -= cost
-            idle["stacks"]      += 1
-            idle["active"]       = True
-            idle["started_at"]   = time.time()
-            save_data_users()
+            async with user_transaction(owner_id):
+                collect_idle(owner_id)
+                spend_money(owner_id, cost, "idle hiring")
+                idle["stacks"]      += 1
+                idle["active"]       = True
+                idle["started_at"]   = time.time()
             await smart_update_v2(interaction, build_idle_components(owner_id))
             return
 
@@ -4494,38 +4478,55 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
-
+ 
         today_str = today_utc()
-        last_date = data[owner_id].get("last_daily_date", "")
-        if last_date == today_str:
-            await smart_update_v2(interaction, build_daily_components(owner_id))
-            return
-        streak = calc_streak(last_date, data[owner_id].get("daily_streak", 0)) + 1
-        data[owner_id]["daily_streak"]    = streak
-        data[owner_id]["last_daily_date"] = today_str
-        if streak > data[owner_id].get("best_daily_streak", 0):
-            data[owner_id]["best_daily_streak"] = streak
-        level    = data[owner_id]["level"]
-        prestige = data[owner_id].get("prestige", 0)
-        tier     = get_daily_tier(level)
-        bonus    = 1 + (streak / 100) + (prestige * 0.1)
-        rtype    = random.choice(["money", "gems"])
-        if rtype == "money":
-            base = random.randint(tier["money_min"], tier["money_max"])
-            amt  = int(base * bonus)
-            data[owner_id]["money"] += amt
-            data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + amt
-        else:
-            base = random.randint(tier["gems_min"], tier["gems_max"])
-            amt  = int(base * bonus)
-            data[owner_id]["gems"] += amt
-        save_data_users()
+        claimed   = False
+        rtype     = "money"
+        amt       = 0
+        streak    = 0
+ 
+        if data[owner_id].get("last_daily_date", "") != today_str:
+            async with user_transaction(owner_id):
+                streak = calc_streak(
+                    data[owner_id].get("last_daily_date", ""),
+                    data[owner_id].get("daily_streak", 0),
+                ) + 1
+                data[owner_id]["daily_streak"]    = streak
+                data[owner_id]["last_daily_date"] = today_str
+                if streak > data[owner_id].get("best_daily_streak", 0):
+                    data[owner_id]["best_daily_streak"] = streak
+                level    = data[owner_id]["level"]
+                prestige = data[owner_id].get("prestige", 0)
+                tier     = get_daily_tier(level)
+                bonus    = 1 + (streak / 100) + (prestige * 0.1)
+                rtype    = random.choice(["money", "gems"])
+                if rtype == "money":
+                    base = random.randint(tier["money_min"], tier["money_max"])
+                    amt  = int(base * bonus)
+                    add_money(owner_id, amt, "daily")
+                    data[owner_id]["total_money_earned"] = (
+                        data[owner_id].get("total_money_earned", 0) + amt
+                    )
+                else:
+                    base = random.randint(tier["gems_min"], tier["gems_max"])
+                    amt  = int(base * bonus)
+                    add_gems(owner_id, amt, "daily")
+                claimed = True
+ 
         await check_achievements_and_badges(interaction, owner_id)
-        await smart_update_v2(interaction, build_daily_components(owner_id, claimed=True,
-                        reward_type=rtype, reward_amt=amt, streak=streak))
+        await smart_update_v2(
+            interaction,
+            build_daily_components(
+                owner_id,
+                claimed=claimed,
+                reward_type=rtype,
+                reward_amt=amt,
+                streak=streak,
+            ),
+        )
         return
 
     # ── PRESTIGE ──────────────────────────────
@@ -4533,7 +4534,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -4541,11 +4542,11 @@ async def on_interaction(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, "Requirements not met.", 0xE74C3C)
             return
         new_p = data[owner_id].get("prestige", 0) + 1
-        data[owner_id].update({
-            "prestige": new_p, "level": 1, "xp": 0, "money": 0,
-            "inv": [], "biome": "village", "record": {}, "total_caught": 0,
-        })
-        save_data_users()
+        async with user_transaction(owner_id):
+            data[owner_id].update({
+                "prestige": new_p, "level": 1, "xp": 0, "money": 0,
+                "inv": [], "biome": "village", "record": {}, "total_caught": 0,
+            })
         await smart_update_v2(interaction, build_prestige_done_components(owner_id, new_p))
         return
 
@@ -4554,15 +4555,15 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
         if parts[1] == "tab_dd":
             tab = values[0] if values else "tribe"
-            if tab == "dev" and DEV_MAIL:
-                data[owner_id]["mail_dev_content_read"] = DEV_MAIL
-            save_data_users()
+            async with user_transaction(owner_id):
+                if tab == "dev" and DEV_MAIL:
+                    data[owner_id]["mail_dev_content_read"] = DEV_MAIL
             await smart_update_v2(interaction, build_mail_components(owner_id, tab))
             return
 
@@ -4571,7 +4572,6 @@ async def on_interaction(interaction: discord.Interaction):
             gifts = data[owner_id].get("gift_mails", [])
             if 0 <= idx < len(gifts):
                 gifts[idx]["read"] = not gifts[idx].get("read", True)
-            save_data_users()
             await smart_update_v2(interaction, build_mail_components(owner_id, "gifts"))
             return
 
@@ -4579,7 +4579,6 @@ async def on_interaction(interaction: discord.Interaction):
             tab = parts[2]
             if tab == "dev" and DEV_MAIL:
                 data[owner_id]["mail_dev_content_read"] = DEV_MAIL
-            save_data_users()
             await smart_update_v2(interaction, build_mail_components(owner_id, tab))
             return
 
@@ -4593,41 +4592,34 @@ async def on_interaction(interaction: discord.Interaction):
                 if data[owner_id].get("tribe"):
                     await send_ephemeral_v2(interaction, "Already in a tribe.", 0xE74C3C)
                     return
-                td_a  = tribe_data[tribe_inv]
-                total = 1 + len(td_a["roles"]["officer"]) + len(td_a["roles"]["members"])
-                if total >= td_a["max_members"]:
-                    await send_ephemeral_v2(interaction, "Tribe is full.", 0xE74C3C)
-                    return
-                td_a["roles"]["members"].append(owner_id)
-                if owner_id in td_a.get("invites", []):
-                    td_a["invites"].remove(owner_id)
-                data[owner_id]["tribe"]          = tribe_inv
-                data[owner_id]["tribe_inv"]      = None
-                data[owner_id]["tribe_inv_read"] = False
-                save_data_users()
-                save_data_tribe()
+                async with user_tribe_transaction(owner_id):
+                    td_a["roles"]["members"].append(owner_id)
+                    if owner_id in td_a.get("invites", []):
+                        td_a["invites"].remove(owner_id)
+                    data[owner_id]["tribe"]          = tribe_inv
+                    data[owner_id]["tribe_inv"]      = None
+                    data[owner_id]["tribe_inv_read"] = False
                 await smart_update_v2(interaction, build_mail_components(owner_id, "tribe"))
                 return
             elif sub == "decline":
-                if tribe_inv and tribe_inv in tribe_data:
-                    if owner_id in tribe_data[tribe_inv].get("invites", []):
-                        tribe_data[tribe_inv]["invites"].remove(owner_id)
-                data[owner_id]["tribe_inv"]      = None
-                data[owner_id]["tribe_inv_read"] = False
-                save_data_users()
-                save_data_tribe()
+                async with user_tribe_transaction(owner_id):
+                    if tribe_inv and tribe_inv in tribe_data:
+                        if owner_id in tribe_data[tribe_inv].get("invites", []):
+                            tribe_data[tribe_inv]["invites"].remove(owner_id)
+                    data[owner_id]["tribe_inv"]      = None
+                    data[owner_id]["tribe_inv_read"] = False
                 await smart_update_v2(interaction, build_mail_components(owner_id, "tribe"))
                 return
 
         if parts[1] == "gifts" and parts[2] == "clear":
-            data[owner_id]["gift_mails"] = []
-            save_data_users()
+            async with user_transaction(owner_id):
+                data[owner_id]["gift_mails"] = []
             await smart_update_v2(interaction, build_mail_components(owner_id, "gifts"))
             return
 
         if parts[1] == "dev" and parts[2] == "read":
-            data[owner_id]["mail_dev_content_read"] = DEV_MAIL
-            save_data_users()
+            async with user_transaction(owner_id):
+                data[owner_id]["mail_dev_content_read"] = DEV_MAIL
             await smart_update_v2(interaction, build_mail_components(owner_id, "dev"))
             return
 
@@ -4647,7 +4639,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = str(gdata["sender_id"])
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -4663,33 +4655,59 @@ async def on_interaction(interaction: discord.Interaction):
             message      = gdata["message"]
             init_user(recipient_id)
             icon = "◈" if fmt == "money" else "💎"
+ 
+            # Pre-check without locks (fast path for obvious failures)
             if data[owner_id][fmt] < parsed:
                 await send_ephemeral_v2(interaction, f"❌ Not enough {icon}!", 0xE74C3C)
                 return
-            data[owner_id][fmt]     -= parsed
-            data[recipient_id][fmt] += parsed
-            amt_str = f"◈ {parsed:,}" if fmt == "money" else f"💎 {parsed:,}"
-            bal_str = f"◈ {data[owner_id][fmt]:,}" if fmt == "money" else f"💎 {data[owner_id][fmt]:,}"
-
-            gift_entry = {
-                "sender_id":   owner_id,
-                "sender_name": interaction.user.display_name,
-                "fmt":         fmt,
-                "amt_str":     amt_str,
-                "message":     message,
-                "ts":          int(time.time()),
-                "read":        False,
-            }
-            data[recipient_id].setdefault("gift_mails", []).insert(0, gift_entry)
-            data[recipient_id]["gift_mails"] = data[recipient_id]["gift_mails"][:20]
-            save_data_users()
-
+ 
+            # Acquire both user locks in a consistent order (sorted) to
+            # prevent deadlock when two gifts cross simultaneously.
+            uid_a, uid_b = sorted([owner_id, recipient_id])
+            lock_a = get_user_lock(uid_a)
+            lock_b = get_user_lock(uid_b)
+ 
+            async with lock_a:
+                async with lock_b:
+                    # Re-check inside lock — balance may have changed
+                    if data[owner_id][fmt] < parsed:
+                        await send_ephemeral_v2(interaction, f"❌ Not enough {icon}!", 0xE74C3C)
+                        return
+ 
+                    if fmt == "money":
+                        spend_money(owner_id, parsed, "gift send")
+                        add_money(recipient_id, parsed, "gift receive")
+                    else:
+                        data[owner_id]["gems"]    -= parsed
+                        data[recipient_id]["gems"] += parsed
+ 
+                    amt_str = f"◈ {parsed:,}" if fmt == "money" else f"💎 {parsed:,}"
+                    bal_str = (
+                        f"◈ {data[owner_id][fmt]:,}"
+                        if fmt == "money"
+                        else f"💎 {data[owner_id][fmt]:,}"
+                    )
+ 
+                    gift_entry = {
+                        "sender_id":   owner_id,
+                        "sender_name": interaction.user.display_name,
+                        "fmt":         fmt,
+                        "amt_str":     amt_str,
+                        "message":     message,
+                        "ts":          int(time.time()),
+                        "read":        False,
+                    }
+                    data[recipient_id].setdefault("gift_mails", []).insert(0, gift_entry)
+                    data[recipient_id]["gift_mails"] = data[recipient_id]["gift_mails"][:20]
+ 
+                    _flush_users()  # single flush covers both users
+ 
+            gift_cache.pop(gift_id, None)
+ 
             try:
                 recipient_user = await bot.fetch_user(int(recipient_id))
                 try:
-                    route = Route(
-                        "POST", "/users/@me/channels",
-                    )
+                    route = Route("POST", "/users/@me/channels")
                     dm_ch = await bot.http.request(route, json={"recipient_id": recipient_id})
                     dm_route = Route(
                         "POST", "/channels/{channel_id}/messages",
@@ -4710,13 +4728,14 @@ async def on_interaction(interaction: discord.Interaction):
                     })
                 except Exception:
                     pass
-                gift_cache.pop(gift_id, None)
-                await smart_update_v2(interaction, build_gift_sent_components(
-                    owner_id, recipient_user, amt_str, bal_str, message))
+                await smart_update_v2(
+                    interaction,
+                    build_gift_sent_components(owner_id, recipient_user, amt_str, bal_str, message),
+                )
             except Exception:
-                gift_cache.pop(gift_id, None)
                 await send_ephemeral_v2(interaction, f"✅ Gift sent! ({amt_str})", 0x2ECC71)
             return
+ 
 
     # ── TRIBE NAVIGATION ──────────────────────
     if parts[0] == "tribe":
@@ -4724,7 +4743,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         tribe_nm = data[owner_id].get("tribe")
@@ -4773,14 +4792,24 @@ async def on_interaction(interaction: discord.Interaction):
             boost_key = parts[2]
             cost      = int(parts[3])
             amount    = int(parts[4])
+ 
+            # Pre-check outside lock (no mutation, safe to read)
             if data[owner_id]["gems"] < cost:
                 await send_ephemeral_v2(interaction, f"Need 💎{cost}.", 0xE74C3C)
                 return
-            data[owner_id]["gems"] -= cost
-            tribe_data[tribe_nm][boost_key] = tribe_data[tribe_nm].get(boost_key, 0) + amount
-            save_data_tribe()
-            save_data_users()
-            await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "shop", sort))
+ 
+            async with user_tribe_transaction(owner_id):
+                # Re-check inside lock
+                if not spend_gems(owner_id, cost, "tribe shop"):
+                    pass  # spend_gems returns False if insufficient
+                else:
+                    tribe_data[tribe_nm][boost_key] = (
+                        tribe_data[tribe_nm].get(boost_key, 0) + amount
+                    )
+            await smart_update_v2(
+                interaction,
+                build_tribe_components(owner_id, tribe_nm, "shop", sort),
+            )
             return
 
         if action == "ban_action":
@@ -4944,7 +4973,7 @@ async def on_interaction(interaction: discord.Interaction):
         await interaction.response.defer()
         action_str, owner_id, tribe_nm = cid.split(":", 2)
         if str(interaction.user.id) != owner_id:
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         if action_str.endswith("accept"):
             if data[owner_id].get("tribe"):
@@ -4979,7 +5008,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         b = get_ban(owner_id)
         if b.get("appeals_used", 0) >= b.get("appeals_max", 2):
@@ -4994,7 +5023,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5036,7 +5065,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5054,7 +5083,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5079,7 +5108,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         no_defer_subs = {"bj_deal", "cf_setbet", "slots_setbet", "rl_setbet", "rps_setbet", "bj_deal"}
@@ -5144,17 +5173,24 @@ async def on_interaction(interaction: discord.Interaction):
             if data[owner_id]["money"] < bet:
                 await send_ephemeral_v2(interaction, "❌ Not enough ◈.", 0xE74C3C)
                 return
+ 
             flip = random.choice(["heads", "tails"])
             won  = flip == sub
-            data[owner_id]["_cf_last_pick"] = sub
-            if won:
-                data[owner_id]["money"] += bet
-                data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + bet
-                data[owner_id]["stats"]["cf_wins"] = data[owner_id]["stats"].get("cf_wins", 0) + 1
-            else:
-                data[owner_id]["money"] -= bet
-            data[owner_id]["last_gamble"] = time.time()
-            save_data_users()
+ 
+            async with user_transaction(owner_id):
+                data[owner_id]["_cf_last_pick"] = sub
+                data[owner_id]["last_gamble"]   = time.time()
+                if won:
+                    add_money(owner_id, bet, "coinflip")
+                    data[owner_id]["total_money_earned"] = (
+                        data[owner_id].get("total_money_earned", 0) + bet
+                    )
+                    data[owner_id]["stats"]["cf_wins"] = (
+                        data[owner_id]["stats"].get("cf_wins", 0) + 1
+                    )
+                else:
+                    spend_money(owner_id, bet, "coinflip loss")
+ 
             result = {"won": won, "bet": bet, "flip": flip, "pick": sub}
             await smart_update_v2(interaction, build_coinflip_panel(owner_id, "result", result))
             return
@@ -5195,8 +5231,8 @@ async def on_interaction(interaction: discord.Interaction):
                 reels            = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
                 won              = random.randint(1, 100) <= chance
                 payout           = int(bet * mult) if won else 0
-                data[owner_id]["money"] -= bet
-                data[owner_id]["money"] += payout
+                spend_money(owner_id, bet, "slots bet")
+                add_money(owner_id, payout, "slots")
                 if won:
                     data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + (payout - bet)
                     data[owner_id]["stats"]["slots_wins"] = data[owner_id]["stats"].get("slots_wins", 0) + 1
@@ -5226,9 +5262,9 @@ async def on_interaction(interaction: discord.Interaction):
             won        = color == sub
             payout     = bet * mult if won else 0
             data[owner_id]["_roulette_pick"] = sub
-            data[owner_id]["money"]         -= bet
-            data[owner_id]["money"]         += payout
+            spend_money(owner_id, bet, "roulette")
             if won:
+                add_money(owner_id, payout, "roulette win")
                 data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + (payout - bet)
                 data[owner_id]["stats"]["rl_wins"] = data[owner_id]["stats"].get("rl_wins", 0) + 1
             data[owner_id]["last_gamble"] = time.time()
@@ -5258,12 +5294,12 @@ async def on_interaction(interaction: discord.Interaction):
                 outcome = "tie"
             elif RPS_BEATS[sub] == bot_pick:
                 outcome = "win"
-                data[owner_id]["money"] += bet
+                add_money(owner_id, bet, "rps")
                 data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + bet
                 data[owner_id]["stats"]["rps_wins"] = data[owner_id]["stats"].get("rps_wins", 0) + 1
             else:
                 outcome = "lose"
-                data[owner_id]["money"] -= bet
+                spend_money(owner_id, bet, "rps loss")
             data[owner_id]["last_gamble"] = time.time()
             save_data_users()
             result = {"pick": sub, "bot_pick": bot_pick, "bet": bet, "outcome": outcome}
@@ -5292,24 +5328,28 @@ async def on_interaction(interaction: discord.Interaction):
                     await smart_update_v2(interaction, build_blackjack_panel(owner_id))
                     return
             if action == "stand":
-                st = _bj_state.get(owner_id)
-                while _bj_hand_value(st["dealer"]) < 17:
-                    st["dealer"].append(st["deck"].pop())
-                p_val = _bj_hand_value(st["player"])
-                d_val = _bj_hand_value(st["dealer"])
-                bet   = st["bet"]
-                if d_val > 21 or p_val > d_val:
-                    payout = bet * 2
-                    data[owner_id]["money"] += payout
-                    data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + bet
-                    st.update({"done": True, "outcome": "✅ You win!", "net": bet})
-                    data[owner_id]["stats"]["bj_wins"] = data[owner_id]["stats"].get("bj_wins", 0) + 1
-                elif p_val == d_val:
-                    data[owner_id]["money"] += bet
-                    st.update({"done": True, "outcome": "🤝 Push!", "net": 0})
-                else:
-                    st.update({"done": True, "outcome": "❌ Dealer wins.", "net": -bet})
-            save_data_users()
+                async with user_transaction(owner_id):
+                    while _bj_hand_value(st["dealer"]) < 17:
+                        st["dealer"].append(st["deck"].pop())
+                    p_val = _bj_hand_value(st["player"])
+                    d_val = _bj_hand_value(st["dealer"])
+                    bet   = st["bet"]
+                    if d_val > 21 or p_val > d_val:
+                        payout = bet * 2
+                        add_money(owner_id, payout, "blackjack")
+                        data[owner_id]["total_money_earned"] = (
+                            data[owner_id].get("total_money_earned", 0) + bet
+                        )
+                        st.update({"done": True, "outcome": "✅ You win!", "net": bet})
+                        data[owner_id]["stats"]["bj_wins"] = (
+                            data[owner_id]["stats"].get("bj_wins", 0) + 1
+                        )
+                    elif p_val == d_val:
+                        add_money(owner_id, bet, "blackjack: tie")
+                        st.update({"done": True, "outcome": "🤝 Push!", "net": 0})
+                    else:
+                        st.update({"done": True, "outcome": "❌ Dealer wins.", "net": -bet})
+            # save_data_users() ← DELETE
             await smart_update_v2(interaction, build_blackjack_panel(owner_id))
             return
 
@@ -5318,7 +5358,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         init_user(owner_id)
 
@@ -5336,7 +5376,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5365,7 +5405,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
         if parts[1] == "refresh":
@@ -5377,7 +5417,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5395,7 +5435,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5413,7 +5453,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5433,7 +5473,7 @@ async def on_interaction(interaction: discord.Interaction):
         target_id = parts[3]
         if str(interaction.user.id) != viewer_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5453,7 +5493,7 @@ async def on_interaction(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(interaction), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5561,7 +5601,7 @@ class LotteryBuyModal(discord.ui.Modal, title="Buy Lottery Tickets"):
             await send_ephemeral_v2(interaction,
                 f"❌ Need **◈ {total_cost:,}** for {qty:,} ticket(s).", 0xE74C3C)
             return
-        data[self.user_id]["money"] -= total_cost
+        spend_money(self.user_id, total_cost, "lottery tickets")
         save_data_users()
         ld = lottery_data
         ld["tickets"][self.user_id] = ld["tickets"].get(self.user_id, 0) + qty
@@ -5627,12 +5667,16 @@ class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
             return
         total_cost = a["price"] * qty
         currency   = a["currency"]
-        icon       = "◈" if currency == "money" else "💎"
-        if data[self.user_id][currency] < total_cost:
-            await send_ephemeral_v2(interaction,
-                f"❌ Need {icon} {total_cost:,} to buy {qty:,}× {self.ammo_name}.", 0xE74C3C)
-            return
-        data[self.user_id][currency] -= total_cost
+        if currency == "money":
+            if not spend_money(self.user_id, total_cost, "shop ammo"):
+                await send_ephemeral_v2(interaction,
+                    f"❌ Need ◈ {total_cost:,} to buy {qty:,}× {self.ammo_name}.", 0xE74C3C)
+                return
+        else:
+            if not spend_gems(self.user_id, total_cost, "shop ammo"):
+                await send_ephemeral_v2(interaction,
+                    f"❌ Need 💎 {total_cost:,} to buy {qty:,}× {self.ammo_name}.", 0xE74C3C)
+                return
         inv = data[self.user_id].setdefault("ammo_inv", {})
         inv[self.ammo_name] = current_owned + qty
         save_data_users()
@@ -5675,10 +5719,9 @@ class TribeInviteModal(discord.ui.Modal, title="Invite a Player"):
             await send_ephemeral_v2(interaction, "❌ Tribe is full.", 0xE74C3C)
             return
         td.setdefault("invites", []).append(raw)
-        data[raw]["tribe_inv"]      = self.tribe_name
-        data[raw]["tribe_inv_read"] = False
-        save_data_users()
-        save_data_tribe()
+        async with user_tribe_transaction(self.user_id):
+            data[raw]["tribe_inv"]      = self.tribe_name
+            data[raw]["tribe_inv_read"] = False
         try:
             target_user = await bot.fetch_user(int(raw))
             route = Route("POST", "/users/@me/channels")
@@ -5742,13 +5785,12 @@ class TribeLeaveLeaderModal(discord.ui.Modal, title="Assign New Leader Before Le
         if target not in all_ids:
             await send_ephemeral_v2(interaction, "❌ That user is not a tribe member.", 0xE74C3C)
             return
-        for role in ("officer", "members"):
-            if target in td["roles"][role]:       td["roles"][role].remove(target)
-            if self.user_id in td["roles"][role]: td["roles"][role].remove(self.user_id)
-        td["roles"]["leader"]       = target
-        data[self.user_id]["tribe"] = None
-        save_data_users()
-        save_data_tribe()
+        async with user_tribe_transaction(self.user_id):
+            for role in ("officer", "members"):
+                if target in td["roles"][role]:       td["roles"][role].remove(target)
+                if self.user_id in td["roles"][role]: td["roles"][role].remove(self.user_id)
+            td["roles"]["leader"]       = target
+            data[self.user_id]["tribe"] = None
         await smart_update_v2(interaction, build_menu_components(self.user_id, interaction.user.display_name))
 
 class TribeCreateModal(discord.ui.Modal, title="Create a Tribe"):
@@ -5850,28 +5892,34 @@ class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
         if data[self.user_id]["money"] < parsed:
             await send_ephemeral_v2(interaction, "❌ Not enough ◈.", 0xE74C3C)
             return
+ 
         deck   = _bj_deck()
         player = [deck.pop(), deck.pop()]
         dealer = [deck.pop(), deck.pop()]
+ 
+        async with user_transaction(self.user_id):
+            data[self.user_id]["money"]      -= parsed
+            data[self.user_id]["last_gamble"] = time.time()
+ 
         _bj_state[self.user_id] = {
             "bet": parsed, "deck": deck,
             "player": player, "dealer": dealer,
             "done": False,
         }
-        data[self.user_id]["money"]      -= parsed
-        data[self.user_id]["last_gamble"] = time.time()
-        save_data_users()
+ 
         if _bj_hand_value(player) == 21:
             payout = int(parsed * 2.5)
-            data[self.user_id]["money"] += payout
-            data[self.user_id]["total_money_earned"] = (
-                data[self.user_id].get("total_money_earned", 0) + (payout - parsed))
-            save_data_users()
+            async with user_transaction(self.user_id):
+                add_money(self.user_id, payout, "blackjack: 21")
+                data[self.user_id]["total_money_earned"] = (
+                    data[self.user_id].get("total_money_earned", 0) + (payout - parsed)
+                )
             _bj_state[self.user_id].update({
                 "done": True, "outcome": "🃏 Blackjack!", "net": payout - parsed,
             })
+ 
         await smart_update_v2(interaction, build_blackjack_panel(self.user_id))
-
+        
 # ─────────────────────────────────────────────
 # SLASH COMMANDS
 # ─────────────────────────────────────────────
@@ -5905,7 +5953,8 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
 async def hunt_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
-    result = run_hunt(user_id)
+    async with user_transaction(user_id):
+        result = run_hunt(user_id)
     if result.get("verify"):
         await send_v2_followup(interaction, build_verify_v2(user_id))
         return
@@ -6057,7 +6106,7 @@ async def tribe_cmd(interaction: discord.Interaction):
         async def create_cb(i: discord.Interaction):
             if str(i.user.id) != user_id:
                 await i.response.defer()
-                await send_ephemeral_v2(i, show_incorrect_user_message(interaction), 0xE74C3C)
+                await send_ephemeral_v2(i, show_incorrect_user_message(user_id), 0xE74C3C)
                 return
             await i.response.send_modal(TribeCreateModal(user_id))
         btn.callback = create_cb
@@ -6166,10 +6215,10 @@ async def verify_cmd(interaction: discord.Interaction, code: str):
         await send_ephemeral_v2(interaction, "✅ You don't need to verify right now!", 0x2ECC71)
         return
     if code.upper() == v["code"].upper():
-        v["needed"] = False
-        v["time"]   = 250
-        v["code"]   = generate_verify_code()
-        save_data_users()
+        async with user_transaction(user_id):
+            v["needed"] = False
+            v["time"]   = 250
+            v["code"]   = generate_verify_code()
         await send_ephemeral_v2(interaction, "### ✅ Verified!\nHappy hunting!", 0x2ECC71)
     else:
         await send_ephemeral_v2(interaction, "### ❌ Wrong Code\nTry again.", 0xE74C3C)
@@ -6281,8 +6330,8 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
         await send_ephemeral_v2(interaction,
             "❌ Suggestion must be at least **20 characters**.", 0xE74C3C)
         return
-    data[user_id]["last_suggest"] = now
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id]["last_suggest"] = now
     channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
     if channel:
         try:
@@ -6342,8 +6391,8 @@ async def report_cmd(interaction: discord.Interaction, type: str,
         await send_ephemeral_v2(interaction,
             "❌ Description must be at least **20 characters**.", 0xE74C3C)
         return
-    data[user_id]["last_report"] = now
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id]["last_report"] = now
     channel = bot.get_channel(REPORTS_CHANNEL_ID)
     if channel:
         try:
@@ -6391,11 +6440,11 @@ async def tutorial_cmd(interaction: discord.Interaction, toggle: str):
     user_id = str(interaction.user.id)
     init_user(user_id)
     init_tutorial(user_id)
-    data[user_id]["tutorial"]["enabled"]  = (toggle == "on")
-    data[user_id]["tutorial"]["prompted"] = True
-    if toggle == "on":
-        data[user_id]["tutorial"]["seen"] = []
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id]["tutorial"]["enabled"]  = (toggle == "on")
+        data[user_id]["tutorial"]["prompted"] = True
+        if toggle == "on":
+            data[user_id]["tutorial"]["seen"] = []
     msg = ("### ✅ Tutorial tips on!\nI'll guide you through each new step as you play."
            if toggle == "on" else
            "### 🔕 Tutorial tips off.\n-# Use /tutorial on to turn them back on.")
@@ -6542,11 +6591,11 @@ async def setdevmail_cmd(interaction: discord.Interaction, message: str = ""):
     changed  = new_mail != old_mail
     DEV_MAIL = new_mail
     save_config()
-    if changed or not DEV_MAIL:
-        for uid in data:
-            data[uid]["mail_dev_content_read"] = ""
-            data[uid]["mail_dev_notice_seen"]  = ""
-    save_data_users()
+    async with user_transaction(user_id):
+        if changed or not DEV_MAIL:
+            for uid in data:
+                data[uid]["mail_dev_content_read"] = ""
+                data[uid]["mail_dev_notice_seen"]  = ""
     await interaction.response.defer(ephemeral=True)
     await send_ephemeral_v2(interaction,
         f"### 📢 Dev Mail Set\n{DEV_MAIL if DEV_MAIL else 'Dev mail cleared.'}", 0x2ECC71)
@@ -6569,15 +6618,15 @@ async def ban_cmd(interaction: discord.Interaction, user_id: str, days: int, rea
     init_ban_record(user_id)
     now    = int(time.time())
     exp_ts = (now + days * 86400) if days > 0 else 0
-    data[user_id]["ban"] = {
-        "active":       True,
-        "reason":       reason.strip(),
-        "expires_ts":   exp_ts,
-        "issued_ts":    now,
-        "appeals_used": 0,
-        "appeals_max":  2,
-    }
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id]["ban"] = {
+            "active":       True,
+            "reason":       reason.strip(),
+            "expires_ts":   exp_ts,
+            "issued_ts":    now,
+            "appeals_used": 0,
+            "appeals_max":  2,
+        }
     try:
         route    = Route("POST", "/users/@me/channels")
         dm_ch    = await bot.http.request(route, json={"recipient_id": user_id})
@@ -6607,8 +6656,8 @@ async def unban_cmd(interaction: discord.Interaction, user_id: str):
         await interaction.response.defer(ephemeral=True)
         await send_ephemeral_v2(interaction, "❌ User not found.", 0xE74C3C)
         return
-    data[user_id]["ban"]["active"] = False
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id]["ban"]["active"] = False
     await interaction.response.defer(ephemeral=True)
     await send_ephemeral_v2(interaction,
         f"### ✅ User Unbanned\n<@{user_id}> has been unbanned.", 0x2ECC71)
@@ -6625,8 +6674,8 @@ async def warn_cmd(interaction: discord.Interaction, user_id: str, reason: str):
         return
     init_user(user_id)
     warn_entry = {"reason": reason.strip(), "ts": int(time.time()), "by": str(interaction.user.id)}
-    data[user_id].setdefault("warnings", []).append(warn_entry)
-    save_data_users()
+    async with user_transaction(user_id):
+        data[user_id].setdefault("warnings", []).append(warn_entry)
     warn_count = len(data[user_id]["warnings"])
     body = (
         f"### ⚠️ You have been warned!\n\n"
@@ -6653,6 +6702,52 @@ async def warn_cmd(interaction: discord.Interaction, user_id: str, reason: str):
         f"### ⚠️ User Warned\n"
         f"<@{user_id}> has been warned.\n"
         f"Reason: {reason}\nTotal warnings: **{warn_count}**", 0xF1C40F)
+
+@bot.tree.command(name="economy", description="Economy diagnostics")
+@app_commands.check(is_admin)
+async def economy_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    all_balances = [d.get("money", 0) for d in data.values()]
+    all_balances.sort()
+    n = len(all_balances)
+    
+    total_money = sum(all_balances)
+    median = all_balances[n // 2] if n else 0
+    p90 = all_balances[int(n * 0.9)] if n else 0
+    p99 = all_balances[int(n * 0.99)] if n else 0
+    top_holder = max(data.items(), key=lambda x: x[1].get("money", 0), default=(None, {}))
+    
+    # Read last 24h from economy log if it exists
+    minted_24h = burned_24h = 0
+    cutoff = int(time.time()) - 86400
+    try:
+        with open(ECONOMY_LOG, "r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if int(row["ts"]) < cutoff:
+                    continue
+                delta = int(row["delta"])
+                if delta > 0:
+                    minted_24h += delta
+                else:
+                    burned_24h += abs(delta)
+    except (FileNotFoundError, OSError, KeyError):
+        pass
+
+    content = (
+        f"### 📊 Economy Dashboard\n\n"
+        f"**Players:** {n:,}\n"
+        f"**Total money in circulation:** ◈ {total_money:,}\n"
+        f"**Median balance:** ◈ {median:,}\n"
+        f"**P90 balance:** ◈ {p90:,}\n"
+        f"**P99 balance:** ◈ {p99:,}\n"
+        f"**Top holder:** `{top_holder[1].get('username', '?')}` — ◈ {top_holder[1].get('money', 0):,}\n\n"
+        f"**Last 24h:**\n"
+        f"-# 🟢 Minted: ◈ {minted_24h:,}\n"
+        f"-# 🔴 Burned: ◈ {burned_24h:,}\n"
+        f"-# Net: ◈ {minted_24h - burned_24h:,}"
+    )
+    await send_ephemeral_v2(interaction, content, 0x3498DB)
 
 # ─────────────────────────────────────────────
 # AUTOSAVE & TASKS
