@@ -1,4 +1,34 @@
+"""
+game_data.py — All static game content: biomes, animals, tools, ammo,
+vehicles, boosts, colours, achievements, badges, tips, and command IDs.
+
+Does NOT import from bot.py or backend.py.
+Discord is imported only for Color constants.
+"""
+
 import discord
+
+
+# ─────────────────────────────────────────────
+# XP CURVE  (canonical formulas — mirrors curves.py)
+# ─────────────────────────────────────────────
+
+def xp_for_level(level: int) -> int:
+    """XP required to advance FROM ``level`` to ``level + 1``."""
+    lvl = max(1, level)
+    if lvl <= 100:
+        return int(200 + (lvl ** 1.35) * 22)
+    xp_at_100 = int(200 + (100 ** 1.35) * 22)
+    if lvl <= 500:
+        return xp_at_100 + int(((lvl - 100) ** 1.5) * 18)
+    xp_at_500 = xp_at_100 + int(((500 - 100) ** 1.5) * 18)
+    return xp_at_500 + int(((lvl - 500) ** 1.7) * 20)
+
+
+def total_xp_to_level(target: int) -> int:
+    """Cumulative XP needed to reach ``target`` from level 1."""
+    return sum(xp_for_level(lvl) for lvl in range(1, target))
+
 
 # ─────────────────────────────────────────────
 # BIOMES
@@ -114,6 +144,7 @@ BIOME_ANIMALS = {
         "Void Phoenix", "The Eternal Hunter",
     ],
 }
+
 
 # ─────────────────────────────────────────────
 # ANIMALS
@@ -264,6 +295,7 @@ ANIMAL_DATA = {
 
 ANIMAL_EMOJI = ""
 
+
 # ─────────────────────────────────────────────
 # EMOJIS / ICONS
 # ─────────────────────────────────────────────
@@ -312,6 +344,7 @@ USER_EMOJIS = {
     "cooldown":   "<:Bot_Cooldown:1500237640962670764>",
     "level_up":   "<:XP_Level_Up:1500239747744792606>",
 }
+
 
 # ─────────────────────────────────────────────
 # TOOLS
@@ -504,6 +537,7 @@ BIOME_TOOL_TIER = {
     "celestial_peaks":    19,
 }
 
+
 # ─────────────────────────────────────────────
 # AMMO
 # ─────────────────────────────────────────────
@@ -538,7 +572,6 @@ AMMO = {
         "price": 35, "currency": "gems",
         "boost_luck": 50, "boost_sell": 0, "boost_xp": 50,
     },
-
     # ── BOLTS (Crossbow) ────────────────────────────────────────
     "Crude Bolt": {
         "ammo_type": "bolt",
@@ -568,7 +601,6 @@ AMMO = {
         "price": 40, "currency": "gems",
         "boost_luck": 50, "boost_sell": 50, "boost_xp": 0,
     },
-
     # ── BULLETS (Musket, Hunting Rifle, Shotgun, Sniper Rifle) ──
     "Lead Ball": {
         "ammo_type": "bullet",
@@ -598,7 +630,6 @@ AMMO = {
         "price": 45, "currency": "gems",
         "boost_luck": 20, "boost_sell": 50, "boost_xp": 45,
     },
-
     # ── TRANQ DARTS (Tranq Gun) ─────────────────────────────────
     "Basic Tranq": {
         "ammo_type": "tranq_dart",
@@ -628,7 +659,6 @@ AMMO = {
         "price": 50, "currency": "gems",
         "boost_luck": 50, "boost_sell": 0, "boost_xp": 0,
     },
-
     # ── ENERGY CELLS (Plasma Caster, Gravity Trap) ──────────────
     "Charged Cell": {
         "ammo_type": "energy_cell",
@@ -658,7 +688,6 @@ AMMO = {
         "price": 55, "currency": "gems",
         "boost_luck": 10, "boost_sell": 50, "boost_xp": 50,
     },
-
     # ── SOUL SHARDS (Soul Snare, Void Bow) ──────────────────────
     "Fractured Shard": {
         "ammo_type": "soul_shard",
@@ -688,7 +717,6 @@ AMMO = {
         "price": 60, "currency": "gems",
         "boost_luck": 48, "boost_sell": 48, "boost_xp": 48,
     },
-
     # ── COSMIC ROUNDS (Celestial Lance, Mythic Net, Dragon Cannon, Cosmic RPG) ──
     "Star Slug": {
         "ammo_type": "cosmic_round",
@@ -718,7 +746,6 @@ AMMO = {
         "price": 65, "currency": "gems",
         "boost_luck": 50, "boost_sell": 50, "boost_xp": 50,
     },
-
     # ── NUKES (Nuke Launcher) ────────────────────────────────────
     "Nuke": {
         "ammo_type": "nuke_only",
@@ -749,22 +776,24 @@ AMMO_TYPE_LABELS = {
 
 AMMO_MAX_STACK = 9_999
 
+
 # ─────────────────────────────────────────────
 # VEHICLES
 # ─────────────────────────────────────────────
 
 VEHICLES = {
-    "Trail Boots":   {"emoji": "🥾", "tier":  1, "boost_cd": 0.3, "boost_luck":  0, "price":    500, "currency": "money", "description": "A reliable pair of boots. Slightly faster."},
-    "Bicycle":       {"emoji": "🚲", "tier":  2, "boost_cd": 0.5, "boost_luck":  0, "price":  5_000, "currency": "money", "description": "Pedal your way to prey."},
-    "Dirt Bike":     {"emoji": "🏍️", "tier":  3, "boost_cd": 0.7, "boost_luck":  0, "price": 25_000, "currency": "money", "description": "Off-road and fast."},
-    "Pickup Truck":  {"emoji": "🚗", "tier":  4, "boost_cd": 1.0, "boost_luck":  0, "price": 100_000, "currency": "money", "description": "Reliable workhorse."},
-    "4x4 Offroader": {"emoji": "🚙", "tier":  5, "boost_cd": 1.3, "boost_luck":  5, "price": 500_000, "currency": "money", "description": "Conquers any terrain."},
-    "Rowboat":       {"emoji": "🛶", "tier":  6, "boost_cd": 1.5, "boost_luck":  5, "price": 1_000_000, "currency": "money", "description": "Silent on the water."},
-    "Helicopter":    {"emoji": "🚁", "tier":  7, "boost_cd": 1.7, "boost_luck":  0, "price": 5_000_000, "currency": "money", "description": "Scout from above."},
-    "Horse":         {"emoji": "🐴", "tier":  8, "boost_cd": 1.9, "boost_luck": 10, "price": 10_000_000, "currency": "money", "description": "A hunter's best friend."},
-    "Military Jeep": {"emoji": "🛻", "tier":  9, "boost_cd": 2.1, "boost_luck":  0, "price": 500,       "currency": "gems",  "description": "Built for the toughest hunts."},
-    "Hovercraft":    {"emoji": "🚀", "tier": 10, "boost_cd": 2.4, "boost_luck": 15, "price": 2_000,     "currency": "gems",  "description": "Endgame speed machine."},
+    "Trail Boots":   {"emoji": "🥾", "tier":  1, "boost_cd": 0.3, "boost_luck":  0, "price":      500, "currency": "money", "description": "A reliable pair of boots. Slightly faster."},
+    "Bicycle":       {"emoji": "🚲", "tier":  2, "boost_cd": 0.5, "boost_luck":  0, "price":    5_000, "currency": "money", "description": "Pedal your way to prey."},
+    "Dirt Bike":     {"emoji": "🏍️", "tier":  3, "boost_cd": 0.7, "boost_luck":  0, "price":   25_000, "currency": "money", "description": "Off-road and fast."},
+    "Pickup Truck":  {"emoji": "🚗", "tier":  4, "boost_cd": 1.0, "boost_luck":  0, "price":  100_000, "currency": "money", "description": "Reliable workhorse."},
+    "4x4 Offroader": {"emoji": "🚙", "tier":  5, "boost_cd": 1.3, "boost_luck":  5, "price":  500_000, "currency": "money", "description": "Conquers any terrain."},
+    "Rowboat":       {"emoji": "🛶", "tier":  6, "boost_cd": 1.5, "boost_luck":  5, "price":1_000_000, "currency": "money", "description": "Silent on the water."},
+    "Helicopter":    {"emoji": "🚁", "tier":  7, "boost_cd": 1.7, "boost_luck":  0, "price":5_000_000, "currency": "money", "description": "Scout from above."},
+    "Horse":         {"emoji": "🐴", "tier":  8, "boost_cd": 1.9, "boost_luck": 10, "price":10_000_000,"currency": "money", "description": "A hunter's best friend."},
+    "Military Jeep": {"emoji": "🛻", "tier":  9, "boost_cd": 2.1, "boost_luck":  0, "price":      500, "currency": "gems",  "description": "Built for the toughest hunts."},
+    "Hovercraft":    {"emoji": "🚀", "tier": 10, "boost_cd": 2.4, "boost_luck": 15, "price":    2_000, "currency": "gems",  "description": "Endgame speed machine."},
 }
+
 
 # ─────────────────────────────────────────────
 # SHOP BOOST ITEMS
@@ -791,20 +820,32 @@ SHOP_BOOST_ITEMS = {
     },
 }
 
+
 # ─────────────────────────────────────────────
 # DAILY TIERS
 # ─────────────────────────────────────────────
+# Each entry is a dict so bot.py can access tier["money_min"] etc.
+# get_daily_tier(level) returns the correct tier dict.
 
-# (min_level, money_min, money_max, gems_min, gems_max)
-DAILY_TIERS = [
-    (    1,         500,         2_000,   5,   15),
-    (   50,       2_000,        10_000,  10,   30),
-    (  100,      10_000,        50_000,  20,   60),
-    (  250,      50_000,       200_000,  40,  100),
-    (  500,     200_000,     1_000_000,  80,  200),
-    ( 1000,   1_000_000,    10_000_000, 150,  400),
-    ( 1200,  10_000_000,   100_000_000, 300,  800),
+DAILY_TIERS: list[dict] = [
+    {"min_level":    1, "money_min":         500, "money_max":         2_000, "gems_min":   5, "gems_max":   15},
+    {"min_level":   50, "money_min":       2_000, "money_max":        10_000, "gems_min":  10, "gems_max":   30},
+    {"min_level":  100, "money_min":      10_000, "money_max":        50_000, "gems_min":  20, "gems_max":   60},
+    {"min_level":  250, "money_min":      50_000, "money_max":       200_000, "gems_min":  40, "gems_max":  100},
+    {"min_level":  500, "money_min":     200_000, "money_max":     1_000_000, "gems_min":  80, "gems_max":  200},
+    {"min_level": 1000, "money_min":   1_000_000, "money_max":    10_000_000, "gems_min": 150, "gems_max":  400},
+    {"min_level": 1200, "money_min":  10_000_000, "money_max":   100_000_000, "gems_min": 300, "gems_max":  800},
 ]
+
+
+def get_daily_tier(level: int) -> dict:
+    """Return the daily reward tier dict for the given player level."""
+    result = DAILY_TIERS[0]
+    for tier in DAILY_TIERS:
+        if level >= tier["min_level"]:
+            result = tier
+    return result
+
 
 # ─────────────────────────────────────────────
 # COLORS
@@ -878,13 +919,13 @@ COLOR_DESCRIPTIONS = {
     "colorless":   "Remove biome influence and return to neutral default state.",
 }
 
+
 # ─────────────────────────────────────────────
 # GAMBLE
 # ─────────────────────────────────────────────
 
-ROULETTE_COLORS    = ["red", "black", "green"]  # equal 1/3 each
+ROULETTE_COLORS    = ["red", "black", "green"]   # equal 1/3 each
 
-# (label, unused_weight, payout_multiplier)
 ROULETTE_BET_TYPES = {
     "red":   ("🔴 Red",   4, 2),
     "black": ("⚫ Black", 8, 2),
@@ -894,11 +935,7 @@ ROULETTE_BET_TYPES = {
 RPS_CHOICES = {"rock": "✊", "paper": "🖐️", "scissors": "✌️"}
 RPS_BEATS   = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
 
-# ─────────────────────────────────────────────
-# SLOTS — keyed to match actual BIOME_LEVELS keys
 # (min_bet, max_bet, win_chance_pct, win_multiplier)
-# ─────────────────────────────────────────────
-
 SLOT_BIOME_CONFIG = {
     "village":             (        100,         10_000, 45, 2.0),
     "forest":              (        500,         50_000, 42, 2.2),
@@ -914,6 +951,7 @@ SLOT_BIOME_CONFIG = {
     "abyssal_depths":      (  1_000_000,    100_000_000, 15, 7.0),
     "celestial_peaks":     (  2_500_000,    250_000_000, 12, 8.0),
 }
+
 
 # ─────────────────────────────────────────────
 # TIPS
@@ -941,6 +979,7 @@ TIPS = [
     "Running out of ammo? Head to /shop → Ammo tab!",
     "Some ammo types focus on specific stats — pick what you need!",
 ]
+
 
 # ─────────────────────────────────────────────
 # COMMAND IDs
@@ -974,6 +1013,7 @@ COMMAND_ID = {
     "setdevmail":   "1502786816036704374",
 }
 
+
 # ─────────────────────────────────────────────
 # BADGES
 # ─────────────────────────────────────────────
@@ -996,21 +1036,21 @@ BADGES = {
     "leveler":          {"label": "Leveler",              "abbr": "LV", "stat": "level",            "gold": 1_000,      "plat": 10_000},
 }
 
+
 # ─────────────────────────────────────────────
 # ACHIEVEMENTS
 #
-# Format expected by check.py:
-#   dict[str, list[tuple[int, list[tuple[str, int]]]]]
+# Canonical format: dict[str, list[tuple[int, list[tuple[str, int]]]]]
 #   key  → achievement name
 #   list → [(threshold, [(reward_type, reward_amount), ...]), ...]
-#           reward_type is "money" or "gems"
 #
-# Titles are stored separately in ACHIEVEMENT_TITLES below.
-# "gamble" entry is intentionally a plain dict — check.py skips it
-# via the `if not isinstance(tiers, list): continue` guard.
+# Every tier is (threshold, [(rtype, amount), ...]).
+# The achievement checker in bot.py unpacks this single format only.
+# The "gamble" key is intentionally an empty dict — bot.py skips it via
+# the `if not isinstance(tiers, list): continue` guard.
 # ─────────────────────────────────────────────
 
-ACHIEVEMENTS: dict[str, list[tuple[int, list[tuple[str, int]]]] | dict] = {
+ACHIEVEMENTS: dict[str, list | dict] = {
 
     # ── Daily Streak ──────────────────────────────────────────────
     "daily_streak": [
@@ -1023,7 +1063,7 @@ ACHIEVEMENTS: dict[str, list[tuple[int, list[tuple[str, int]]]] | dict] = {
         (     365,  [("money",          10_000_000), ("gems",                  334)]),
         (     500,  [("money",         100_000_000), ("gems",                  500)]),
         (     666,  [("money",         666_666_666), ("gems",                  666)]),
-        (     730,  [("money",                   0)]),  # title-only
+        (     730,  [("money",                   0)]),   # title-only tier
         (   1_000,  [("money",       1_000_000_000)]),
         (   1_827,  [("money",      10_000_000_000), ("gems",                1_000)]),
         (   2_557,  [("money",     100_000_000_000)]),
@@ -1075,17 +1115,13 @@ ACHIEVEMENTS: dict[str, list[tuple[int, list[tuple[str, int]]]] | dict] = {
         (1, [("money", 250_000_000)]),
     ],
 
-    # ── Gamble — intentionally a plain dict so bot.py skips it ───
-    # (the isinstance(tiers, list) guard in bot.py handles this)
+    # ── Gamble — skipped by achievement checker ───────────────────
     "gamble": {},
 }
 
+
 # ─────────────────────────────────────────────
 # ACHIEVEMENT TITLES
-#
-# Format: dict[ach_key, dict[str(threshold), title_str]]
-# Matches ACHIEVEMENT_TITLES.get(ach_key, {}).get(str(threshold))
-# in bot.py.
 # ─────────────────────────────────────────────
 
 ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
