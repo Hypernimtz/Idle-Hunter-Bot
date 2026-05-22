@@ -2444,8 +2444,8 @@ def build_daily_components(user_id: str, claimed: bool = False,
         body = (
             f"### 📅 Daily Reward\nClaim your daily reward!\n"
             f"-# 🔥 Streak: **{cur_streak}** days · +{cur_streak}% bonus\n"
-            f"-# 💰 Possible: ◈ {tier['money_min']:,}–{tier['money_max']:,} "
-            f"or 💎{tier['gems_min']}–{tier['gems_max']}\n"
+            f"-# 💰 Possible: ◈ {tier.money_min:,}–{tier.money_max:,} "
+            f"or 💎{tier.gems_min}–{tier.gems_max}\n"
             f"-# Resets <t:{nxt_ts}:R>"
         )
     btns = []
