@@ -50,8 +50,9 @@ from game_data import (
     # Helpers
     today_utc, parse_amount, generate_verify_code, init_verify,
 )
+import backend
 from backend import (
-    _pool, init_databases, close_databases, get_user, save_user, bulk_save_users,
+    init_databases, close_databases, get_user, save_user, bulk_save_users,
     bulk_save_tribes, get_tribe, save_tribe, register_save_callbacks, user_transaction,
     user_tribe_transaction, tribe_only_transaction, migrate_all_users,
     log_economy_event, SessionManager, RateLimiter,
@@ -219,7 +220,7 @@ async def load_all_data():
     global data, tribe_data
     
     # Load all users
-    async with _pool.execute("SELECT user_id, data FROM users") as cursor:
+    async with backend._pool.execute("SELECT user_id, data FROM users") as cursor:
         rows = await cursor.fetchall()
         data = {row[0]: json.loads(row[1]) for row in rows}
     
@@ -227,7 +228,7 @@ async def load_all_data():
     data = migrate_all_users(data)
     
     # Load all tribes
-    async with _pool.execute("SELECT name, data FROM tribes") as cursor:
+    async with backend._pool.execute("SELECT name, data FROM tribes") as cursor:
         rows = await cursor.fetchall()
         tribe_data = {row[0]: json.loads(row[1]) for row in rows}
     
@@ -280,7 +281,7 @@ async def migrate_json_to_sqlite():
         try:
             with open("data.json", "r") as f:
                 users = json.load(f)
-            await _pool.executemany("""
+            await backend._pool.executemany("""
                 INSERT OR IGNORE INTO users (user_id, data, username, level, money, prestige)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, [
@@ -288,7 +289,7 @@ async def migrate_json_to_sqlite():
                  d.get("level", 1), d.get("money", 0), d.get("prestige", 0))
                 for uid, d in users.items()
             ])
-            await _pool.commit()
+            await backend._pool.commit()
             print(f"✅ Migrated {len(users)} users from data.json")
         except Exception as e:
             print(f"⚠️ User migration error: {e}")
@@ -298,7 +299,7 @@ async def migrate_json_to_sqlite():
         try:
             with open("tribe_data.json", "r") as f:
                 tribes = json.load(f)
-            await _pool.executemany("""
+            await backend._pool.executemany("""
                 INSERT OR IGNORE INTO tribes (name, data, level, member_count)
                 VALUES (?, ?, ?, ?)
             """, [
@@ -307,7 +308,7 @@ async def migrate_json_to_sqlite():
                    + len(td.get("roles", {}).get("members", [])))
                 for name, td in tribes.items()
             ])
-            await _pool.commit()
+            await backend._pool.commit()
             print(f"✅ Migrated {len(tribes)} tribes from tribe_data.json")
         except Exception as e:
             print(f"⚠️ Tribe migration error: {e}")
