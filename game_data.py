@@ -1250,3 +1250,29 @@ def generate_verify_code() -> str:
 
 def init_verify(_: str):
     return {"needed": False, "time": 250, "code": generate_verify_code()}
+
+
+
+RULES = [
+    ("1", "Play Fair", "Do not use any bots, scripts, autoclickers, or macros to automate gameplay. Idle Hunter is designed to be played by humans. Automation of any kind will result in a permanent ban."),
+    ("2", "No Exploiting", "Exploiting bugs, glitches, or unintended game mechanics for personal gain is strictly prohibited. If you discover a bug, report it via /report. Abuse of exploits will result in account resets or bans."),
+    ("3", "No Account Sharing", "Each account must belong to one person. Sharing your account or playing on someone else's account is not allowed. We are not responsible for any losses that occur from account sharing."),
+    ("4", "Respect Other Players", "Harassment, threats, hate speech, or targeted abuse toward other players will not be tolerated. This includes slurs, discrimination, and any form of bullying — in DMs, tribes, or public spaces."),
+    ("5", "No Spam", "Spamming commands, buttons, or messages excessively disrupts the experience for everyone. Repeated spam after a warning may result in a temporary or permanent ban."),
+    ("6", "No Scamming", "Scamming other players out of money, gems, or items through deception is prohibited. All trades and gifts are final — we do not reverse transactions, so be careful who you trust."),
+    ("7", "Tribe Conduct", "Tribe leaders and officers are responsible for their tribe's behaviour. Abusing tribe tools such as repeated invite spam, mass kicking, or using tribe chat to harass is not allowed."),
+    ("8", "No Real Money Trading", "Selling, buying, or trading in-game currency, items, or accounts for real money is strictly forbidden. Any accounts involved will be permanently banned with no appeal accepted."),
+    ("9", "Use Commands Responsibly", "Commands like /suggest and /report exist to improve the game. Abusing them to spam developers or file false reports is not allowed and will result in a cooldown or ban."),
+    ("10", "No Impersonation", "Do not impersonate developers, admins, or other players. Claiming to have special permissions or lying about your identity to manipulate others will result in a ban."),
+    ("11", "English Only in Reports", "All reports, appeals, and suggestions must be written in English so our team can review them properly. Non-English submissions may be ignored or closed without response."),
+    ("12", "Ban Appeals", "You are allowed up to 2 ban appeals. Appeals must be honest and respectful. Spamming appeals, submitting false information, or being rude to staff will result in your appeal being denied permanently."),
+    ("13", "Data Accuracy", "Do not attempt to manipulate, corrupt, or inject data into your account or others. Any tampering with game data is treated as cheating and results in an immediate permanent ban."),
+    ("14", "Respect the Economy", "Intentionally crashing the economy, distributing duped currency, or coordinating unfair market manipulation is not allowed and may result in economy resets and bans for all involved."),
+    ("15", "Prestige Integrity", "Prestige is an endgame milestone. Attempting to prestige using exploited money or levels will result in a prestige rollback and a warning or ban."),
+    ("16", "No Threats to the Service", "Any attempts to DDoS, hack, or otherwise disrupt the bot or its infrastructure will be reported to Discord and relevant authorities. This is a zero-tolerance rule."),
+    ("17", "Follow Discord ToS", "All players must comply with Discord's Terms of Service at all times. Violations of Discord ToS while using Idle Hunter may result in a report to Discord and a permanent ban from the bot."),
+    ("18", "No Admin Abuse", "If any admin abuses his/her position by accepting permanent bans with no accepted appeals (, etc. ) will be also demoted and permanently banned with no accepted appeals."),
+    ("19", "Developer Decisions are Final", "The development team reserves the right to ban, reset, or modify any account at any time for any reason. Decisions made by the team are final and not subject to community vote."),
+    ("20", "Rules May Change", "These rules may be updated at any time. It is your responsibility to stay informed. Continued use of Idle Hunter after a rules update constitutes acceptance of the new rules."),
+    ("21", "Have Fun", "Idle Hunter is meant to be enjoyed. If something feels wrong or unfair, use the proper channels to report it. We want this to be a fun, fair experience for everyone. Happy hunting! 🏹"),
+]
