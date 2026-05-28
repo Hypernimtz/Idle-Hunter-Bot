@@ -49,6 +49,8 @@ from game_data import (
     ACHIEVEMENTS, ACHIEVEMENT_TITLES,
     # Helpers
     today_utc, parse_amount, generate_verify_code, init_verify,
+    # Rules
+    RULES,
 )
 import backend
 from backend import (
@@ -579,7 +581,8 @@ _badge_page:           dict[str, int]  = {}
 _tribe_sort:           dict[str, str]  = {}
 gift_cache:            dict[str, dict] = {}
 hunt_time:             list[float]     = []
-_update_page: dict[str, int] = {}  # Track current page per user
+_update_page:          dict[str, int] = {}  # Track current page per user
+_rules_page:           dict[str, int] = {}
 
 # ─────────────────────────────────────────────
 # LOTTERY DRAW
@@ -2428,6 +2431,55 @@ async def maybe_tutorial_optin(interaction: discord.Interaction, user_id: str):
         print("Tutorial opt-in error:", e)
 
 # ─────────────────────────────────────────────
+# RULES
+# ─────────────────────────────────────────────
+
+RULES_LINES_PER_PAGE = 15
+
+def build_rules_components(user_id: str, page: int = 0) -> list:
+    # Each rule = 3 lines (number+title, description, spacing)
+    lines_per_rule = 3
+    rules_per_page = max(1, RULES_LINES_PER_PAGE // lines_per_rule)
+    total_pages = max(1, (len(RULES) + rules_per_page - 1) // rules_per_page)
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * rules_per_page
+    end   = start + rules_per_page
+    page_rules = RULES[start:end]
+
+    sections = []
+    for num, title, desc in page_rules:
+        sections.append({
+            "type": 9,
+            "components": [{"type": 10, "content": (
+                f"**{num}. {title}**\n"
+                f"-# {desc}"
+            )}],
+            "accessory": {
+                "type": 2, "style": 2, "label": f"#{num}",
+                "custom_id": f"rules:noop:{user_id}",
+                "disabled": True,
+            }
+        })
+
+    nav_row = {"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Prev",
+         "custom_id": f"rules:prev:{user_id}", "disabled": page == 0},
+        {"type": 2, "style": 2, "label": f"{page + 1}/{total_pages}",
+         "custom_id": f"rules:noop2:{user_id}", "disabled": True},
+        {"type": 2, "style": 2, "label": "Next ▶",
+         "custom_id": f"rules:next:{user_id}", "disabled": page >= total_pages - 1},
+    ]}
+
+    return [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False, "components": [
+        {"type": 10, "content": f"### 📜 Idle Hunter Rules\n-# Page {page + 1}/{total_pages} · {len(RULES)} rules total"},
+        {"type": 14, "divider": True, "spacing": 1},
+        *sections,
+        {"type": 14, "divider": True, "spacing": 1},
+        nav_row,
+    ]}]
+
+# ─────────────────────────────────────────────
 # REMAINING PANELS (idle, daily, prestige, update, lottery, gamble, etc.)
 # ─────────────────────────────────────────────
 
@@ -4116,6 +4168,21 @@ async def on_interaction(interaction: discord.Interaction):
     cid    = raw.get("custom_id", "")
     values = raw.get("values", [])
     parts  = cid.split(":")
+
+    # ── RULES ─────────────────────────────────
+    if parts[0] == "rules":
+        owner_id = parts[-1]
+        await interaction.response.defer()
+
+        if parts[1] == "prev":
+            _rules_page[owner_id] = max(0, _rules_page.get(owner_id, 0) - 1)
+        elif parts[1] == "next":
+            _rules_page[owner_id] = _rules_page.get(owner_id, 0) + 1
+        elif parts[1] == "noop" or parts[1] == "noop2":
+            return
+
+        await smart_update_v2(interaction, build_rules_components(owner_id, _rules_page.get(owner_id, 0)))
+        return
 
     if parts[0] == "update":
         owner_id = parts[-1]
@@ -6486,6 +6553,23 @@ async def update_cmd(interaction: discord.Interaction):
     _update_page[user_id] = 0
     await send_v2_followup(interaction, build_update_components(user_id, "all", 0))
     await check_everything(interaction, user_id)
+
+@bot.tree.command(name="rules", description="View the Idle Hunter rules")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def rules_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    init_user(user_id)
+    _rules_page[user_id] = 0
+    await interaction.response.defer()
+    route = Route("POST", "/webhooks/{application_id}/{token}",
+                  application_id=interaction.application_id,
+                  token=interaction.token)
+    await bot.http.request(route, json={
+        "flags": V2_FLAGS,
+        "components": build_rules_components(user_id, 0),
+        "allowed_mentions": {"parse": []},
+    })
 
 @bot.tree.command(name="lottery", description="Buy tickets for the daily lottery draw")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
