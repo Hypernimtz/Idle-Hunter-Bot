@@ -276,6 +276,9 @@ async def migrate_json_to_sqlite():
     """One-time migration from JSON files to SQLite. Safe to run multiple times."""
     import os
     
+    print(f"🔍 Looking for JSON files in: {os.getcwd()}")
+    print(f"🔍 Files found: {os.listdir('.')}")
+
     # Migrate users
     if os.path.exists("data.json"):
         try:
