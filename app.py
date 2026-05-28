@@ -6689,7 +6689,7 @@ async def add_update_cmd(interaction: discord.Interaction, title: str, message: 
         f"### **{LATEST_UPDATE['title']}**\n"
         f"{LATEST_UPDATE['message']}\n\n"
         f"-# Responsible Moderator: `{get_username(LATEST_UPDATE["moderator"])}`\n"
-        f"-# Date: <t:{LATEST_UPDATE["time"]}:D>\n\n"
+        f"-# Date: <t:{LATEST_UPDATE['date']}:D>\n\n"
         f"-# Updates are shown from oldest to newest (ID 1 is oldest)",
         0x2ECC71
     )
@@ -6735,7 +6735,7 @@ async def change_update_cmd(
                 f"**ID {i}:** {update['title']}\n"
                 f"-# {update['message'][:50]}...\n"
                 f"-# By <{get_username(update['moderator'])}>\n"
-                f"-# <t:{update['time']}:D>"
+                f"-# <t:{update['date']}:D>"
             )
         
         await send_ephemeral_v2(
@@ -6803,7 +6803,7 @@ async def change_update_cmd(
             f"**Removed:**\n"
             f"### {removed['title']}\n{removed['message']}\n"
             f"-# By: `{get_username(removed['moderator'])}`\n"
-            f"-# Date: <t:{removed['time']}:D>, ID: {removed['id']}\n\n"
+            f"-# Date: <t:{removed['date']}:D>, ID: {removed['id']}\n\n"
             f"-# Queue size now: {len(UPDATE)} updates",
             0xE67E22
         )
@@ -6830,7 +6830,7 @@ async def change_update_cmd(
             f"**Removed:**\n"
             f"### {removed['title']}\n{removed['message']}\n"
             f"-# By: `{get_username(removed['moderator'])}`\n"
-            f"-# Date: <t:{removed['time']}:D>, ID: {removed['id']}\n\n"
+            f"-# Date: <t:{removed['date']}:D>, ID: {removed['id']}\n\n"
             f"-# Queue size now: {len(UPDATE)} updates",
             0xE67E22
         )
@@ -6864,7 +6864,7 @@ async def change_update_cmd(
             f"**Deleted:**\n" 
             f"### {PREV_UPDATE['title']}\n{PREV_UPDATE['message']}\n"
             f"-# By: `{get_username(PREV_UPDATE['moderator'])}`\n"
-            f"-# Date: <t:{PREV_UPDATE['time']}:D>, ID: {PREV_UPDATE['id']}\n\n"
+            f"-# Date: <t:{PREV_UPDATE['date']}:D>, ID: {PREV_UPDATE['id']}\n\n"
             f"-# Queue size now: {len(UPDATE)} updates",
             0xE74C3C if len(UPDATE) == 0 else 0x2ECC71
         )
@@ -6896,7 +6896,7 @@ async def change_update_cmd(
             f"**Before:**\n" 
             f"### {PREV_UPDATE['title']}\n{PREV_UPDATE['message']}\n"
             f"-# By: `{get_username(PREV_UPDATE['moderator'])}`\n"
-            f"-# Date: <t:{PREV_UPDATE['time']}:D>, ID: {PREV_UPDATE['id']}\n"
+            f"-# Date: <t:{PREV_UPDATE['date']}:D>, ID: {PREV_UPDATE['id']}\n"
             f"**After:**\n" 
             f"### {title}\n"
             f"{message}\n"
