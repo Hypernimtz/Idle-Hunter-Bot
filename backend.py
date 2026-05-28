@@ -16,96 +16,274 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Optional, Any, Callable
 
 logger = logging.getLogger(__name__)
 
 DEGRADED_MODE = False
 
+# backend.py - Add these imports at the top
+import aiosqlite
+from contextlib import asynccontextmanager
+import json
 
-# ─────────────────────────────────────────────
-# FILE HELPERS
-# ─────────────────────────────────────────────
+# Replace the PostgreSQL/Redis section with SQLite:
 
-def atomic_json_save(path: str, payload: dict) -> None:
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=4)
-    os.replace(tmp_path, path)
+_pool: Optional[aiosqlite.Connection] = None
+_db_path = os.getenv("SQLITE_PATH", "idle_hunter.db")
 
+async def init_databases():
+    """Initialize SQLite database connection and create tables"""
+    global _pool
+    _pool = await aiosqlite.connect(_db_path)
+    await _pool.execute("PRAGMA journal_mode=WAL")  # Better concurrency
+    await _pool.execute("PRAGMA foreign_keys=ON")
+    await init_schema()
 
-def save_with_retries(path: str, payload: dict, retries: int = 1) -> None:
-    global DEGRADED_MODE
-    last_err = None
-    for _ in range(retries + 1):
-        try:
-            atomic_json_save(path, payload)
+async def close_databases():
+    """Close SQLite connection"""
+    global _pool
+    if _pool:
+        await _pool.close()
+
+async def init_schema():
+    """Create all tables if they don't exist"""
+    async with _pool.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            data TEXT NOT NULL,  -- JSON stored as TEXT
+            username TEXT,
+            level INTEGER DEFAULT 1,
+            money INTEGER DEFAULT 0,
+            prestige INTEGER DEFAULT 0,
+            last_active TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """): pass
+    
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS tribes (
+            name TEXT PRIMARY KEY,
+            data TEXT NOT NULL,
+            level INTEGER DEFAULT 1,
+            member_count INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS economy_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            delta INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            currency TEXT DEFAULT 'money',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Create indexes
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_level ON users(level DESC)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_money ON users(money DESC)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_prestige ON users(prestige DESC)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_tribes_level ON tribes(level DESC)")
+
+# Remove Redis cache (simplify) or keep with simple dict cache:
+_data_cache: dict[str, dict] = {}
+_tribe_cache: dict[str, dict] = {}
+
+async def get_user(user_id: str) -> dict:
+    """Get user data with simple in-memory cache"""
+    if user_id in _data_cache:
+        return _data_cache[user_id].copy()
+    
+    async with _pool.execute(
+        "SELECT data FROM users WHERE user_id = ?", (user_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        data = json.loads(row[0])
+        _data_cache[user_id] = data
+        return data.copy()
+
+async def save_user(user_id: str, data: dict):
+    """Save user data to SQLite"""
+    await _pool.execute("""
+        INSERT OR REPLACE INTO users (user_id, data, username, level, money, prestige, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    """, (
+        user_id,
+        json.dumps(data),
+        data.get("username", ""),
+        data.get("level", 1),
+        data.get("money", 0),
+        data.get("prestige", 0)
+    ))
+    await _pool.commit()
+    
+    # Update cache
+    _data_cache[user_id] = data
+
+async def bulk_save_users(users: dict[str, dict]):
+    """Bulk save multiple users"""
+    await _pool.executemany("""
+        INSERT OR REPLACE INTO users (user_id, data, username, level, money, prestige, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    """, [
+        (uid, json.dumps(data), data.get("username", ""), 
+         data.get("level", 1), data.get("money", 0), data.get("prestige", 0))
+        for uid, data in users.items()
+    ])
+    await _pool.commit()
+    
+    # Update cache
+    _data_cache.update(users)
+
+async def get_tribe(tribe_name: str) -> dict:
+    """Get tribe data"""
+    if tribe_name in _tribe_cache:
+        return _tribe_cache[tribe_name].copy()
+    
+    async with _pool.execute(
+        "SELECT data FROM tribes WHERE name = ?", (tribe_name,)
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        data = json.loads(row[0])
+        _tribe_cache[tribe_name] = data
+        return data.copy()
+
+async def save_tribe(tribe_name: str, data: dict):
+    """Save tribe data"""
+    member_count = 1 + len(data.get("roles", {}).get("officer", [])) + len(data.get("roles", {}).get("members", []))
+    
+    await _pool.execute("""
+        INSERT OR REPLACE INTO tribes (name, data, level, member_count, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+    """, (tribe_name, json.dumps(data), data.get("level", 1), member_count))
+    await _pool.commit()
+    
+    _tribe_cache[tribe_name] = data
+
+async def bulk_save_tribes(tribes_dict: dict):
+    """Save all tribes to SQLite"""
+    for name, tribe_data in tribes_dict.items():
+        await save_tribe(name, tribe_data)
+
+# Simple cache helpers (replace Redis)
+class SessionManager:
+    """Simple in-memory session storage (or use dict with TTL)"""
+    _sessions: dict[str, dict] = {}
+    
+    @staticmethod
+    async def set(user_id: str, key: str, value: Any, ttl: int = 3600):
+        SessionManager._sessions[f"{user_id}:{key}"] = {
+            "value": value,
+            "expires": time.time() + ttl
+        }
+    
+    @staticmethod
+    async def get(user_id: str, key: str) -> Any:
+        data = SessionManager._sessions.get(f"{user_id}:{key}")
+        if data and data["expires"] > time.time():
+            return data["value"]
+        SessionManager._sessions.pop(f"{user_id}:{key}", None)
+        return None
+    
+    @staticmethod
+    async def delete(user_id: str, key: str):
+        SessionManager._sessions.pop(f"{user_id}:{key}", None)
+
+class RateLimiter:
+    """Simple in-memory rate limiting"""
+    _hunt_cooldowns: dict[str, float] = {}
+    _gamble_cooldowns: dict[str, float] = {}
+    
+    @staticmethod
+    async def can_hunt(user_id: str, cooldown_seconds: int = 3) -> tuple[bool, float]:
+        last = RateLimiter._hunt_cooldowns.get(user_id, 0)
+        elapsed = time.time() - last
+        if elapsed < cooldown_seconds:
+            return False, cooldown_seconds - elapsed
+        RateLimiter._hunt_cooldowns[user_id] = time.time()
+        return True, 0
+    
+    @staticmethod
+    async def can_gamble(user_id: str, cooldown_seconds: int = 0) -> tuple[bool, float]:
+        if cooldown_seconds == 0:
+            return True, 0
+        last = RateLimiter._gamble_cooldowns.get(user_id, 0)
+        elapsed = time.time() - last
+        if elapsed < cooldown_seconds:
+            return False, cooldown_seconds - elapsed
+        RateLimiter._gamble_cooldowns[user_id] = time.time()
+        return True, 0
+
+# Economy log with SQLite (remove CSV file)
+_economy_buffer = []
+_BUFFER_SIZE = 100
+_BUFFER_LOCK = asyncio.Lock()
+
+async def log_economy_event_buffered(
+    user_id: str,
+    source: str,
+    delta: int,
+    balance_after: int,
+    currency: str = "money"
+):
+    """Buffer economy events for batch writing"""
+    if delta == 0:
+        return
+    
+    async with _BUFFER_LOCK:
+        _economy_buffer.append({
+            "user_id": user_id,
+            "source": source,
+            "delta": delta,
+            "balance_after": balance_after,
+            "currency": currency
+        })
+        
+        if len(_economy_buffer) >= _BUFFER_SIZE:
+            await _flush_economy_buffer()
+
+async def _flush_economy_buffer():
+    """Write buffered economy events to SQLite"""
+    global _economy_buffer
+    async with _BUFFER_LOCK:
+        if not _economy_buffer:
             return
-        except OSError as e:
-            last_err = e
-            logger.exception("Save failed for %s", path)
-    DEGRADED_MODE = True
-    raise OSError(f"Failed to save {path} after retries") from last_err
+        buffer = _economy_buffer[:]
+        _economy_buffer = []
+    
+    await _pool.executemany("""
+        INSERT INTO economy_log (user_id, source, delta, balance_after, currency)
+        VALUES (?, ?, ?, ?, ?)
+    """, [(e["user_id"], e["source"], e["delta"], e["balance_after"], e["currency"]) for e in buffer])
+    await _pool.commit()
 
+# Leaderboard using SQLite
+async def update_leaderboard(user_id: str, stat: str, value: int):
+    """Placeholder - leaderboard queries directly from SQLite"""
+    pass  # We'll query directly from the table
 
-def load_json_file(path: str, default: Any) -> Any:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return default
-
-
-def ensure_backup_dir(backup_dir: str) -> None:
-    os.makedirs(backup_dir, exist_ok=True)
-
-
-def backup_json_file(path: str, backup_dir: str) -> None:
-    if not os.path.exists(path):
-        return
-    ensure_backup_dir(backup_dir)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    base_name = os.path.basename(path)
-    backup_path = os.path.join(backup_dir, f"{base_name}.{timestamp}.bak")
-    try:
-        with open(path, "r", encoding="utf-8") as src:
-            payload = src.read()
-        with open(backup_path, "w", encoding="utf-8") as dst:
-            dst.write(payload)
-    except OSError:
-        logger.exception("Backup failed for %s", path)
-
-
-def prune_backups(path: str, backup_dir: str, max_backups: int) -> None:
-    if not os.path.isdir(backup_dir):
-        return
-    base_name = os.path.basename(path)
-    prefix = f"{base_name}."
-    backups = [
-        os.path.join(backup_dir, name)
-        for name in os.listdir(backup_dir)
-        if name.startswith(prefix) and name.endswith(".bak")
-    ]
-    backups.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    for old_backup in backups[max_backups:]:
-        try:
-            os.remove(old_backup)
-        except OSError:
-            logger.exception("Could not remove old backup %s", old_backup)
-
-
-# ─────────────────────────────────────────────
-# FILE PATHS & BACKUP CONFIG
-# ─────────────────────────────────────────────
-
-USERS_FILE   = "users_info.json"
-TRIBE_FILE   = "tribe_info.json"
-CONFIG_FILE  = "config.json"
-LOTTERY_FILE = "lottery.json"
-
-BACKUP_DIR              = "backups"
-BACKUP_INTERVAL_SECONDS = 60 * 60 * 24
-MAX_BACKUPS_PER_FILE    = 7
+async def get_leaderboard(stat: str, limit: int = 10) -> list[tuple[str, int]]:
+    """Get top N from leaderboard using SQLite"""
+    if stat == "money":
+        query = "SELECT user_id, money FROM users ORDER BY money DESC LIMIT ?"
+    elif stat == "level":
+        query = "SELECT user_id, level FROM users ORDER BY level DESC, data->>'xp' DESC LIMIT ?"
+    else:
+        return []
+    
+    async with _pool.execute(query, (limit,)) as cursor:
+        rows = await cursor.fetchall()
+        return [(row[0], row[1]) for row in rows]
 
 
 # ─────────────────────────────────────────────
@@ -132,8 +310,10 @@ tribe_lock = asyncio.Lock()
 state_lock = tribe_lock
 
 
+# In backend.py, REPLACE the SAVE CALLBACKS section (around line 200-250):
+
 # ─────────────────────────────────────────────
-# SAVE CALLBACKS
+# SAVE CALLBACKS (NOW USING SQLITE)
 # ─────────────────────────────────────────────
 
 _save_users_fn:  Callable | None = None
@@ -143,23 +323,23 @@ _save_tribes_fn: Callable | None = None
 def register_save_callbacks(save_users: Callable, save_tribes: Callable) -> None:
     """
     Wire up the flush functions used by transaction context managers.
-    Call once from bot.py after data globals are initialised:
-
-        register_save_callbacks(save_data_users, save_data_tribe)
+    Call once from bot.py after data globals are initialised.
     """
     global _save_users_fn, _save_tribes_fn
-    _save_users_fn  = save_users
+    _save_users_fn = save_users
     _save_tribes_fn = save_tribes
 
 
 def _flush_users() -> None:
+    """Flush users to SQLite - called by transaction context managers"""
     if _save_users_fn is not None:
-        _save_users_fn()
+        _save_users_fn()  # This will call bulk_save_users(data) from main.py
 
 
 def _flush_tribes() -> None:
+    """Flush tribes to SQLite - called by transaction context managers"""
     if _save_tribes_fn is not None:
-        _save_tribes_fn()
+        _save_tribes_fn()  # This will call bulk_save_tribes(tribe_data) from main.py
 
 
 # ─────────────────────────────────────────────
@@ -236,11 +416,6 @@ async def mutate_users_and_tribes_state(mutator: Callable) -> None:
 # ─────────────────────────────────────────────
 
 ECONOMY_LOG     = "economy_log.csv"
-_ECONOMY_FIELDS = ["ts", "user_id", "source", "delta", "balance_after", "currency"]
-
-import threading
-_ECONOMY_WRITE_LOCK = threading.Lock()
-
 
 def log_economy_event(
     user_id: str,
@@ -250,31 +425,7 @@ def log_economy_event(
     currency: str = "money",
     path: str = ECONOMY_LOG,
 ) -> None:
-    """
-    Append one row to the economy CSV.
-    Thread-safe. Zero-delta events are silently dropped.
-    """
-    if delta == 0:
-        return
-    row = {
-        "ts":            int(time.time()),
-        "user_id":       user_id,
-        "source":        source,
-        "delta":         delta,
-        "balance_after": balance_after,
-        "currency":      currency,
-    }
-    p = Path(path)
-    write_header = not p.exists()
-    try:
-        with _ECONOMY_WRITE_LOCK:
-            with open(p, "a", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=_ECONOMY_FIELDS)
-                if write_header:
-                    w.writeheader()
-                w.writerow(row)
-    except OSError:
-        logger.exception("Economy log write failed for user %s", user_id)
+    return log_economy_event_buffered(user_id, source, delta, balance_after, currency)
 
 
 # ─────────────────────────────────────────────
