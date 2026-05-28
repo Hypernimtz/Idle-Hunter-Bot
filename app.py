@@ -1,18 +1,73 @@
-import asyncio, discord, random, time, json, string, requests, secrets
+"""
+main.py (a.k.a. bot.py in the main bot)
+Powers the bot. [END]
+
+Current goals:
+1. To SQLite (backend.py). (THIS IS PERIOD ".")
+2. ADD ADD ADD, @AI, Wait till my edit
+
+"""
+import asyncio, discord, random, time, json, string, requests, secrets, logging, aiosqlite
 from discord.http import Route
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 from collections import Counter
-from backend import _flush_users
-from game_data import *
-from backend import *
-from economy import *
+from game_data import (
+    # Biomes
+    BIOME_LEVELS, BIOME_EMOJIS, BIOME_NAMES, BIOME_ANIMALS, BIOME_TOOL_TIER,
+    # Animals
+    ANIMAL_DATA, ANIMAL_EMOJI, animal_emoji,
+    # Tools
+    TOOLS, get_tool_tier, can_hunt_biome, get_all_tools_sorted,
+    tool_needs_ammo, get_tool_ammo_type, ammo_compatible_with_tool,
+    # Ammo
+    AMMO, AMMO_TYPE_TOOLS, AMMO_TYPE_LABELS, AMMO_MAX_STACK,
+    # Vehicles
+    VEHICLES,
+    # Shop
+    SHOP_BOOST_ITEMS,
+    # Daily
+    DAILY_TIERS, get_daily_tier,
+    # Colors
+    COLORS, COLOR_LABELS, COLOR_EMOJIS, COLOR_DESCRIPTIONS, color_display_name,
+    # XP
+    xp_for_level, total_xp_to_level,
+    # Gamble
+    ROULETTE_COLORS, ROULETTE_BET_TYPES, RPS_CHOICES, RPS_BEATS, SLOT_BIOME_CONFIG,
+    # Rarity icons
+    RARITY_ICONS,
+    # Emojis
+    UPGRADE_EMOJI, TRIBE_EMOJIS, USER_EMOJIS,
+    # Tips
+    TIPS,
+    # Commands
+    COMMAND_ID,
+    # Badges
+    BADGES,
+    # Achievements
+    ACHIEVEMENTS, ACHIEVEMENT_TITLES,
+    # Helpers
+    today_utc, parse_amount, generate_verify_code, init_verify,
+)
+from backend import (
+    _pool, init_databases, close_databases, get_user, save_user, bulk_save_users,
+    bulk_save_tribes, get_tribe, save_tribe, register_save_callbacks, user_transaction,
+    user_tribe_transaction, tribe_only_transaction, migrate_all_users,
+    log_economy_event, SessionManager, RateLimiter,
+    # Also import these if you need them:
+    CURRENT_SCHEMA, User, Tribe, TribeRoles, VerifyState, Boosts, IdleState,
+    Stats, BanRecord, AnimalRecord, AchievementProgress, BadgeState, GiftMail,
+    ECONOMY_LOG,
+    get_user_lock, tribe_lock, state_lock
+)
 from dotenv import load_dotenv
 import os, csv
 load_dotenv("token.env")
 
 BOT_TOKEN = os.getenv("TOKEN")
+
+logger = logging.getLogger(__name__)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -20,32 +75,29 @@ intents.members = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
-data       = {}
-tribe_data = {}
-
 # ─────────────────────────────────────────────
 # ADMINS
 # ─────────────────────────────────────────────
 
 BOT_ADMIN_ID = [
     "1286458710146940980",
-    "922684194377850911",
 ]
 
 def is_admin(interaction: discord.Interaction) -> bool:
     return str(interaction.user.id) in BOT_ADMIN_ID
 
-SUGGESTION_CHANNEL_ID = 1503581602234765322
-BAN_APPEAL_CHANNEL_ID = 1503975028570718298
-REPORTS_CHANNEL_ID    = 1503975073797771284
-LOTTERY_CHANNEL_ID    = 1505064052391673958
+BOT_OWNER_ID = [
+    "1286458710146940980",
+]
+
+def is_owner(interaction: discord.Interaction) -> bool:
+    return str(interaction.user.id) in BOT_OWNER_ID
 
 # ─────────────────────────────────────────────
 # GLOBALS
 # ─────────────────────────────────────────────
 
 DEV_MAIL              = ""
-UPDATE_MSG            = ""
 TIP_CHANCE            = 10
 IDLE_COST             = 5_000
 IDLE_STACK_MULTIPLIER = 2
@@ -58,31 +110,20 @@ AMMO_MAX_STACK        = 9_999
 LOTTERY_TICKET_COST   = 10_000
 GAMBLE_COOLDOWN       = 0
 V2_FLAGS              = 32768
+SUGGESTION_CHANNEL_ID = 1503581602234765322
+BAN_APPEAL_CHANNEL_ID = 1503975028570718298
+REPORTS_CHANNEL_ID    = 1503975073797771284
+LOTTERY_CHANNEL_ID    = 1505064052391673958
+
+# ─────────────────────────────────────────────
+# INCORRENT USER MESSAGE
+# ─────────────────────────────────────────────
 
 def show_incorrect_user_message(user_id: str):
     return (
         f"This panel is controlled by <@{user_id}>.\n"
         "If you want to view it, you will have to run the original command yourself."
     )
-
-# ─────────────────────────────────────────────
-# TOOLS
-# ─────────────────────────────────────────────
-
-def get_tool_tier(tool_name: str) -> int:
-    return TOOLS.get(tool_name, {}).get("tier", 1)
-
-def can_hunt_biome(tool_name: str, biome: str) -> bool:
-    return get_tool_tier(tool_name) >= BIOME_TOOL_TIER.get(biome, 1)
-
-def get_all_tools_sorted():
-    return sorted(TOOLS.items(), key=lambda x: x[1]["tier"])
-
-def tool_needs_ammo(tool_name: str) -> bool:
-    return TOOLS.get(tool_name, {}).get("ammo_type") is not None
-
-def get_tool_ammo_type(tool_name: str) -> str | None:
-    return TOOLS.get(tool_name, {}).get("ammo_type")
 
 # ─────────────────────────────────────────────
 # TUTORIAL HELPERS
@@ -126,17 +167,6 @@ def get_equipped_ammo(user_id: str) -> str | None:
 def get_ammo_count(user_id: str, ammo_name: str) -> int:
     return data[user_id].get("ammo_inv", {}).get(ammo_name, 0)
 
-def get_ammo_for_tool(tool_name: str) -> list[str]:
-    atype = get_tool_ammo_type(tool_name)
-    if not atype:
-        return []
-    return [name for name, a in AMMO.items() if a["ammo_type"] == atype]
-
-def ammo_compatible_with_tool(ammo_name: str, tool_name: str) -> bool:
-    a_type = AMMO.get(ammo_name, {}).get("ammo_type")
-    t_type = TOOLS.get(tool_name, {}).get("ammo_type")
-    return a_type is not None and a_type == t_type
-
 def consume_ammo(user_id: str, ammo_name: str, count: int) -> bool:
     inv     = data[user_id].setdefault("ammo_inv", {})
     current = inv.get(ammo_name, 0)
@@ -159,14 +189,6 @@ def get_ammo_boosts(user_id: str) -> dict:
     }
 
 # ─────────────────────────────────────────────
-# ANIMALS
-# ─────────────────────────────────────────────
-
-def animal_emoji(animal: str) -> str:
-    e = ANIMAL_DATA.get(animal, {}).get("emoji", "")
-    return e if e else ANIMAL_EMOJI
-
-# ─────────────────────────────────────────────
 # COLORS
 # ─────────────────────────────────────────────
 
@@ -181,90 +203,54 @@ def v2_color(user_id: str) -> discord.Color:
             return discord.Color.default()
     return COLORS.get(c, discord.Color.default())
 
-def color_display_name(color_key: str) -> str:
-    if color_key.startswith("#"):
-        return color_key.upper()
-    return COLOR_LABELS.get(color_key, color_key.title())
-
 def _accent(user_id: str) -> int:
     return int(v2_color(user_id)) or 0x2ECC71
-
-
-# ─────────────────────────────────────────────
-# AMOUNT PARSER
-# ─────────────────────────────────────────────
-
-def parse_amount(raw: str) -> int | None:
-    raw = raw.strip().upper().replace(",", "").replace("_", "")
-    for suffix, mult in [("T", 1_000_000_000_000), ("B", 1_000_000_000),
-                          ("M", 1_000_000), ("K", 1_000)]:
-        if raw.endswith(suffix):
-            try:
-                return int(float(raw[:-1]) * mult)
-            except ValueError:
-                return None
-    try:
-        return int(float(raw))
-    except ValueError:
-        return None
 
 # ─────────────────────────────────────────────
 # PERSISTENCE
 # ─────────────────────────────────────────────
 
-def backup_all_runtime_files() -> None:
-    for path in (USERS_FILE, TRIBE_FILE, CONFIG_FILE, LOTTERY_FILE):
-        backup_json_file(path, BACKUP_DIR)
-        prune_backups(path, BACKUP_DIR, MAX_BACKUPS_PER_FILE)
+# In-memory data stores (loaded from SQLite on startup)
+data: dict[str, dict] = {}
+tribe_data: dict[str, dict] = {}
 
+async def load_all_data():
+    """Load all user and tribe data from SQLite on startup"""
+    global data, tribe_data
+    
+    # Load all users
+    async with _pool.execute("SELECT user_id, data FROM users") as cursor:
+        rows = await cursor.fetchall()
+        data = {row[0]: json.loads(row[1]) for row in rows}
+    
+    # Apply migrations
+    data = migrate_all_users(data)
+    
+    # Load all tribes
+    async with _pool.execute("SELECT name, data FROM tribes") as cursor:
+        rows = await cursor.fetchall()
+        tribe_data = {row[0]: json.loads(row[1]) for row in rows}
+    
+    print(f"✅ Loaded {len(data)} users and {len(tribe_data)} tribes from SQLite")
 
-def save_data_users() -> None:
-    save_with_retries(USERS_FILE, data)
+# ─────────────────────────────────────────────
+# CONFIG (still uses JSON - this is fine)
+# ─────────────────────────────────────────────
 
-
-def save_data_tribe() -> None:
-    save_with_retries(TRIBE_FILE, tribe_data)
-
-
-def load_data_users() -> dict:
-    payload = load_json_file(USERS_FILE, {})
-    return payload if isinstance(payload, dict) else {}
-
-
-def load_data_tribe() -> dict:
-    payload = load_json_file(TRIBE_FILE, {})
-    if not isinstance(payload, dict):
-        return {}
-    defaults = {
-        "description": None, "creator": "0",
-        "roles": {"leader": "0", "officer": [], "members": []},
-        "banned": [], "level": 1, "xp": 0, "invites": [],
-        "premium": False, "max_members": 5,
-        "luck_boost": 0, "sell_price_boost": 0, "xp_boost": 0,
-    }
-    for _, tribe in list(payload.items()):
-        if isinstance(tribe, dict):
-            for k, v in defaults.items():
-                tribe.setdefault(k, v)
-            roles = tribe.setdefault("roles", {})
-            roles.setdefault("leader", tribe.get("creator", "0"))
-            roles.setdefault("officer", [])
-            roles.setdefault("members", [])
-    return payload
-
+CONFIG_FILE = "config.json"
 
 def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump({
             "dev_mail": DEV_MAIL,
-            "update":   UPDATE_MSG,
             "maintenance": {
                 "mode":     maintenance_mode,
                 "warning":  maintenance_warning,
                 "message":  maintenance_message,
                 "channels": list(maintenance_channels),
                 "warned":   list(_maintenance_warned),
-            }
+            },
+            "updates": UPDATE
         }, f, indent=4)
 
 def load_config() -> dict:
@@ -274,40 +260,79 @@ def load_config() -> dict:
     except (FileNotFoundError, json.JSONDecodeError):
         return {
             "dev_mail": "",
-            "update": "",
             "maintenance": {
                 "mode": False, "warning": False,
                 "message": "", "channels": [], "warned": [],
-            }
+            },
+            "updates": []
         }
 
-register_save_callbacks(save_data_users, save_data_tribe)
+# ─────────────────────────────────────────────
+# Migration
+# ─────────────────────────────────────────────
 
-# Load everything in the correct order
-data       = load_data_users()
-data = migrate_all_users(data)
-tribe_data = load_data_tribe()
+async def migrate_json_to_sqlite():
+    """One-time migration from JSON files to SQLite. Safe to run multiple times."""
+    import os
+    
+    # Migrate users
+    if os.path.exists("data.json"):
+        try:
+            with open("data.json", "r") as f:
+                users = json.load(f)
+            await _pool.executemany("""
+                INSERT OR IGNORE INTO users (user_id, data, username, level, money, prestige)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, [
+                (uid, json.dumps(d), d.get("username", ""),
+                 d.get("level", 1), d.get("money", 0), d.get("prestige", 0))
+                for uid, d in users.items()
+            ])
+            await _pool.commit()
+            print(f"✅ Migrated {len(users)} users from data.json")
+        except Exception as e:
+            print(f"⚠️ User migration error: {e}")
 
-_cfg                = load_config()
-DEV_MAIL            = _cfg["dev_mail"]
-UPDATE_MSG          = _cfg["update"]
-_m                  = _cfg["maintenance"]
-maintenance_mode    = _m["mode"]
-maintenance_warning = _m["warning"]
-maintenance_message = _m["message"]
-maintenance_channels: set[int] = set(_m["channels"])
-_maintenance_warned: set[str]  = set(_m["warned"])
+    # Migrate tribes
+    if os.path.exists("tribe_data.json"):
+        try:
+            with open("tribe_data.json", "r") as f:
+                tribes = json.load(f)
+            await _pool.executemany("""
+                INSERT OR IGNORE INTO tribes (name, data, level, member_count)
+                VALUES (?, ?, ?, ?)
+            """, [
+                (name, json.dumps(td), td.get("level", 1),
+                 1 + len(td.get("roles", {}).get("officer", []))
+                   + len(td.get("roles", {}).get("members", [])))
+                for name, td in tribes.items()
+            ])
+            await _pool.commit()
+            print(f"✅ Migrated {len(tribes)} tribes from tribe_data.json")
+        except Exception as e:
+            print(f"⚠️ Tribe migration error: {e}")
+
+# ─────────────────────────────────────────────
+# INITIAL LOAD (called from on_ready)
+# ─────────────────────────────────────────────
+# Load config
+_cfg = load_config()
+DEV_MAIL = _cfg.get("dev_mail", "")
+UPDATE = _cfg.get("updates", [])  # ← This will always be a list
+LATEST_UPDATE = UPDATE[-1] if UPDATE else {"title": "", "message": "", "moderator": "", "time": "", "id": 0}
+
+# Maintenance settings
+_m = _cfg.get("maintenance", {})
+maintenance_mode = _m.get("mode", False)
+maintenance_warning = _m.get("warning", False)
+maintenance_message = _m.get("message", "")
+maintenance_channels: set[int] = set(_m.get("channels", []))
+_maintenance_warned: set[str] = set(_m.get("warned", []))
 maintenance_time = 0
 
-# ─────────────────────────────────────────────
-# VERIFY HELPERS
-# ─────────────────────────────────────────────
-
-def generate_verify_code() -> str:
-    return "".join(random.choices(string.ascii_letters + string.digits, k=4))
-
-def init_verify(_: str):
-    return {"needed": False, "time": 250, "code": generate_verify_code()}
+# Register save callbacks (will be re-registered in on_ready after DB init)
+# For now, placeholder callbacks that do nothing until real ones are set
+register_save_callbacks(lambda: None, lambda: None)
 
 # ─────────────────────────────────────────────
 # TITLE HELPERS
@@ -337,9 +362,6 @@ def sync_earned_titles(user_id: str):
 # ─────────────────────────────────────────────
 # USER / TRIBE INIT
 # ─────────────────────────────────────────────
-
-def today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 def init_user(user_id: str):
     user_id = str(user_id)
@@ -554,6 +576,8 @@ _ach_page:             dict[str, int]  = {}
 _badge_page:           dict[str, int]  = {}
 _tribe_sort:           dict[str, str]  = {}
 gift_cache:            dict[str, dict] = {}
+hunt_time:             list[float]     = []
+_update_page: dict[str, int] = {}  # Track current page per user
 
 # ─────────────────────────────────────────────
 # LOTTERY DRAW
@@ -593,7 +617,7 @@ async def run_lottery_draw():
         data[winner_id]["total_money_earned"] = (
             data[winner_id].get("total_money_earned", 0) + pool
         )
-    # save_data_users() ← DELETE this line
+    #  ← DELETE this line
     winner_name = get_username(winner_id)
 
     sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
@@ -660,7 +684,7 @@ def load_lottery() -> dict:
         with open("lottery.json", "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"tickets": {}, "last_winner": None, "next_ts": 0, "pool": 0}
+        return {"tickets": {}, "last_winner": None, "next_ts": 0, "pool": 0, "last_total_tickets": 0}
 
 def save_lottery(ld: dict):
     with open("lottery.json", "w") as f:
@@ -792,7 +816,7 @@ def is_banned(user_id: str) -> bool:
     exp = b.get("expires_ts", 0)
     if exp != 0 and time.time() > exp:
         data[user_id]["ban"]["active"] = False
-        save_data_users()
+        
         return False
     return True
 
@@ -803,21 +827,41 @@ def get_ban(user_id: str) -> dict:
 # USERNAME HELPERS
 # ─────────────────────────────────────────────
 
-def get_username(user_id: int) -> str:
-    global BOT_TOKEN
-    if user_id not in data or data[user_id].get("username", "") == "":
-        url     = f"https://discord.com/api/v10/users/{user_id}"
-        headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-        response = requests.get(url, headers=headers)
-        get = response.json()
-        if "username" not in get:
+def get_username(user_id: str) -> str:
+    user_id_str = str(user_id)
+    
+    # Check cache first
+    if user_id_str in data and data[user_id_str].get("username", ""):
+        return data[user_id_str]["username"]
+    
+    # Fetch from Discord API with timeout
+    url = f"https://discord.com/api/v10/users/{user_id_str}"
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()  # Raises exception for 4xx/5xx status codes
+        user_data = response.json()
+        
+        if "username" in user_data:
+            username = user_data["username"]
+            if user_id_str in data:
+                data[user_id_str]["username"] = username
+            return username
+        else:
             return "Unknown User"
-        username = get["username"]
-        if user_id in data:
-            data[user_id]["username"] = username
-        return username
-    else:
-        return data[user_id]["username"]
+            
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout fetching username for {user_id_str}")
+        return data.get(user_id_str, {}).get("username", "Unknown User")
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error fetching username for {user_id_str}: {e}")
+        return data.get(user_id_str, {}).get("username", "Unknown User")
+        
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        logger.error(f"Parse error fetching username for {user_id_str}: {e}")
+        return data.get(user_id_str, {}).get("username", "Unknown User")
 
 # ─────────────────────────────────────────────
 # STATISTICS HELPERS
@@ -937,11 +981,6 @@ async def send_ephemeral_v2(interaction: discord.Interaction, content: str, colo
         "allowed_mentions": {"parse": []},
     })
 
-async def send_ephemeral_embed(interaction, description, color):
-    """Legacy compat — redirects to v2 ephemeral."""
-    color_int = int(color) if not isinstance(color, int) else color
-    await send_ephemeral_v2(interaction, description, color_int)
-
 # ─────────────────────────────────────────────
 # MAIL NOTIFICATION
 # ─────────────────────────────────────────────
@@ -967,7 +1006,7 @@ async def maybe_send_mail_notification(interaction: discord.Interaction, user_id
     if unread_gifts:
         gift_notice_key = str(max(g.get("ts", 0) for g in unread_gifts))
         d["gift_mail_notice_seen"] = gift_notice_key
-    save_data_users()
+    
 
 # ─────────────────────────────────────────────
 # VERIFY EMBED (v2)
@@ -1037,12 +1076,19 @@ async def check_everything(interaction: discord.Interaction, user_id: str):
 
 def run_hunt(user_id: str) -> dict:
     init_user(user_id)
+
+    now = time.time()
+    cd  = data[user_id]["hunt_cd"]
+    hunt_time.append(round(cd - now, 2))
+
+    if len(hunt_time) >= 10 and len(set(hunt_time)) <= 1:
+        data[user_id]["verify"]["time"] -= max(data[user_id]["verify"]["time"], 50)
+        hunt_time = []
+
     tick_verify(user_id)
     if data[user_id]["verify"]["needed"]:
         return {"ok": False, "verify": True}
 
-    now = time.time()
-    cd  = data[user_id]["hunt_cd"]
     if now < cd:
         return {"ok": False, "cooldown_ts": int(cd), "remaining": cd - now, "verify": False}
 
@@ -1084,7 +1130,8 @@ def run_hunt(user_id: str) -> dict:
         animal       = random.choice(BIOME_ANIMALS[biome])
         animal_value = ANIMAL_DATA.get(animal, {}).get("value", 0)
         sell_value   = int(animal_value * (1 + sell_boost / 100))
-        xp_earned    = int(random.randint(10, 50) * (1 + xp_boost / 100))
+        animal_xp    = ANIMAL_DATA.get(animal, {}).get("xp", 0)
+        xp_earned    = int(animal_xp * (1 + xp_boost / 100))
         is_rare      = random.randint(1, 100) <= (5 + luck_boost)
         if is_rare:
             sell_value *= 3; xp_earned *= 2
@@ -1161,7 +1208,7 @@ def sell_all_inv(user_id: str) -> dict:
 # PROGRESS BAR / FORMAT HELPERS
 # ─────────────────────────────────────────────
 
-def _progress_bar(current: int, maximum: int, width: int = 32) -> str:
+def _progress_bar(current: int, maximum: int, width: int = 16) -> str:
     if maximum <= 0:
         return f"[{'█' * width}] 100%"
     pct    = min(current / maximum, 1.0)
@@ -1289,7 +1336,7 @@ def build_achievements_pages(user_id: str) -> list[str]:
             if cur_lines >= _ACH_LINES_PER_PAGE:
                 flush()
                 # Re-add the header for continuation pages within same achievement
-                cur_page.append(f"### 🏅 {label} (cont.)")
+                cur_page.append(f"### 🏅 {label}")
                 cur_lines += 2
 
     flush()
@@ -1418,7 +1465,7 @@ def build_badges_components(user_id: str) -> list:
     page  = _badge_page.get(user_id, 0)
     page  = max(0, min(page, len(pages) - 1))
     total = len(pages)
-    content = f"### 🎖️ Badges — Page {page+1}/{total}\n\n{pages[page]}"
+    content = f"### 🎖️ Badges"
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 2, "label": "◀ Prev",
          "custom_id": f"badge:prev:{user_id}", "disabled": page == 0},
@@ -1529,7 +1576,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
         f"### {USER_EMOJIS['profile']} {display_name}'s Menu\n"
         f"{title_line}"
         f"{badge_line}"
-        f"{USER_EMOJIS['levels']} Lv. **{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
+        f"{USER_EMOJIS['levels']} Level **{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
         f"⭐ Prestige **{prestige}**\n"
         f"**◈ {d['money']:,}** · 💎 **{d['gems']}**\n\n"
         f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · "
@@ -1537,10 +1584,10 @@ def build_menu_components(user_id: str, display_name: str) -> list:
         f"🔸 Ammo: {ammo_line}\n"
         f"🚗 Vehicle: {vehicle_line}\n"
         f"Tribe: {TRIBE_EMOJIS['tribe']} {tribe_line}\n\n"
-        f"{USER_EMOJIS['luck_boost']} **{boosts['luck']}%** · "
-        f"{USER_EMOJIS['sell_boost']} **{boosts['sell']}%** · "
-        f"{USER_EMOJIS['xp_boost']} **{boosts['xp']}%**\n\n"
-        f"💤 Idle stacks: **{stacks}** · Pending: **◈ {pending:,}**\n\n"
+        f"Luck: + **{boosts['luck']}%** · "
+        f"Sell: + **{boosts['sell']}%** · "
+        f"XP: + **{boosts['xp']}%**\n\n"
+        f"💤 Idle workers: **{stacks}** · Pending: **◈ {pending:,}**\n\n"
         f"🎒 Inventory ({len(inv)} items · ◈ {sell_val:,}):\n"
         f"{inv_lines}"
     )
@@ -1553,7 +1600,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Hunt",         "emoji": {"name": "🏹"},  "value": "hunt",         "description": "Go hunting in your current biome"},
             {"label": "Shop",         "emoji": {"name": "🏪"},  "value": "shop",         "description": "Buy boosts, tools and ammo"},
             {"label": "Biome",        "emoji": {"name": "🗺️"},  "value": "biome",        "description": "Change your hunting biome"},
-            {"label": "Color",        "emoji": {"name": "🎨"},  "value": "color",        "description": "Change your embed color"},
+            {"label": "Color",        "emoji": {"name": "🎨"},  "value": "color",        "description": "Change your color of containers"},
             {"label": "Daily",        "emoji": {"name": "📅"},  "value": "daily",        "description": "Claim your daily reward"},
             {"label": "Prestige",     "emoji": {"name": "⭐"},  "value": "prestige",     "description": "Prestige for permanent boosts"},
             {"label": "Idle",         "emoji": {"name": "💤"},  "value": "idle",         "description": "Manage your idle income"},
@@ -1566,13 +1613,15 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Gamble",       "emoji": {"name": "🎲"},  "value": "gamble",       "description": "Try your luck at mini-games"},
             {"label": "Progression",  "emoji": {"name": "🏅"},  "value": "progression",  "description": "View your achievements, badges, and titles"},
             {"label": "Events",       "emoji": {"name": "🌍"},  "value": "events",       "description": "View ongoing global events"},
-            {"label": "Update",       "emoji": {"name": "📋"},  "value": "update",       "description": "View the latest update"},
+            {"label": "Updates", "emoji": {"name": "📋"}, "value": "update", "description": "View latest updates"},
         ]
     }]}
 
     row2 = {"type": 1, "components": [
         {"type": 2, "style": 5, "label": "🔗 Invite Bot",
          "url": f"https://discord.com/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot%20applications.commands"},
+        {"type": 2, "style": 5, "label": "🔗 Support Server",
+         "url": f"https://discord.gg/X9JzdxeS8p"},
         {"type": 2, "style": 1, "label": "📖 Help",
          "custom_id": f"menu:help:{user_id}"},
     ]}
@@ -1643,10 +1692,10 @@ def build_profile_components(user_id: str, display_name: str,
         f"{TRIBE_EMOJIS['tribe']} {tribe_line}\n"
         f"{color_label}\n\n"
         f"{badge_line}"
-        f"{USER_EMOJIS['luck_boost']} Luck **{boosts['luck']}%** · "
-        f"{USER_EMOJIS['sell_boost']} Sell **{boosts['sell']}%** · "
-        f"{USER_EMOJIS['xp_boost']} XP **{boosts['xp']}%**\n\n"
-        f"💤 Idle stacks: **{stacks}** · Pending: **◈ {pending:,}**\n\n"
+        f"Luck: + **{boosts['luck']}%** · "
+        f"Sell: + **{boosts['sell']}%** · "
+        f"XP: + **{boosts['xp']}%**\n\n"
+        f"💤 Idle workers: **{stacks}** · Pending: **◈ {pending:,}**\n\n"
         f"🎒 Inventory ({len(inv)} items · ◈ {sell_val:,}):\n"
     )
     row_1 = {"type": 1, "components": [
@@ -1778,47 +1827,45 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     elif result.get("level_ups", 0) > 1:
         level_line = f"\n-# {USER_EMOJIS['level_up']} Level up ×{result['level_ups']}! Now level **{result['level']}**"
 
-    tip_line = f"\n-# 💡 {result['tip']}" if result.get("tip") else ""
+    tip_line = f"\n-# 💡**Tip:** {result['tip']}" if result.get("tip") else ""
 
     ammo_name = result.get("ammo")
     if ammo_name:
         remaining = result.get("remaining_ammo", 0)
-        a_info    = AMMO.get(ammo_name, {})
-        ammo_line = f"\n-# 🔸 {a_info.get('emoji','')} **{ammo_name}** — {remaining} left"
+        ammo_line = f"**{ammo_name}** ({remaining} left)"
     else:
-        ammo_line = ""
-
-    title_line = ""
-    equipped_title = d.get("equipped_title")
-    if equipped_title:
-        title_line = f'-# 🏷️ *"{equipped_title}"*\n'
+        ammo_line = "no ammo"
 
     stats_block = (
-        f"{title_line}"
         f"-# **◈ {result['balance']:,}**\n"
-        f"-# {USER_EMOJIS['xp']} **+{result['total_xp']:,} XP**\n"
-        f"-# {USER_EMOJIS['levels']} Lv. **{result['level']:,}** "
-        f"({result['xp']:,}/{result['xp_needed']:,})\n"
-        f"-# {BIOME_EMOJIS[result['biome']]} {result['biome_name']}\n"
+        f"-# Level **{result['level']:,}** ({result['xp']:,}/{result['xp_needed']:,})\n"
+        f"-# Using {tool_name} with {ammo_line} in {result['biome_name']}\n"
         f"-# 🎒 Inventory: **{inv_count}** · Sell value: **◈ {sell_val:,}**"
-        f"{ammo_line}{level_line}{tip_line}"
+        f"{level_line}{tip_line}"
     )
+
+    total_xp_earned = 0
+    total_sell_val = 0
 
     catch_parts = []
     for c in result["catches"]:
         animal      = c["animal"]
         rarity      = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
         rarity_icon = RARITY_ICONS.get(rarity, "")
-        rare_tag    = " · ✨ **Rare Catch!**" if c["is_rare"] else ""
+        rare_tag    = " · ✨ **Perfect Catch!**" if c["is_rare"] else ""
         a_em        = animal_emoji(animal)
+        total_xp_earned += c['xp_earned']
+        total_sell_val += c['sell_value']
         catch_parts.append(
             f"You caught a **{a_em} {animal}**!\n"
             f"-# {rarity_icon} {rarity.title()}{rare_tag}\n"
-            f"-# +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
         )
+    catch_parts.append(
+        f"\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}\n"
+    )
 
     title_content = (
-        f"### {result['biome_emoji']} {d.get('_display_name', 'Hunter')}'s "
+        f"### {d.get('_display_name', 'Hunter')}'s "
         f"Hunting in {result['biome_name']}\n"
     )
 
@@ -1868,7 +1915,7 @@ def build_color_panel_components(user_id: str) -> list:
         {"type": 10, "content": (
             f"### 🎨 Choose Your Color\n"
             f"Current: **{color_display_name(current)}**\n"
-            f"-# Cosmetic only."
+            f"-# Cosmetic only. No extra boosts, money, gems, etc."
         )},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 10, "content": "**Standard Colors**"},
@@ -2340,7 +2387,7 @@ async def maybe_tutorial_tip(interaction: discord.Interaction, user_id: str, ste
     all_done = all(tutorial_seen(user_id, s) for s in TUTORIAL_STEPS if s != "hunt")
     if all_done:
         data[user_id]["tutorial"]["enabled"] = False
-    save_data_users()
+    
     try:
         route = Route("POST", "/webhooks/{application_id}/{token}",
                       application_id=interaction.application_id, token=interaction.token)
@@ -2365,7 +2412,7 @@ async def maybe_tutorial_optin(interaction: discord.Interaction, user_id: str):
     if tutorial_prompted(user_id):
         return
     data[user_id]["tutorial"]["prompted"] = True
-    save_data_users()
+    
     try:
         route = Route("POST", "/webhooks/{application_id}/{token}",
                       application_id=interaction.application_id, token=interaction.token)
@@ -2381,13 +2428,84 @@ async def maybe_tutorial_optin(interaction: discord.Interaction, user_id: str):
 # REMAINING PANELS (idle, daily, prestige, update, lottery, gamble, etc.)
 # ─────────────────────────────────────────────
 
-def build_update_components(user_id: str) -> list:
-    content = (
-        f"### 📋 Latest Update\n\n"
-        f"{UPDATE_MSG if UPDATE_MSG else '-# No update posted yet.'}"
-    )
+UPDATE_LINES_PER_PAGE = 15
+
+def build_update_components(user_id: str, mode: str = "all", page: int = 0) -> list:
+    global UPDATE
+
+    if not UPDATE:
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+            {"type": 10, "content": "### 📋 Updates\n\n-# No updates posted yet."},
+            {"type": 14, "divider": True, "spacing": 1},
+            _back_row(user_id),
+        ]}]
+
+    if mode == "view":
+        # Single update view
+        update_id = page  # reuse page param as index
+        update_id = max(0, min(update_id, len(UPDATE) - 1))
+        u = UPDATE[update_id]
+        date_str = f"<t:{int(u.get('date', 0))}:F>" if u.get('date') else "Unknown"
+        content = (
+            f"### {u['title']}\n"
+            f"{u['message']}\n\n"
+            f"-# By: `{get_username(u['moderator'])}`\n"
+            f"-# {date_str}\n"
+            f"-# ID: {update_id + 1}"
+        )
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 2, "label": "◀ Back",
+                 "custom_id": f"update:back_to_list:{user_id}"},
+            ]},
+        ]}]
+
+    # List view — paginated
+    # Build all section components first, then paginate by line count
+    sections = []
+    for i, u in enumerate(UPDATE):
+        date_str = f"<t:{int(u.get('date', 0))}:R>" if u.get('date') else "Unknown"
+        section = {
+            "type": 9,
+            "components": [{"type": 10, "content": (
+                f"**{u['title']}**\n"
+                f"-# By: `{get_username(u['moderator'])}`\n"
+                f"-# {date_str} · ID: {i + 1}"
+            )}],
+            "accessory": {
+                "type": 2, "style": 1, "label": "View",
+                "custom_id": f"update:view:{i}:{user_id}",
+            }
+        }
+        sections.append(section)
+
+    # Paginate: each section = 3 lines
+    lines_per_section = 3
+    sections_per_page = max(1, UPDATE_LINES_PER_PAGE // lines_per_section)
+    total_pages = max(1, (len(sections) + sections_per_page - 1) // sections_per_page)
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * sections_per_page
+    end   = start + sections_per_page
+    page_sections = sections[start:end]
+
+    nav_row = {"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Prev",
+         "custom_id": f"update:prev:{user_id}", "disabled": page == 0},
+        {"type": 2, "style": 2, "label": f"{page + 1}/{total_pages}",
+         "custom_id": f"update:noop:{user_id}", "disabled": True},
+        {"type": 2, "style": 2, "label": "Next ▶",
+         "custom_id": f"update:next:{user_id}", "disabled": page >= total_pages - 1},
+    ]}
+
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        {"type": 10, "content": f"### 📋 Updates"},
+        {"type": 14, "divider": True, "spacing": 1},
+        *page_sections,
+        {"type": 14, "divider": True, "spacing": 1},
+        nav_row,
         {"type": 14, "divider": True, "spacing": 1},
         _back_row(user_id),
     ]}]
@@ -2399,7 +2517,7 @@ def build_idle_components(user_id: str) -> list:
     if idle["active"] and stacks > 0:
         elapsed = (time.time() - idle["started_at"]) / 3600
         pending = int(elapsed * rate * stacks)
-        status  = f"🟢 Active · **{stacks}** stack(s) · Pending: **◈ {pending:,}**"
+        status  = f"🟢 Active · **{stacks}** worker(s) · Pending: **◈ {pending:,}**"
     else:
         status = "🔴 Inactive"
     next_cost = idle_cost_for_stack(stacks)
@@ -2409,12 +2527,12 @@ def build_idle_components(user_id: str) -> list:
             f"{status}\n\n"
             f"-# 📈 Rate: **◈ {rate:,}/hr** per stack\n"
             f"-# Balance: **◈ {data[user_id]['money']:,}**\n"
-            f"-# Next stack cost: **◈ {next_cost:,}** (×{IDLE_STACK_MULTIPLIER} each)"
+            f"-# Next worker cost: **◈ {next_cost:,}** (×{IDLE_STACK_MULTIPLIER} per person)"
         )},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "📥 Collect",    "custom_id": f"idle:collect:{user_id}"},
-            {"type": 2, "style": 1, "label": "👷 Hire Stack", "custom_id": f"idle:hire:{user_id}"},
+            {"type": 2, "style": 1, "label": "👷 Hire Worker", "custom_id": f"idle:hire:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back",        "custom_id": f"nav:back:{user_id}"},
         ]},
     ]}]
@@ -2475,8 +2593,9 @@ def build_prestige_components(user_id: str) -> list:
         f"-# {'✅' if lvl_ok else '❌'} Level **{PRESTIGE_MIN_LEVEL:,}** (you: {level:,})\n"
         f"-# {'✅' if money_ok else '❌'} **◈ {PRESTIGE_MIN_MONEY:,}** (you: ◈ {money:,})\n\n"
         f"**Reward:** +**{boost}%** permanent Luck, Sell & XP\n"
-        f"-# Resets: Level, Money, Inventory, Biome, Record\n"
-        f"-# Kept: Gems, Tools, Tribe, Log, Ammo"
+        f"Prestiges costs almost everything. Please re-think about your decision before you click **Prestige**."
+        f"-# Resets: Level, Money, Inventory, Biome, Record, Tools, Ammo\n"
+        f"-# Kept: Gems, Tribe, Log"
     )
     btns = []
     if lvl_ok and money_ok:
@@ -2503,34 +2622,55 @@ def build_prestige_done_components(user_id: str, new_prestige: int) -> list:
     ]}]
 
 def build_lottery_components(user_id: str) -> list:
-    ld         = lottery_data
-    pool       = ld.get("pool", 0)
-    tickets    = ld.get("tickets", {})
-    total_t    = sum(tickets.values())
+    ld = lottery_data
+    tickets = ld.get("tickets", {})
     my_tickets = tickets.get(user_id, 0)
-    my_chance  = (my_tickets / total_t * 100) if total_t > 0 else 0.0
-    next_ts    = ld.get("next_ts", 0)
-    last_w     = ld.get("last_winner")
-    last_line  = (f"Last win: **◈ {last_w['won']:,}** by `{last_w['username']}`"
+    next_ts = ld.get("next_ts", 0)
+    last_w = ld.get("last_winner")
+    
+    # Calculate ticket change from previous lottery
+    last_total = ld.get("last_total_tickets", 0)
+    current_total = sum(tickets.values())
+    if last_total == 0:
+        keyword = "no previous data of"
+    elif current_total > last_total:
+        increase = ((current_total - last_total) / last_total) * 100
+        if increase <= 30:
+            keyword = "more"
+        elif increase <= 60:
+            keyword = "some more"
+        elif increase <= 90:
+            keyword = "a lot more"
+        else:
+            keyword = "a GIGANTIC more (buyers says help) of"
+    elif current_total < last_total:
+        decrease = ((last_total - current_total) / last_total) * 100
+        if decrease <= 30:
+            keyword = "a bit fewer"
+        elif decrease <= 60:
+            keyword = "fewer to some degree"
+        elif decrease <= 90:
+            keyword = "a lot fewer"
+        else:
+            keyword = f"a GIGANTIC fewer (economy says help) of"
+    else:
+        keyword = "the same number of"
+    
+    last_line = (f"Last win: **◈ {last_w['won']:,}** by `{last_w['username']}`"
                   if last_w else "Last win: *None yet*")
-    sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
-    medals    = {0: "🥇", 1: "🥈", 2: "🥉"}
-    top_lines = []
-    for i, (uid, tc) in enumerate(sorted_buyers[:5]):
-        chance = (tc / total_t * 100) if total_t > 0 else 0.0
-        name   = get_username(uid)
-        medal  = medals.get(i, f"**#{i+1}**")
-        you    = " ← you" if uid == user_id else ""
-        top_lines.append(f"{medal} `{chance:.1f}%`: `{name}`{you}")
-    top_block = "\n".join(top_lines) if top_lines else "-# No participants yet."
+    
+    # Store for next comparison
+    ld["last_total_tickets"] = current_total
+    save_lottery(ld)
+    
     content = (
         f"### 🎰 Lottery\n{last_line}\n\n"
-        f"**Pool: ◈ {pool:,}** · Tickets: **{total_t:,}**\n"
-        f"Your tickets: **{my_tickets}** · Chance: **{my_chance:.2f}%**\n\n"
-        f"Tickets cost: **◈ {LOTTERY_TICKET_COST:,}** each\n"
+        f"Your tickets: **{my_tickets}**\n\n"
+        f"Tickets cost: **◈ {LOTTERY_TICKET_COST:,}** each\n\n"
+        f"There are currently {keyword} tickets compared to the previous lottery.\n\n"
         f"-# More tickets = better chance\n\n"
-        f"**Top Spenders:**\n{top_block}\n\n"
-        f"-# Next lottery <t:{next_ts}:R>"
+        f"-# Next lottery <t:{next_ts}:R>\n"
+        f"-# Join the server in /invite to know more information about the winners!"
     )
     return [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -2538,8 +2678,6 @@ def build_lottery_components(user_id: str) -> list:
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "🎟️ Buy Tickets",
              "custom_id": f"lottery:buy:{user_id}"},
-            {"type": 2, "style": 2, "label": "🔄 Refresh",
-             "custom_id": f"lottery:refresh:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back",
              "custom_id": f"nav:menu:{user_id}"},
         ]},
@@ -3705,44 +3843,45 @@ def build_personal_leaderboard_components(user_id: str) -> list:
 
 async def check_achievements_and_badges(interaction: discord.Interaction, user_id: str):
     init_user(user_id)
-    d      = data[user_id]
+    d = data[user_id]
     notifs = []
 
     all_tools_owned = all(t in d.get("owned_tools", []) for t in TOOLS)
-    all_tools_used  = all(t in d.get("stats", {}).get("tools_used", []) for t in TOOLS)
+    all_tools_used = all(t in d.get("stats", {}).get("tools_used", []) for t in TOOLS)
 
     ACH_SOURCES = {
         "daily_streak":    d.get("daily_streak", 0),
         "animals_caught":  d.get("total_caught", 0),
         "ammo_used":       d.get("stats", {}).get("ammo_used", 0),
-        "tools_bought_all":1 if all_tools_owned else 0,
-        "tools_used_all":  1 if all_tools_used  else 0,
+        "tools_bought_all": 1 if all_tools_owned else 0,
+        "tools_used_all":  1 if all_tools_used else 0,
     }
 
     for ach_key, tiers in ACHIEVEMENTS.items():
-        if not tiers:
+        if not tiers or not isinstance(tiers, list):
             continue
+            
         current_val = ACH_SOURCES.get(ach_key, 0)
-        ach_data    = d["achievements"].setdefault(ach_key, {"claimed_up_to": -1})
+        ach_data = d["achievements"].setdefault(ach_key, {"claimed_up_to": -1})
         claimed_idx = ach_data.get("claimed_up_to", -1)
 
         for i, tier_entry in enumerate(tiers):
             if i <= claimed_idx:
                 continue
 
-            # Support both formats:
-            # New: (threshold, [(rtype, amount), ...])
-            # Old: (threshold, rtype, amount)
-            if len(tier_entry) == 2:
-                threshold, rewards = tier_entry
-                if not isinstance(rewards, (list, tuple)) or (
-                    len(rewards) == 2 and isinstance(rewards[0], str)
-                ):
-                    # It's actually (threshold, (rtype, amount)) or flat — normalize
-                    rewards = [rewards]
-            elif len(tier_entry) == 3:
-                threshold, rtype, amount = tier_entry
-                rewards = [(rtype, amount)]
+            # Parse the tier format - modern format: (threshold, [(rtype, amount), ...])
+            if isinstance(tier_entry, (list, tuple)) and len(tier_entry) >= 2:
+                threshold = tier_entry[0]
+                rewards = tier_entry[1]
+                
+                # Handle both list of tuples or single tuple
+                if isinstance(rewards, (list, tuple)):
+                    if len(rewards) == 2 and isinstance(rewards[0], str):
+                        # Single reward as tuple
+                        rewards = [rewards]
+                else:
+                    # Invalid format, skip
+                    continue
             else:
                 continue
 
@@ -3765,6 +3904,7 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
                 f"**{label}** — Tier {i+1}\nReward: **{reward_text}**",
                 0xF1C40F,
             ))
+            
             title_str = ACHIEVEMENT_TITLES.get(ach_key, {}).get(str(threshold))
             if title_str:
                 earned = d.setdefault("earned_titles", [])
@@ -3780,17 +3920,22 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
     all_ach_done = all(
         len(ACHIEVEMENTS.get(k, [])) > 0 and
         d["achievements"].get(k, {}).get("claimed_up_to", -1) >= len(ACHIEVEMENTS[k]) - 1
-        for k in ACHIEVEMENTS if ACHIEVEMENTS.get(k)
+        for k in ACHIEVEMENTS if ACHIEVEMENTS.get(k) and isinstance(ACHIEVEMENTS[k], list)
     )
 
     for badge_key, bdef in BADGES.items():
-        stat    = bdef["stat"]
-        gold_t  = bdef["gold"]
-        plat_t  = bdef["plat"]
-        abbr    = bdef["abbr"]
-        label   = bdef["label"]
-        cur     = 1 if (stat == "game_master" and all_ach_done) else get_badge_stat(user_id, stat)
-        bstate  = d["badges"].setdefault(badge_key, {"tier": 0, "notified_gold": False, "notified_plat": False})
+        stat = bdef["stat"]
+        gold_t = bdef["gold"]
+        plat_t = bdef["plat"]
+        abbr = bdef["abbr"]
+        label = bdef["label"]
+        
+        if stat == "game_master":
+            cur = 1 if all_ach_done else 0
+        else:
+            cur = get_badge_stat(user_id, stat)
+            
+        bstate = d["badges"].setdefault(badge_key, {"tier": 0, "notified_gold": False, "notified_plat": False})
         cur_tier = bstate.get("tier", 0)
 
         if cur_tier < 1 and cur >= gold_t:
@@ -3814,10 +3959,12 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
     if all_badge_plat:
         gm = d["badges"].setdefault("game_master", {"tier": 0, "notified_gold": False, "notified_plat": False})
         if gm.get("tier", 0) < 2 and not gm.get("notified_plat"):
-            gm["tier"] = 2; gm["notified_plat"] = True
+            gm["tier"] = 2
+            gm["notified_plat"] = True
             notifs.append(("🏆 Platinum Badge Earned!",
                 "**Game Master** `[GM🏆]`\nYou've completed everything. Legendary.", 0xE8E8E8))
 
+    # Send notifications
     for title, body, color in notifs:
         try:
             route = Route("POST", "/webhooks/{application_id}/{token}",
@@ -3859,7 +4006,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
     elif panel == "help":
         await smart_update_v2(interaction, build_help_components(user_id))
     elif panel == "update":
-        await smart_update_v2(interaction, build_update_components(user_id))
+        _update_page[user_id] = 0
+        await smart_update_v2(interaction, build_update_components(user_id, "all", 0))
     elif panel == "lottery":
         await smart_update_v2(interaction, build_lottery_components(user_id))
     elif panel == "gamble":
@@ -3965,6 +4113,39 @@ async def on_interaction(interaction: discord.Interaction):
     values = raw.get("values", [])
     parts  = cid.split(":")
 
+    if parts[0] == "update":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await interaction.response.defer()
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+
+        await interaction.response.defer()
+        action = parts[1]
+
+        if action == "view":
+            update_idx = int(parts[2])
+            await smart_update_v2(interaction, build_update_components(owner_id, "view", update_idx))
+            return
+
+        elif action == "back_to_list":
+            page = _update_page.get(owner_id, 0)
+            await smart_update_v2(interaction, build_update_components(owner_id, "all", page))
+            return
+
+        elif action == "prev":
+            _update_page[owner_id] = max(0, _update_page.get(owner_id, 0) - 1)
+            await smart_update_v2(interaction, build_update_components(owner_id, "all", _update_page[owner_id]))
+            return
+
+        elif action == "next":
+            _update_page[owner_id] = _update_page.get(owner_id, 0) + 1
+            await smart_update_v2(interaction, build_update_components(owner_id, "all", _update_page[owner_id]))
+            return
+
+        elif action == "noop":
+            return
+        
     # ── TUTORIAL ──────────────────────────────
     if parts[0] == "tutorial":
         owner_id = parts[-1]
@@ -3979,7 +4160,7 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.defer()
             choice = parts[2]
             data[owner_id]["tutorial"]["enabled"] = (choice == "yes")
-            save_data_users()
+            
             if choice == "yes":
                 await smart_update_v2(interaction, [{"type": 17, "accent_color": _accent(owner_id),
                     "spoiler": False, "components": [{"type": 10, "content":
@@ -4002,7 +4183,7 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "stop":
             await interaction.response.defer()
             data[owner_id]["tutorial"]["enabled"] = False
-            save_data_users()
+            
             await smart_update_v2(interaction, [{"type": 17, "accent_color": _accent(owner_id),
                 "spoiler": False, "components": [{"type": 10, "content":
                     "### 🔕 Tips turned off.\n"
@@ -4019,6 +4200,11 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if parts[1] == "again":
+            can_hunt, remaining = await RateLimiter.can_hunt(owner_id, HUNT_COOLDOWN)
+            if not can_hunt:
+                await interaction.response.defer()
+                await send_ephemeral_v2(interaction, f"⏳ Wait **{remaining:.1f}s** before hunting again!", 0xE67E22)
+                return
             await interaction.response.defer()
             init_user(owner_id)
             async with get_user_lock(owner_id):
@@ -4076,6 +4262,10 @@ async def on_interaction(interaction: discord.Interaction):
             await interaction.response.defer()
             panel = values[0] if values else "menu"
             if panel == "hunt":
+                can_hunt, remaining = await RateLimiter.can_hunt(owner_id, HUNT_COOLDOWN)
+                if not can_hunt:
+                    await send_ephemeral_v2(interaction, f"⏳ Wait **{remaining:.1f}s** before hunting!", 0xE67E22)
+                    return
                 init_user(owner_id)
                 async with user_transaction(owner_id):
                     result = run_hunt(owner_id)
@@ -4102,7 +4292,7 @@ async def on_interaction(interaction: discord.Interaction):
                         f"⏳ Hunt again <t:{result.get('cooldown_ts', int(time.time()+3))}:R>.",
                         0xE67E22)
                     return
-                save_data_users()
+                
                 data[owner_id]["_display_name"] = interaction.user.display_name
                 await smart_update_v2(interaction, build_hunt_components(owner_id, result))
                 return
@@ -4142,7 +4332,7 @@ async def on_interaction(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, "Invalid color.", 0xE74C3C)
             return
         data[owner_id]["color"] = color_key
-        save_data_users()
+        
         await smart_update_v2(interaction, build_color_panel_components(owner_id))
         return
 
@@ -4176,7 +4366,7 @@ async def on_interaction(interaction: discord.Interaction):
                 f"❌ {BIOME_NAMES[biome_key]} unlocks at Level {lvl_req}.", 0xE74C3C)
             return
         data[owner_id]["biome"] = biome_key
-        save_data_users()
+        
         await smart_update_v2(interaction, build_biome_panel_components(owner_id))
         return
 
@@ -4196,7 +4386,7 @@ async def on_interaction(interaction: discord.Interaction):
                 data[owner_id]["tool"] = tool_name
                 if get_tool_ammo_type(tool_name) != get_tool_ammo_type(old_tool):
                     data[owner_id]["equipped_ammo"] = None
-                save_data_users()
+                
             await smart_update_v2(interaction, build_equip_components(owner_id))
             return
 
@@ -4206,7 +4396,7 @@ async def on_interaction(interaction: discord.Interaction):
             if ammo_name and ammo_name in AMMO and ammo_compatible_with_tool(ammo_name, tool_name):
                 if get_ammo_count(owner_id, ammo_name) > 0:
                     data[owner_id]["equipped_ammo"] = ammo_name
-                    save_data_users()
+                    
                 else:
                     await send_ephemeral_v2(interaction, "❌ You don't own that ammo.", 0xE74C3C)
                     return
@@ -4217,7 +4407,7 @@ async def on_interaction(interaction: discord.Interaction):
             vehicle_name = values[0] if values else None
             if vehicle_name and vehicle_name in data[owner_id].get("owned_vehicles", []):
                 data[owner_id]["vehicle"] = vehicle_name
-                save_data_users()
+                
             await smart_update_v2(interaction, build_equip_components(owner_id))
             return
 
@@ -4282,7 +4472,7 @@ async def on_interaction(interaction: discord.Interaction):
                     return
             if boost_key:
                 data[owner_id]["boosts"][boost_key] = current + boost_amt
-            save_data_users()
+            
             await smart_update_v2(interaction, build_shop_components(owner_id, "boosts"))
             return
 
@@ -4347,7 +4537,7 @@ async def on_interaction(interaction: discord.Interaction):
                 spend_money(owner_id, t["price"], "tool shop")
             data[owner_id]["owned_tools"].append(tool_name)
             data[owner_id]["tool"] = tool_name
-            save_data_users()
+            
             await smart_update_v2(interaction, build_shop_components(owner_id, "tools"))
             return
 
@@ -4398,7 +4588,7 @@ async def on_interaction(interaction: discord.Interaction):
                 spend_money(owner_id, v["price"], "vehicle shop")
             data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
             data[owner_id]["vehicle"] = vehicle_name
-            save_data_users()
+            
             await smart_update_v2(interaction, build_shop_components(owner_id, "vehicles"))
             return
 
@@ -4406,7 +4596,7 @@ async def on_interaction(interaction: discord.Interaction):
             vehicle_name = parts[2]
             if vehicle_name in data[owner_id].get("owned_vehicles", []):
                 data[owner_id]["vehicle"] = vehicle_name
-                save_data_users()
+                
             await smart_update_v2(interaction, build_shop_components(owner_id, "vehicles"))
             return
 
@@ -4431,7 +4621,7 @@ async def on_interaction(interaction: discord.Interaction):
                 spend_money(owner_id, v["price"], "vehicle shop")
             data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
             data[owner_id]["vehicle"] = vehicle_name
-            save_data_users()
+            
             await smart_update_v2(interaction, build_shop_components(owner_id, "vehicles"))
             return
 
@@ -4439,7 +4629,7 @@ async def on_interaction(interaction: discord.Interaction):
             vehicle_name = values[0] if values else None
             if vehicle_name and vehicle_name in data[owner_id].get("owned_vehicles", []):
                 data[owner_id]["vehicle"] = vehicle_name
-                save_data_users()
+                
             await smart_update_v2(interaction, build_equip_components(owner_id))
             return
 
@@ -4583,7 +4773,7 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if parts[1] == "tribe":
-            sub       = parts[2]
+            sub = parts[2]
             tribe_inv = data[owner_id].get("tribe_inv")
             if sub == "accept":
                 if not tribe_inv or tribe_inv not in tribe_data:
@@ -4592,22 +4782,21 @@ async def on_interaction(interaction: discord.Interaction):
                 if data[owner_id].get("tribe"):
                     await send_ephemeral_v2(interaction, "Already in a tribe.", 0xE74C3C)
                     return
+                
+                td = tribe_data[tribe_inv]  # FIXED: Define td here
+                total = 1 + len(td["roles"]["officer"]) + len(td["roles"]["members"])
+                if total >= td["max_members"]:
+                    await send_ephemeral_v2(interaction, "Tribe is full.", 0xE74C3C)
+                    return
+                
                 async with user_tribe_transaction(owner_id):
-                    td_a["roles"]["members"].append(owner_id)
-                    if owner_id in td_a.get("invites", []):
-                        td_a["invites"].remove(owner_id)
-                    data[owner_id]["tribe"]          = tribe_inv
-                    data[owner_id]["tribe_inv"]      = None
+                    td["roles"]["members"].append(owner_id)
+                    if owner_id in td.get("invites", []):
+                        td["invites"].remove(owner_id)
+                    data[owner_id]["tribe"] = tribe_inv
+                    data[owner_id]["tribe_inv"] = None
                     data[owner_id]["tribe_inv_read"] = False
-                await smart_update_v2(interaction, build_mail_components(owner_id, "tribe"))
-                return
-            elif sub == "decline":
-                async with user_tribe_transaction(owner_id):
-                    if tribe_inv and tribe_inv in tribe_data:
-                        if owner_id in tribe_data[tribe_inv].get("invites", []):
-                            tribe_data[tribe_inv]["invites"].remove(owner_id)
-                    data[owner_id]["tribe_inv"]      = None
-                    data[owner_id]["tribe_inv_read"] = False
+                
                 await smart_update_v2(interaction, build_mail_components(owner_id, "tribe"))
                 return
 
@@ -4650,60 +4839,52 @@ async def on_interaction(interaction: discord.Interaction):
 
         if action == "confirm":
             recipient_id = str(gdata["recipient_id"])
-            fmt          = gdata["format"]
-            parsed       = int(gdata["parsed"])
-            message      = gdata["message"]
+            fmt = gdata["format"]
+            parsed = int(gdata["parsed"])
+            message = gdata["message"]
             init_user(recipient_id)
+            
+            # Define these BEFORE using them
+            amt_str = f"◈ {parsed:,}" if fmt == "money" else f"💎 {parsed:,}"
             icon = "◈" if fmt == "money" else "💎"
- 
+
             # Pre-check without locks (fast path for obvious failures)
             if data[owner_id][fmt] < parsed:
                 await send_ephemeral_v2(interaction, f"❌ Not enough {icon}!", 0xE74C3C)
                 return
- 
-            # Acquire both user locks in a consistent order (sorted) to
-            # prevent deadlock when two gifts cross simultaneously.
-            uid_a, uid_b = sorted([owner_id, recipient_id])
-            lock_a = get_user_lock(uid_a)
-            lock_b = get_user_lock(uid_b)
- 
-            async with lock_a:
-                async with lock_b:
-                    # Re-check inside lock — balance may have changed
+            
+            # Use nested user transactions
+            async with user_transaction(owner_id):
+                async with user_transaction(recipient_id):
+                    # Re-check inside transaction
                     if data[owner_id][fmt] < parsed:
                         await send_ephemeral_v2(interaction, f"❌ Not enough {icon}!", 0xE74C3C)
                         return
- 
+                    
                     if fmt == "money":
                         spend_money(owner_id, parsed, "gift send")
                         add_money(recipient_id, parsed, "gift receive")
+                        bal_str = f"◈ {data[owner_id]['money']:,}"  # ← Define bal_str
                     else:
-                        data[owner_id]["gems"]    -= parsed
+                        data[owner_id]["gems"] -= parsed
                         data[recipient_id]["gems"] += parsed
- 
-                    amt_str = f"◈ {parsed:,}" if fmt == "money" else f"💎 {parsed:,}"
-                    bal_str = (
-                        f"◈ {data[owner_id][fmt]:,}"
-                        if fmt == "money"
-                        else f"💎 {data[owner_id][fmt]:,}"
-                    )
- 
+                        bal_str = f"💎 {data[owner_id]['gems']:,}"  # ← Define bal_str
+                    
+                    # Add gift mail
                     gift_entry = {
-                        "sender_id":   owner_id,
+                        "sender_id": owner_id,
                         "sender_name": interaction.user.display_name,
-                        "fmt":         fmt,
-                        "amt_str":     amt_str,
-                        "message":     message,
-                        "ts":          int(time.time()),
-                        "read":        False,
+                        "fmt": fmt,
+                        "amt_str": amt_str,
+                        "message": message,
+                        "ts": int(time.time()),
+                        "read": False,
                     }
                     data[recipient_id].setdefault("gift_mails", []).insert(0, gift_entry)
                     data[recipient_id]["gift_mails"] = data[recipient_id]["gift_mails"][:20]
- 
-                    _flush_users()  # single flush covers both users
- 
+            
             gift_cache.pop(gift_id, None)
- 
+            
             try:
                 recipient_user = await bot.fetch_user(int(recipient_id))
                 try:
@@ -4826,8 +5007,8 @@ async def on_interaction(interaction: discord.Interaction):
                     blist = td_r.setdefault("banned", [])
                     if target not in blist:
                         blist.append(target)
-                    save_data_tribe()
-                    save_data_users()
+                    
+                    
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "banlist", sort))
             return
 
@@ -4839,7 +5020,7 @@ async def on_interaction(interaction: discord.Interaction):
                     blist = tribe_data[tribe_nm].get("banned", [])
                     if target in blist:
                         blist.remove(target)
-                    save_data_tribe()
+                    
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "banlist", sort))
             return
 
@@ -4877,16 +5058,16 @@ async def on_interaction(interaction: discord.Interaction):
                 if is_ldr and total_m == 1:
                     del tribe_data[tribe_nm]
                     data[owner_id]["tribe"] = None
-                    save_data_users()
-                    save_data_tribe()
+                    
+                    
                     await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
                     return
                 for role in ("officer", "members"):
                     if owner_id in td_l["roles"][role]:
                         td_l["roles"][role].remove(owner_id)
                 data[owner_id]["tribe"] = None
-                save_data_users()
-                save_data_tribe()
+                
+                
                 await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
                 return
 
@@ -4902,8 +5083,8 @@ async def on_interaction(interaction: discord.Interaction):
                 if target in data:
                     data[target]["tribe"]     = None
                     data[target]["tribe_inv"] = None
-                save_data_users()
-                save_data_tribe()
+                
+                
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "actions", sort))
             return
 
@@ -4914,7 +5095,7 @@ async def on_interaction(interaction: discord.Interaction):
                 if target in td_r["roles"]["members"]:
                     td_r["roles"]["members"].remove(target)
                     td_r["roles"]["officer"].append(target)
-                save_data_tribe()
+                
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "actions", sort))
             return
 
@@ -4925,7 +5106,7 @@ async def on_interaction(interaction: discord.Interaction):
                 if target in td_r["roles"]["officer"]:
                     td_r["roles"]["officer"].remove(target)
                     td_r["roles"]["members"].append(target)
-                save_data_tribe()
+                
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "actions", sort))
             return
 
@@ -4938,7 +5119,7 @@ async def on_interaction(interaction: discord.Interaction):
                 td_r["roles"]["leader"] = target
                 if owner_id not in td_r["roles"]["officer"]:
                     td_r["roles"]["officer"].append(owner_id)
-                save_data_tribe()
+                
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, "main", sort))
             return
 
@@ -4955,16 +5136,16 @@ async def on_interaction(interaction: discord.Interaction):
                 if is_ldr and total_m == 1:
                     del tribe_data[tribe_nm]
                     data[owner_id]["tribe"] = None
-                    save_data_users()
-                    save_data_tribe()
+                    
+                    
                     await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
                     return
                 for role in ("officer", "members"):
                     if owner_id in td_l["roles"][role]:
                         td_l["roles"][role].remove(owner_id)
                 data[owner_id]["tribe"] = None
-                save_data_users()
-                save_data_tribe()
+                
+                
                 await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
                 return
 
@@ -4992,14 +5173,14 @@ async def on_interaction(interaction: discord.Interaction):
                 td_a["invites"].remove(owner_id)
             data[owner_id]["tribe"]     = tribe_nm
             data[owner_id]["tribe_inv"] = None
-            save_data_users()
-            save_data_tribe()
+            
+            
             await send_ephemeral_v2(interaction, f"✅ Joined **{tribe_nm}**!", 0x2ECC71)
         else:
             if tribe_nm in tribe_data and owner_id in tribe_data[tribe_nm].get("invites", []):
                 tribe_data[tribe_nm]["invites"].remove(owner_id)
             data[owner_id]["tribe_inv"] = None
-            save_data_users()
+            
             await send_ephemeral_v2(interaction, "Invite declined.", 0xE74C3C)
         return
 
@@ -5075,7 +5256,7 @@ async def on_interaction(interaction: discord.Interaction):
                 data[owner_id]["equipped_title"] = None
             elif chosen and chosen in data[owner_id].get("earned_titles", []):
                 data[owner_id]["equipped_title"] = chosen
-            save_data_users()
+            
             await smart_update_v2(interaction, build_title_components(owner_id))
             return
 
@@ -5208,7 +5389,7 @@ async def on_interaction(interaction: discord.Interaction):
                             0xE74C3C)
                         return
                     data[owner_id]["biome"] = biome_key
-                    save_data_users()
+                    
                 await smart_update_v2(interaction, build_slots_panel(owner_id))
                 return
             if sub == "setbet":
@@ -5237,7 +5418,7 @@ async def on_interaction(interaction: discord.Interaction):
                     data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + (payout - bet)
                     data[owner_id]["stats"]["slots_wins"] = data[owner_id]["stats"].get("slots_wins", 0) + 1
                 data[owner_id]["last_gamble"] = time.time()
-                save_data_users()
+                
                 result = {"reels": reels, "bet": bet, "payout": payout, "won": won}
                 await smart_update_v2(interaction, build_slots_panel(owner_id, "result", result))
                 return
@@ -5268,7 +5449,7 @@ async def on_interaction(interaction: discord.Interaction):
                 data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + (payout - bet)
                 data[owner_id]["stats"]["rl_wins"] = data[owner_id]["stats"].get("rl_wins", 0) + 1
             data[owner_id]["last_gamble"] = time.time()
-            save_data_users()
+            
             result = {"color": color, "pick": sub, "bet": bet, "won": won, "payout": payout}
             await smart_update_v2(interaction, build_roulette_panel(owner_id, "result", result))
             return
@@ -5301,7 +5482,7 @@ async def on_interaction(interaction: discord.Interaction):
                 outcome = "lose"
                 spend_money(owner_id, bet, "rps loss")
             data[owner_id]["last_gamble"] = time.time()
-            save_data_users()
+            
             result = {"pick": sub, "bot_pick": bot_pick, "bet": bet, "outcome": outcome}
             await smart_update_v2(interaction, build_rps_panel(owner_id, "result", result))
             return
@@ -5324,7 +5505,7 @@ async def on_interaction(interaction: discord.Interaction):
                 elif val == 21:
                     action = "stand"
                 else:
-                    save_data_users()
+                    
                     await smart_update_v2(interaction, build_blackjack_panel(owner_id))
                     return
             if action == "stand":
@@ -5349,7 +5530,7 @@ async def on_interaction(interaction: discord.Interaction):
                         st.update({"done": True, "outcome": "🤝 Push!", "net": 0})
                     else:
                         st.update({"done": True, "outcome": "❌ Dealer wins.", "net": -bet})
-            # save_data_users() ← DELETE
+            #  ← DELETE
             await smart_update_v2(interaction, build_blackjack_panel(owner_id))
             return
 
@@ -5365,19 +5546,13 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "buy":
             await interaction.response.send_modal(LotteryBuyModal(owner_id))
             return
-
-        await interaction.response.defer()
-        if parts[1] == "refresh":
-            await smart_update_v2(interaction, build_lottery_components(owner_id))
-            return
+        
+        await smart_update_v2(interaction, build_lottery_components(owner_id))
+        return
 
     # ── PROFILE ───────────────────────────────
     if parts[0] == "profile":
         owner_id = parts[-1]
-        if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
-            return
         await interaction.response.defer()
 
         panel = parts[1]
@@ -5602,7 +5777,7 @@ class LotteryBuyModal(discord.ui.Modal, title="Buy Lottery Tickets"):
                 f"❌ Need **◈ {total_cost:,}** for {qty:,} ticket(s).", 0xE74C3C)
             return
         spend_money(self.user_id, total_cost, "lottery tickets")
-        save_data_users()
+        
         ld = lottery_data
         ld["tickets"][self.user_id] = ld["tickets"].get(self.user_id, 0) + qty
         ld["pool"]                  = ld.get("pool", 0) + total_cost
@@ -5628,7 +5803,7 @@ class CustomColorModal(discord.ui.Modal, title="Custom Embed Color"):
             await send_ephemeral_v2(interaction, "Invalid hex. Use `#RRGGBB`.", 0xE74C3C)
             return
         data[self.user_id]["color"] = f"#{raw.upper()}"
-        save_data_users()
+        
         await smart_update_v2(interaction, build_color_panel_components(self.user_id))
 
 class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
@@ -5679,7 +5854,7 @@ class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
                 return
         inv = data[self.user_id].setdefault("ammo_inv", {})
         inv[self.ammo_name] = current_owned + qty
-        save_data_users()
+        
         await smart_update_v2(interaction, build_shop_components(self.user_id, "ammo"))
 
 class TribeInviteModal(discord.ui.Modal, title="Invite a Player"):
@@ -5760,7 +5935,7 @@ class TribeSetDescModal(discord.ui.Modal, title="Set Tribe Description"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         tribe_data[self.tribe_name]["description"] = self.desc_input.value
-        save_data_tribe()
+        
         sort = _tribe_sort.get(self.user_id, "rank")
         await smart_update_v2(interaction, build_tribe_components(self.user_id, self.tribe_name, "actions", sort))
 
@@ -5820,7 +5995,7 @@ class TribeCreateModal(discord.ui.Modal, title="Create a Tribe"):
             return
         init_tribe(name, self.user_id)
         tribe_data[name]["description"] = self.desc_input.value.strip()
-        save_data_tribe()
+        
         await smart_update_v2(interaction, build_tribe_components(self.user_id, name, "main"))
 
 class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
@@ -5845,7 +6020,7 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
             await send_ephemeral_v2(interaction, "❌ You have no appeal chances left.", 0xE74C3C)
             return
         data[self.user_id]["ban"]["appeals_used"] = used + 1
-        save_data_users()
+        
         channel = bot.get_channel(BAN_APPEAL_CHANNEL_ID)
         exp_ts  = b.get("expires_ts", 0)
         exp_str = f"<t:{exp_ts}:R>" if exp_ts != 0 else "Permanent"
@@ -5952,38 +6127,56 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
 @app_commands.allowed_installs(guilds=True, users=True)
 async def hunt_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
-    if not user_id: return
+    if not user_id: 
+        return
+    
+    # ✅ SIMPLE RATE LIMIT CHECK - Just add this block
+    can_hunt, remaining = await RateLimiter.can_hunt(user_id, HUNT_COOLDOWN)
+    if not can_hunt:
+        await send_ephemeral_v2(
+            interaction,
+            f"⏳ Please wait **{remaining:.1f} seconds** before hunting again!",
+            0xE67E22
+        )
+        return
+    
+    # ✅ Everything below is YOUR EXISTING CODE, unchanged
     async with user_transaction(user_id):
-        result = run_hunt(user_id)
+        result = run_hunt(user_id)  # Still synchronous, no await needed
+    
     if result.get("verify"):
         await send_v2_followup(interaction, build_verify_v2(user_id))
         return
+    
     if result.get("tool_locked"):
         await send_ephemeral_v2(interaction,
             f"❌ **{result['biome_name']}** needs Tier {result['req_tier']}+. "
             f"Use </shop:{COMMAND_ID.get('shop','0')}> or </equip:{COMMAND_ID.get('equip','0')}>.",
             0xE74C3C)
         return
+    
     if result.get("no_ammo"):
         ran_out = result.get("ran_out", False)
-        atype   = result.get("ammo_type", "ammo")
-        msg     = (f"💥 You ran out of {atype}! Your ammo was unequipped." if ran_out else
-                   f"⚠️ **{result['tool_name']}** needs {atype} equipped. "
-                   f"Buy some in </shop:{COMMAND_ID.get('shop','0')}> → Ammo!")
+        atype = result.get("ammo_type", "ammo")
+        msg = (f"💥 You ran out of {atype}! Your ammo was unequipped." if ran_out else
+               f"⚠️ **{result['tool_name']}** needs {atype} equipped. "
+               f"Buy some in </shop:{COMMAND_ID.get('shop','0')}> → Ammo!")
         await send_ephemeral_v2(interaction, msg, 0xE67E22)
         return
+    
     if not result["ok"]:
         remaining = result.get("remaining", 3)
         await send_ephemeral_v2(interaction,
             f"⏳ Hunt again <t:{result.get('cooldown_ts', int(time.time()+remaining))}:R>.",
             0xE67E22)
         return
-    save_data_users()
+    
+    
     await maybe_tutorial_optin(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "sell")
     data[user_id]["_display_name"] = interaction.user.display_name
     await send_v2_followup(interaction, build_hunt_components(user_id, result))
-    await check_everything(interaction, user_id)
+    await check_everything(interaction, user_id)      
 
 @bot.tree.command(name="progression", description="View your achievements, badges, and titles")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -6030,7 +6223,7 @@ async def biome_cmd(interaction: discord.Interaction):
     await check_everything(interaction, user_id)
     await maybe_tutorial_tip(interaction, user_id, "shop_tools")
 
-@bot.tree.command(name="color", description="Change your embed color")
+@bot.tree.command(name="color", description="Change your color for containers")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
 async def color_cmd(interaction: discord.Interaction):
@@ -6237,12 +6430,12 @@ async def invite_cmd(interaction: discord.Interaction):
                   application_id=interaction.application_id,
                   token=interaction.token)
     await bot.http.request(route, json={
-        "flags": V2_FLAGS | 64,
+        "flags": V2_FLAGS,
         "components": [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
             "components": [{"type": 10, "content":
                 f"### 🔗 Invite Idle Hunter\n"
                 f"[Click here to invite the bot!]({url1})\n"
-                f"Join the support server: {url2}"
+                f"[Join the support server]({url2})"
             }]}],
         "allowed_mentions": {"parse": []},
     })
@@ -6279,13 +6472,15 @@ async def help_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_help_components(user_id))
     await check_everything(interaction, user_id)
 
-@bot.tree.command(name="update", description="View the latest update from the developers")
+@bot.tree.command(name="update", description="View the latest updates from the developers")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
 async def update_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
-    if not user_id: return
-    await send_v2_followup(interaction, build_update_components(user_id))
+    if not user_id:
+        return
+    _update_page[user_id] = 0
+    await send_v2_followup(interaction, build_update_components(user_id, "all", 0))
     await check_everything(interaction, user_id)
 
 @bot.tree.command(name="lottery", description="Buy tickets for the daily lottery draw")
@@ -6463,18 +6658,250 @@ async def tutorial_cmd(interaction: discord.Interaction, toggle: str):
 # ADMIN COMMANDS
 # ─────────────────────────────────────────────
 
-@bot.tree.command(name="change_update", description="Set the latest update message")
+@bot.tree.command(name="add_update", description="Add the latest update message")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.check(is_admin)
-@app_commands.describe(message="The update message to display")
-async def change_update_cmd(interaction: discord.Interaction, message: str = ""):
-    global UPDATE_MSG
-    UPDATE_MSG = message.strip()
+@app_commands.describe(title="The title to display", message="The update message to display")
+async def add_update_cmd(interaction: discord.Interaction, title: str, message: str):
+    global UPDATE, LATEST_UPDATE
+    
+    # Add to the END of the queue (newest updates go last)
+    UPDATE.append({
+        "title": title, 
+        "message": message, 
+        "moderator": str(interaction.user.id), 
+        "date": time.time(),
+        "id": len(UPDATE) + 1  # Auto-increment ID
+    })
+    
+    # Latest update is always the last one in the queue
+    LATEST_UPDATE = UPDATE[-1]
     save_config()
+    
     await interaction.response.defer(ephemeral=True)
-    await send_ephemeral_v2(interaction,
-        f"### 📋 Update Set\n{UPDATE_MSG if UPDATE_MSG else 'Update cleared.'}", 0x2ECC71)
+    await send_ephemeral_v2(
+        interaction,
+        f"### 📋 Update Added (ID: {len(UPDATE)})\n"
+        f"### **{LATEST_UPDATE['title']}**\n"
+        f"{LATEST_UPDATE['message']}\n\n"
+        f"-# Responsible Moderator: `{get_username(LATEST_UPDATE["moderator"])}`\n"
+        f"-# Date: <t:{LATEST_UPDATE["time"]}:D>\n\n"
+        f"-# Updates are shown from oldest to newest (ID 1 is oldest)",
+        0x2ECC71
+    )
+
+@bot.tree.command(name="change_update", description="Changes an update (queue operations)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.check(is_admin)
+@app_commands.describe(
+    id="The update ID you want to change", 
+    action="Queue operation", 
+    title="The title to display (for add/change)", 
+    message="The update message (for add/change)"
+)
+@app_commands.choices(action=[
+    app_commands.Choice(name="Delete", value="del"),
+    app_commands.Choice(name="Change", value="chg"),
+    app_commands.Choice(name="Add to Front", value="add_front"),
+    app_commands.Choice(name="Pop First", value="pop_first"),
+    app_commands.Choice(name="Pop Last", value="pop_last"),
+    app_commands.Choice(name="View Queue", value="view"),
+])
+async def change_update_cmd(
+    interaction: discord.Interaction, 
+    id: int, 
+    action: str, 
+    title: str = None, 
+    message: str = None
+):
+    global UPDATE, LATEST_UPDATE
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    # View queue (no modifications)
+    if action == "view":
+        if not UPDATE:
+            await send_ephemeral_v2(interaction, "📋 Update queue is empty.", 0xF1C40F)
+            return
+        
+        queue_display = []
+        for i, update in enumerate(UPDATE, 1):
+            queue_display.append(
+                f"**ID {i}:** {update['title']}\n"
+                f"-# {update['message'][:50]}...\n"
+                f"-# By <{get_username(update['moderator'])}>\n"
+                f"-# <t:{update['time']}:D>"
+            )
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Update Queue ({len(UPDATE)} updates)\n\n" + "\n\n".join(queue_display[-5:]),  # Show last 5
+            0x3498DB
+        )
+        return
+    
+    # Add to front (push to beginning of queue)
+    if action == "add_front":
+        if not title or not message:
+            await send_ephemeral_v2(interaction, "❌ Both title and message required for adding.", 0xE74C3C)
+            return
+        
+        UPDATE.insert(0, {
+            "title": title,
+            "message": message,
+            "moderator": str(interaction.user.id),
+            "date": time.time()
+        })
+        
+        # Recalculate IDs
+        for i, update in enumerate(UPDATE, 1):
+            update["id"] = i
+        
+        LATEST_UPDATE = UPDATE[-1]  # Latest is still the last one
+        save_config()
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Update Added to Front\n"
+            f"### {title}\n"
+            f"{message}\n"
+            f"-# By: `{get_username(str(interaction.user.id))}`\n"
+            f"-# Date: <t:{time.time()}:D>, ID: {id}",
+            f"-# Queue size: {len(UPDATE)} updates\n"
+            f"-# Oldest ID: 1 · Newest ID: {len(UPDATE)}",
+            0x2ECC71
+        )
+        return
+    
+    # Pop first (remove oldest update)
+    if action == "pop_first":
+        if not UPDATE:
+            await send_ephemeral_v2(interaction, "❌ Queue is empty!", 0xE74C3C)
+            return
+        
+        removed = UPDATE.pop(0)
+        
+        # Recalculate IDs
+        for i, update in enumerate(UPDATE, 1):
+            update["id"] = i
+        
+        if UPDATE:
+            LATEST_UPDATE = UPDATE[-1]
+        else:
+            LATEST_UPDATE = {"title": "", "message": ""}
+        
+        save_config()
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Oldest Update Removed\n"
+            f"**Removed:**\n"
+            f"### {removed['title']}\n{removed['message']}\n"
+            f"-# By: `{get_username(removed['moderator'])}`\n"
+            f"-# Date: <t:{removed['time']}:D>, ID: {removed['id']}\n\n"
+            f"-# Queue size now: {len(UPDATE)} updates",
+            0xE67E22
+        )
+        return
+    
+    # Pop last (remove newest update)
+    if action == "pop_last":
+        if not UPDATE:
+            await send_ephemeral_v2(interaction, "❌ Queue is empty!", 0xE74C3C)
+            return
+        
+        removed = UPDATE.pop()
+        
+        if UPDATE:
+            LATEST_UPDATE = UPDATE[-1]
+        else:
+            LATEST_UPDATE = {"title": "", "message": ""}
+        
+        save_config()
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Newest Update Removed\n"
+            f"**Removed:**\n"
+            f"### {removed['title']}\n{removed['message']}\n"
+            f"-# By: `{get_username(removed['moderator'])}`\n"
+            f"-# Date: <t:{removed['time']}:D>, ID: {removed['id']}\n\n"
+            f"-# Queue size now: {len(UPDATE)} updates",
+            0xE67E22
+        )
+        return
+    
+    # Validate ID for delete/change operations
+    if id <= 0 or id > len(UPDATE):
+        await send_ephemeral_v2(interaction, f"❌ ID must be between 1 and {len(UPDATE)}", 0xE74C3C)
+        return
+    
+    PREV_UPDATE = UPDATE[id - 1]
+    
+    # Delete by ID
+    if action == "del":
+        del UPDATE[id - 1]
+        
+        # Recalculate IDs
+        for i, update in enumerate(UPDATE, 1):
+            update["id"] = i
+        
+        if UPDATE:
+            LATEST_UPDATE = UPDATE[-1]
+        else:
+            LATEST_UPDATE = {"title": "", "message": ""}
+        
+        save_config()
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Update Deleted (ID {id})\n"
+            f"**Deleted:**\n" 
+            f"### {PREV_UPDATE['title']}\n{PREV_UPDATE['message']}\n"
+            f"-# By: `{get_username(PREV_UPDATE['moderator'])}`\n"
+            f"-# Date: <t:{PREV_UPDATE['time']}:D>, ID: {PREV_UPDATE['id']}\n\n"
+            f"-# Queue size now: {len(UPDATE)} updates",
+            0xE74C3C if len(UPDATE) == 0 else 0x2ECC71
+        )
+    
+    # Change by ID
+    elif action == "chg":
+        if title is None or message is None:
+            await send_ephemeral_v2(
+                interaction,
+                "❌ Both title and message required for changing an update.",
+                0xE74C3C
+            )
+            return
+        
+        UPDATE[id - 1] = {
+            "title": title,
+            "message": message,
+            "moderator": str(interaction.user.id),
+            "date": time.time(),
+            "id": id
+        }
+        
+        LATEST_UPDATE = UPDATE[-1]
+        save_config()
+        
+        await send_ephemeral_v2(
+            interaction,
+            f"### 📋 Update Changed (ID {id})\n"
+            f"**Before:**\n" 
+            f"### {PREV_UPDATE['title']}\n{PREV_UPDATE['message']}\n"
+            f"-# By: `{get_username(PREV_UPDATE['moderator'])}`\n"
+            f"-# Date: <t:{PREV_UPDATE['time']}:D>, ID: {PREV_UPDATE['id']}\n"
+            f"**After:**\n" 
+            f"### {title}\n"
+            f"{message}\n"
+            f"-# By: `{get_username(str(interaction.user.id))}`\n"
+            f"-# Date: <t:{time.time()}:D>, ID: {id}",
+            0x2ECC71
+        )
+
 
 @bot.tree.command(name="bot_shutdown", description="Shuts down the bot for maintenance")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -6753,13 +7180,17 @@ async def economy_cmd(interaction: discord.Interaction):
 # AUTOSAVE & TASKS
 # ─────────────────────────────────────────────
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=20)
 async def autosave_users():
-    await asyncio.to_thread(save_data_users)
+    """Save users to SQLite"""
+    if data:  # Only save if we have data
+        await bulk_save_users(data)
 
-@tasks.loop(seconds=5)
+@tasks.loop(seconds=20)
 async def autosave_tribes():
-    await asyncio.to_thread(save_data_tribe)
+    """Save tribes to SQLite"""
+    if tribe_data:
+        await bulk_save_tribes(tribe_data)
 
 @autosave_users.error
 async def _aue(e): print("Autosave users error:", e)
@@ -6783,15 +7214,30 @@ async def _lte(error): print("Lottery tick error:", error)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+    
+    # Initialize SQLite and load data
+    await init_databases()
+    await migrate_json_to_sqlite()
+    await load_all_data()
+    
+    # Re-register save callbacks with SQLite functions
+    register_save_callbacks(
+        lambda: asyncio.create_task(bulk_save_users(data)),
+        lambda: asyncio.create_task(bulk_save_tribes(tribe_data))
+    )
+    
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} commands")
     except Exception as e:
         print("Sync failed:", e)
+    
     await bot.change_presence(activity=discord.Game(name="/menu | Idle Hunter"))
+    
     if not autosave_users.is_running():  autosave_users.start()
     if not autosave_tribes.is_running(): autosave_tribes.start()
     if not lottery_tick.is_running():    lottery_tick.start()
+    
     print("Autosave started.")
 
 @bot.event
