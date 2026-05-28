@@ -2457,7 +2457,7 @@ def build_rules_components(user_id: str, page: int = 0) -> list:
             )}],
             "accessory": {
                 "type": 2, "style": 2, "label": f"#{num}",
-                "custom_id": f"rules:noop:{user_id}",
+                "custom_id": f"rules:noop:{num}:{user_id}",  # ← num makes it unique
                 "disabled": True,
             }
         })
