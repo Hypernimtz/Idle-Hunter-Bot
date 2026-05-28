@@ -6,7 +6,47 @@ Does NOT import from bot.py or backend.py.
 Discord is imported only for Color constants.
 """
 
-import discord
+import discord, random, string, datetime
+from datetime import datetime, timezone
+
+def today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+# ─────────────────────────────────────────────
+# TOOLS
+# ─────────────────────────────────────────────
+
+def get_tool_tier(tool_name: str) -> int:
+    return TOOLS.get(tool_name, {}).get("tier", 1)
+
+def can_hunt_biome(tool_name: str, biome: str) -> bool:
+    return get_tool_tier(tool_name) >= BIOME_TOOL_TIER.get(biome, 1)
+
+def get_all_tools_sorted():
+    return sorted(TOOLS.items(), key=lambda x: x[1]["tier"])
+
+def tool_needs_ammo(tool_name: str) -> bool:
+    return TOOLS.get(tool_name, {}).get("ammo_type") is not None
+
+def get_tool_ammo_type(tool_name: str) -> str | None:
+    return TOOLS.get(tool_name, {}).get("ammo_type")
+
+
+# ─────────────────────────────────────────────
+# AMMO
+# ─────────────────────────────────────────────
+
+def get_ammo_for_tool(tool_name: str) -> list[str]:
+    atype = get_tool_ammo_type(tool_name)
+    if not atype:
+        return []
+    return [name for name, a in AMMO.items() if a["ammo_type"] == atype]
+
+def ammo_compatible_with_tool(ammo_name: str, tool_name: str) -> bool:
+    a_type = AMMO.get(ammo_name, {}).get("ammo_type")
+    t_type = TOOLS.get(tool_name, {}).get("ammo_type")
+    return a_type is not None and a_type == t_type
+
 
 
 # ─────────────────────────────────────────────
@@ -152,145 +192,145 @@ BIOME_ANIMALS = {
 
 ANIMAL_DATA = {
     # Village
-    "Rat":              {"value":     30, "rarity": "common",    "emoji": ""},
-    "Mouse":            {"value":     25, "rarity": "common",    "emoji": ""},
-    "Stray Cat":        {"value":     60, "rarity": "uncommon",  "emoji": ""},
-    "Pigeon":           {"value":     20, "rarity": "common",    "emoji": ""},
-    "Crow":             {"value":     35, "rarity": "common",    "emoji": ""},
-    "Rabbit":           {"value":     80, "rarity": "uncommon",  "emoji": ""},
-    "Fox":              {"value":    120, "rarity": "rare",      "emoji": ""},
-    "Stray Dog":        {"value":     55, "rarity": "common",    "emoji": ""},
-    "Squirrel":         {"value":     40, "rarity": "common",    "emoji": ""},
-    "Sparrow":          {"value":     18, "rarity": "common",    "emoji": ""},
+    "Rat":              {"value":     30, "xp": 9,   "rarity": "common",    "emoji": ""},
+    "Mouse":            {"value":     25, "xp": 7,   "rarity": "common",    "emoji": ""},
+    "Stray Cat":        {"value":     60, "xp": 18,  "rarity": "uncommon",  "emoji": ""},
+    "Pigeon":           {"value":     20, "xp": 6,   "rarity": "common",    "emoji": ""},
+    "Crow":             {"value":     35, "xp": 10,  "rarity": "common",    "emoji": ""},
+    "Rabbit":           {"value":     80, "xp": 24,  "rarity": "uncommon",  "emoji": ""},
+    "Fox":              {"value":    120, "xp": 36,  "rarity": "rare",      "emoji": ""},
+    "Stray Dog":        {"value":     55, "xp": 16,  "rarity": "common",    "emoji": ""},
+    "Squirrel":         {"value":     40, "xp": 12,  "rarity": "common",    "emoji": ""},
+    "Sparrow":          {"value":     18, "xp": 5,   "rarity": "common",    "emoji": ""},
     # Forest
-    "Deer":             {"value":    150, "rarity": "common",    "emoji": ""},
-    "Wild Boar":        {"value":    180, "rarity": "common",    "emoji": ""},
-    "Wolf":             {"value":    300, "rarity": "uncommon",  "emoji": ""},
-    "Bear":             {"value":    400, "rarity": "rare",      "emoji": ""},
-    "Elk":              {"value":    200, "rarity": "common",    "emoji": ""},
-    "Lynx":             {"value":    350, "rarity": "rare",      "emoji": ""},
-    "Badger":           {"value":    130, "rarity": "common",    "emoji": ""},
-    "Pheasant":         {"value":    110, "rarity": "common",    "emoji": ""},
-    "Owl":              {"value":    220, "rarity": "uncommon",  "emoji": ""},
-    "Hare":             {"value":     90, "rarity": "common",    "emoji": ""},
+    "Deer":             {"value":    150, "xp": 45,  "rarity": "common",    "emoji": ""},
+    "Wild Boar":        {"value":    180, "xp": 54,  "rarity": "common",    "emoji": ""},
+    "Wolf":             {"value":    300, "xp": 90,  "rarity": "uncommon",  "emoji": ""},
+    "Bear":             {"value":    400, "xp": 120, "rarity": "rare",      "emoji": ""},
+    "Elk":              {"value":    200, "xp": 60,  "rarity": "common",    "emoji": ""},
+    "Lynx":             {"value":    350, "xp": 105, "rarity": "rare",      "emoji": ""},
+    "Badger":           {"value":    130, "xp": 39,  "rarity": "common",    "emoji": ""},
+    "Pheasant":         {"value":    110, "xp": 33,  "rarity": "common",    "emoji": ""},
+    "Owl":              {"value":    220, "xp": 66,  "rarity": "uncommon",  "emoji": ""},
+    "Hare":             {"value":     90, "xp": 27,  "rarity": "common",    "emoji": ""},
     # Woods
-    "Moose":            {"value":    500, "rarity": "uncommon",  "emoji": ""},
-    "Timber Wolf":      {"value":    450, "rarity": "uncommon",  "emoji": ""},
-    "Black Bear":       {"value":    600, "rarity": "rare",      "emoji": ""},
-    "Wild Turkey":      {"value":    250, "rarity": "common",    "emoji": ""},
-    "Coyote":           {"value":    300, "rarity": "common",    "emoji": ""},
-    "Raccoon":          {"value":    200, "rarity": "common",    "emoji": ""},
-    "Porcupine":        {"value":    220, "rarity": "common",    "emoji": ""},
-    "Snapping Turtle":  {"value":    350, "rarity": "uncommon",  "emoji": ""},
-    "Grouse":           {"value":    210, "rarity": "common",    "emoji": ""},
-    "Mink":             {"value":    400, "rarity": "uncommon",  "emoji": ""},
+    "Moose":            {"value":    500, "xp": 150, "rarity": "uncommon",  "emoji": ""},
+    "Timber Wolf":      {"value":    450, "xp": 135, "rarity": "uncommon",  "emoji": ""},
+    "Black Bear":       {"value":    600, "xp": 180, "rarity": "rare",      "emoji": ""},
+    "Wild Turkey":      {"value":    250, "xp": 75,  "rarity": "common",    "emoji": ""},
+    "Coyote":           {"value":    300, "xp": 90,  "rarity": "common",    "emoji": ""},
+    "Raccoon":          {"value":    200, "xp": 60,  "rarity": "common",    "emoji": ""},
+    "Porcupine":        {"value":    220, "xp": 66,  "rarity": "common",    "emoji": ""},
+    "Snapping Turtle":  {"value":    350, "xp": 105, "rarity": "uncommon",  "emoji": ""},
+    "Grouse":           {"value":    210, "xp": 63,  "rarity": "common",    "emoji": ""},
+    "Mink":             {"value":    400, "xp": 120, "rarity": "uncommon",  "emoji": ""},
     # Small Desert
-    "Scorpion":         {"value":    500, "rarity": "common",    "emoji": ""},
-    "Sand Viper":       {"value":    700, "rarity": "uncommon",  "emoji": ""},
-    "Vulture":          {"value":    600, "rarity": "common",    "emoji": ""},
-    "Fennec Fox":       {"value":    800, "rarity": "uncommon",  "emoji": ""},
-    "Armadillo":        {"value":    550, "rarity": "common",    "emoji": ""},
-    "Roadrunner":       {"value":    450, "rarity": "common",    "emoji": ""},
-    "Lizard":           {"value":    400, "rarity": "common",    "emoji": ""},
-    "Camel Spider":     {"value":    750, "rarity": "uncommon",  "emoji": ""},
-    "Jerboa":           {"value":    500, "rarity": "common",    "emoji": ""},
+    "Scorpion":         {"value":    500, "xp": 150, "rarity": "common",    "emoji": ""},
+    "Sand Viper":       {"value":    700, "xp": 210, "rarity": "uncommon",  "emoji": ""},
+    "Vulture":          {"value":    600, "xp": 180, "rarity": "common",    "emoji": ""},
+    "Fennec Fox":       {"value":    800, "xp": 240, "rarity": "uncommon",  "emoji": ""},
+    "Armadillo":        {"value":    550, "xp": 165, "rarity": "common",    "emoji": ""},
+    "Roadrunner":       {"value":    450, "xp": 135, "rarity": "common",    "emoji": ""},
+    "Lizard":           {"value":    400, "xp": 120, "rarity": "common",    "emoji": ""},
+    "Camel Spider":     {"value":    750, "xp": 225, "rarity": "uncommon",  "emoji": ""},
+    "Jerboa":           {"value":    500, "xp": 150, "rarity": "common",    "emoji": ""},
     # Large Desert
-    "Sandstorm Serpent":{"value":  1_200, "rarity": "rare",      "emoji": ""},
-    "Desert Lion":      {"value":  1_500, "rarity": "rare",      "emoji": ""},
-    "Giant Scorpion":   {"value":  1_000, "rarity": "uncommon",  "emoji": ""},
-    "Dust Hyena":       {"value":    900, "rarity": "uncommon",  "emoji": ""},
-    "Sand Golem Crab":  {"value":  1_100, "rarity": "rare",      "emoji": ""},
-    "Camel":            {"value":    700, "rarity": "common",    "emoji": ""},
-    "Dune Stalker Wolf":{"value":  1_300, "rarity": "rare",      "emoji": ""},
-    "Golden Eagle":     {"value":  1_000, "rarity": "uncommon",  "emoji": ""},
-    "Desert Lynx":      {"value":  1_100, "rarity": "rare",      "emoji": ""},
-    "Mirage Phantom":   {"value":  2_000, "rarity": "epic",      "emoji": ""},
+    "Sandstorm Serpent":{"value":  1_200, "xp": 360, "rarity": "rare",      "emoji": ""},
+    "Desert Lion":      {"value":  1_500, "xp": 450, "rarity": "rare",      "emoji": ""},
+    "Giant Scorpion":   {"value":  1_000, "xp": 300, "rarity": "uncommon",  "emoji": ""},
+    "Dust Hyena":       {"value":    900, "xp": 270, "rarity": "uncommon",  "emoji": ""},
+    "Sand Golem Crab":  {"value":  1_100, "xp": 330, "rarity": "rare",      "emoji": ""},
+    "Camel":            {"value":    700, "xp": 210, "rarity": "common",    "emoji": ""},
+    "Dune Stalker Wolf":{"value":  1_300, "xp": 390, "rarity": "rare",      "emoji": ""},
+    "Golden Eagle":     {"value":  1_000, "xp": 300, "rarity": "uncommon",  "emoji": ""},
+    "Desert Lynx":      {"value":  1_100, "xp": 330, "rarity": "rare",      "emoji": ""},
+    "Mirage Phantom":   {"value":  2_000, "xp": 600, "rarity": "epic",      "emoji": ""},
     # Tundra
-    "Arctic Wolf":      {"value":  1_500, "rarity": "uncommon",  "emoji": ""},
-    "Polar Bear":       {"value":  2_000, "rarity": "rare",      "emoji": ""},
-    "Snowy Owl":        {"value":  1_200, "rarity": "uncommon",  "emoji": ""},
-    "Reindeer":         {"value":  1_000, "rarity": "common",    "emoji": ""},
-    "Arctic Fox":       {"value":  1_300, "rarity": "uncommon",  "emoji": ""},
-    "Musk Ox":          {"value":    900, "rarity": "common",    "emoji": ""},
-    "Wolverine":        {"value":  1_600, "rarity": "rare",      "emoji": ""},
-    "Seal":             {"value":    800, "rarity": "common",    "emoji": ""},
-    "Walrus":           {"value":  1_100, "rarity": "uncommon",  "emoji": ""},
-    "Snow Leopard":     {"value":  2_500, "rarity": "epic",      "emoji": ""},
+    "Arctic Wolf":      {"value":  1_500, "xp": 450, "rarity": "uncommon",  "emoji": ""},
+    "Polar Bear":       {"value":  2_000, "xp": 600, "rarity": "rare",      "emoji": ""},
+    "Snowy Owl":        {"value":  1_200, "xp": 360, "rarity": "uncommon",  "emoji": ""},
+    "Reindeer":         {"value":  1_000, "xp": 300, "rarity": "common",    "emoji": ""},
+    "Arctic Fox":       {"value":  1_300, "xp": 390, "rarity": "uncommon",  "emoji": ""},
+    "Musk Ox":          {"value":    900, "xp": 270, "rarity": "common",    "emoji": ""},
+    "Wolverine":        {"value":  1_600, "xp": 480, "rarity": "rare",      "emoji": ""},
+    "Seal":             {"value":    800, "xp": 240, "rarity": "common",    "emoji": ""},
+    "Walrus":           {"value":  1_100, "xp": 330, "rarity": "uncommon",  "emoji": ""},
+    "Snow Leopard":     {"value":  2_500, "xp": 750, "rarity": "epic",      "emoji": ""},
     # Jungle
-    "Jaguar":           {"value":  2_500, "rarity": "rare",      "emoji": ""},
-    "Anaconda":         {"value":  2_000, "rarity": "rare",      "emoji": ""},
-    "Poison Dart Frog": {"value":  1_500, "rarity": "uncommon",  "emoji": ""},
-    "Toucan":           {"value":  1_200, "rarity": "common",    "emoji": ""},
-    "Panther":          {"value":  3_000, "rarity": "epic",      "emoji": ""},
-    "Silverback Gorilla":{"value": 3_500, "rarity": "epic",      "emoji": ""},
-    "Komodo Dragon":    {"value":  2_800, "rarity": "rare",      "emoji": ""},
-    "Piranha":          {"value":  1_800, "rarity": "uncommon",  "emoji": ""},
-    "Giant Centipede":  {"value":  2_200, "rarity": "rare",      "emoji": ""},
+    "Jaguar":           {"value":  2_500, "xp": 750, "rarity": "rare",      "emoji": ""},
+    "Anaconda":         {"value":  2_000, "xp": 600, "rarity": "rare",      "emoji": ""},
+    "Poison Dart Frog": {"value":  1_500, "xp": 450, "rarity": "uncommon",  "emoji": ""},
+    "Toucan":           {"value":  1_200, "xp": 360, "rarity": "common",    "emoji": ""},
+    "Panther":          {"value":  3_000, "xp": 900, "rarity": "epic",      "emoji": ""},
+    "Silverback Gorilla":{"value": 3_500, "xp": 1050, "rarity": "epic",     "emoji": ""},
+    "Komodo Dragon":    {"value":  2_800, "xp": 840, "rarity": "rare",      "emoji": ""},
+    "Piranha":          {"value":  1_800, "xp": 540, "rarity": "uncommon",  "emoji": ""},
+    "Giant Centipede":  {"value":  2_200, "xp": 660, "rarity": "rare",      "emoji": ""},
     # Swamp
-    "Alligator":        {"value":  3_000, "rarity": "rare",      "emoji": ""},
-    "Giant Frog":       {"value":  2_000, "rarity": "uncommon",  "emoji": ""},
-    "Swamp Viper":      {"value":  2_500, "rarity": "rare",      "emoji": ""},
-    "Mudskipper":       {"value":  1_500, "rarity": "common",    "emoji": ""},
-    "Black Panther":    {"value":  4_000, "rarity": "epic",      "emoji": ""},
-    "Leech Hydra":      {"value":  5_000, "rarity": "epic",      "emoji": ""},
-    "Bog Bear":         {"value":  3_500, "rarity": "rare",      "emoji": ""},
-    "Marsh Hawk":       {"value":  2_200, "rarity": "uncommon",  "emoji": ""},
-    "Will-o-Wisp Serpent":{"value":6_000, "rarity": "legendary", "emoji": ""},
+    "Alligator":        {"value":  3_000, "xp": 900, "rarity": "rare",      "emoji": ""},
+    "Giant Frog":       {"value":  2_000, "xp": 600, "rarity": "uncommon",  "emoji": ""},
+    "Swamp Viper":      {"value":  2_500, "xp": 750, "rarity": "rare",      "emoji": ""},
+    "Mudskipper":       {"value":  1_500, "xp": 450, "rarity": "common",    "emoji": ""},
+    "Black Panther":    {"value":  4_000, "xp": 1200, "rarity": "epic",     "emoji": ""},
+    "Leech Hydra":      {"value":  5_000, "xp": 1500, "rarity": "epic",     "emoji": ""},
+    "Bog Bear":         {"value":  3_500, "xp": 1050, "rarity": "rare",     "emoji": ""},
+    "Marsh Hawk":       {"value":  2_200, "xp": 660, "rarity": "uncommon",  "emoji": ""},
+    "Will-o-Wisp Serpent":{"value":6_000, "xp": 1800, "rarity": "legendary","emoji": ""},
     # Volcanic Highlands
-    "Lava Lizard":      {"value":  4_000, "rarity": "uncommon",  "emoji": ""},
-    "Magma Boar":       {"value":  4_500, "rarity": "rare",      "emoji": ""},
-    "Ember Wolf":       {"value":  5_000, "rarity": "rare",      "emoji": ""},
-    "Ash Vulture":      {"value":  3_500, "rarity": "uncommon",  "emoji": ""},
-    "Cinder Crab":      {"value":  4_000, "rarity": "uncommon",  "emoji": ""},
-    "Obsidian Serpent": {"value":  6_000, "rarity": "epic",      "emoji": ""},
-    "Flame Lynx":       {"value":  5_500, "rarity": "epic",      "emoji": ""},
-    "Molten Golem":     {"value":  8_000, "rarity": "legendary", "emoji": ""},
-    "Fire Hawk":        {"value":  5_000, "rarity": "rare",      "emoji": ""},
-    "Inferno Bear":     {"value":  7_000, "rarity": "epic",      "emoji": ""},
+    "Lava Lizard":      {"value":  4_000, "xp": 1200, "rarity": "uncommon", "emoji": ""},
+    "Magma Boar":       {"value":  4_500, "xp": 1350, "rarity": "rare",     "emoji": ""},
+    "Ember Wolf":       {"value":  5_000, "xp": 1500, "rarity": "rare",     "emoji": ""},
+    "Ash Vulture":      {"value":  3_500, "xp": 1050, "rarity": "uncommon", "emoji": ""},
+    "Cinder Crab":      {"value":  4_000, "xp": 1200, "rarity": "uncommon", "emoji": ""},
+    "Obsidian Serpent": {"value":  6_000, "xp": 1800, "rarity": "epic",     "emoji": ""},
+    "Flame Lynx":       {"value":  5_500, "xp": 1650, "rarity": "epic",     "emoji": ""},
+    "Molten Golem":     {"value":  8_000, "xp": 2400, "rarity": "legendary","emoji": ""},
+    "Fire Hawk":        {"value":  5_000, "xp": 1500, "rarity": "rare",     "emoji": ""},
+    "Inferno Bear":     {"value":  7_000, "xp": 2100, "rarity": "epic",     "emoji": ""},
     # Cursed Ruins
-    "Skeleton Archer":  {"value":  6_000, "rarity": "uncommon",  "emoji": ""},
-    "Shadow Wolf":      {"value":  7_000, "rarity": "rare",      "emoji": ""},
-    "Bone Drake":       {"value": 10_000, "rarity": "epic",      "emoji": ""},
-    "Cursed Knight":    {"value":  8_000, "rarity": "rare",      "emoji": ""},
-    "Wraith Stag":      {"value":  9_000, "rarity": "epic",      "emoji": ""},
-    "Plague Rat":       {"value":  5_000, "rarity": "uncommon",  "emoji": ""},
-    "Stone Golem":      {"value":  8_500, "rarity": "rare",      "emoji": ""},
-    "Phantom Lynx":     {"value": 11_000, "rarity": "epic",      "emoji": ""},
-    "Soul Serpent":     {"value": 12_000, "rarity": "legendary", "emoji": ""},
-    "Ancient Guardian": {"value": 15_000, "rarity": "legendary", "emoji": ""},
+    "Skeleton Archer":  {"value":  6_000, "xp": 1800, "rarity": "uncommon", "emoji": ""},
+    "Shadow Wolf":      {"value":  7_000, "xp": 2100, "rarity": "rare",     "emoji": ""},
+    "Bone Drake":       {"value": 10_000, "xp": 3000, "rarity": "epic",     "emoji": ""},
+    "Cursed Knight":    {"value":  8_000, "xp": 2400, "rarity": "rare",     "emoji": ""},
+    "Wraith Stag":      {"value":  9_000, "xp": 2700, "rarity": "epic",     "emoji": ""},
+    "Plague Rat":       {"value":  5_000, "xp": 1500, "rarity": "uncommon", "emoji": ""},
+    "Stone Golem":      {"value":  8_500, "xp": 2550, "rarity": "rare",     "emoji": ""},
+    "Phantom Lynx":     {"value": 11_000, "xp": 3300, "rarity": "epic",     "emoji": ""},
+    "Soul Serpent":     {"value": 12_000, "xp": 3600, "rarity": "legendary","emoji": ""},
+    "Ancient Guardian": {"value": 15_000, "xp": 4500, "rarity": "legendary","emoji": ""},
     # Rainbow
-    "Prismatic Butterfly":{"value":12_000,"rarity": "rare",      "emoji": ""},
-    "Chromatic Fox":    {"value": 15_000, "rarity": "rare",      "emoji": ""},
-    "Rainbow Serpent":  {"value": 18_000, "rarity": "epic",      "emoji": ""},
-    "Aurora Deer":      {"value": 14_000, "rarity": "rare",      "emoji": ""},
-    "Spectrum Wolf":    {"value": 20_000, "rarity": "epic",      "emoji": ""},
-    "Iridescent Hawk":  {"value": 13_000, "rarity": "rare",      "emoji": ""},
-    "Prism Panther":    {"value": 22_000, "rarity": "epic",      "emoji": ""},
-    "Hue Shifter Frog": {"value": 16_000, "rarity": "rare",      "emoji": ""},
-    "Kaleidoscope Crab":{"value": 25_000, "rarity": "legendary", "emoji": ""},
-    "The Living Rainbow":{"value":50_000, "rarity": "mythic",    "emoji": ""},
+    "Prismatic Butterfly":{"value":12_000, "xp": 3600, "rarity": "rare",    "emoji": ""},
+    "Chromatic Fox":    {"value": 15_000, "xp": 4500, "rarity": "rare",     "emoji": ""},
+    "Rainbow Serpent":  {"value": 18_000, "xp": 5400, "rarity": "epic",     "emoji": ""},
+    "Aurora Deer":      {"value": 14_000, "xp": 4200, "rarity": "rare",     "emoji": ""},
+    "Spectrum Wolf":    {"value": 20_000, "xp": 6000, "rarity": "epic",     "emoji": ""},
+    "Iridescent Hawk":  {"value": 13_000, "xp": 3900, "rarity": "rare",     "emoji": ""},
+    "Prism Panther":    {"value": 22_000, "xp": 6600, "rarity": "epic",     "emoji": ""},
+    "Hue Shifter Frog": {"value": 16_000, "xp": 4800, "rarity": "rare",     "emoji": ""},
+    "Kaleidoscope Crab":{"value": 25_000, "xp": 7500, "rarity": "legendary","emoji": ""},
+    "The Living Rainbow":{"value":50_000, "xp": 15000, "rarity": "mythic",  "emoji": ""},
     # Abyssal Depths
-    "Deep Sea Kraken":  {"value": 25_000, "rarity": "epic",      "emoji": ""},
-    "Abyss Shark":      {"value": 20_000, "rarity": "rare",      "emoji": ""},
-    "Shadow Eel":       {"value": 18_000, "rarity": "rare",      "emoji": ""},
-    "Void Manta":       {"value": 22_000, "rarity": "epic",      "emoji": ""},
-    "Leviathan Crab":   {"value": 28_000, "rarity": "epic",      "emoji": ""},
-    "Bioluminescent Jellyfish":{"value":15_000,"rarity":"rare",  "emoji": ""},
-    "Depth Stalker":    {"value": 24_000, "rarity": "epic",      "emoji": ""},
-    "Abyssal Serpent":  {"value": 30_000, "rarity": "legendary", "emoji": ""},
-    "Trench Golem":     {"value": 35_000, "rarity": "legendary", "emoji": ""},
-    "Darkness Whale":   {"value": 50_000, "rarity": "mythic",    "emoji": ""},
+    "Deep Sea Kraken":  {"value": 25_000, "xp": 7500, "rarity": "epic",     "emoji": ""},
+    "Abyss Shark":      {"value": 20_000, "xp": 6000, "rarity": "rare",     "emoji": ""},
+    "Shadow Eel":       {"value": 18_000, "xp": 5400, "rarity": "rare",     "emoji": ""},
+    "Void Manta":       {"value": 22_000, "xp": 6600, "rarity": "epic",     "emoji": ""},
+    "Leviathan Crab":   {"value": 28_000, "xp": 8400, "rarity": "epic",     "emoji": ""},
+    "Bioluminescent Jellyfish":{"value":15_000,"xp":4500,"rarity":"rare",   "emoji": ""},
+    "Depth Stalker":    {"value": 24_000, "xp": 7200, "rarity": "epic",     "emoji": ""},
+    "Abyssal Serpent":  {"value": 30_000, "xp": 9000, "rarity": "legendary","emoji": ""},
+    "Trench Golem":     {"value": 35_000, "xp": 10500, "rarity": "legendary","emoji": ""},
+    "Darkness Whale":   {"value": 50_000, "xp": 15000, "rarity": "mythic",  "emoji": ""},
     # Celestial Peaks
-    "Storm Eagle":      {"value": 40_000, "rarity": "epic",      "emoji": ""},
-    "Cloud Serpent":    {"value": 45_000, "rarity": "epic",      "emoji": ""},
-    "Thunder Elk":      {"value": 35_000, "rarity": "rare",      "emoji": ""},
-    "Sky Leviathan":    {"value": 60_000, "rarity": "legendary", "emoji": ""},
-    "Divine Wolf":      {"value": 55_000, "rarity": "legendary", "emoji": ""},
-    "Astral Panther":   {"value": 65_000, "rarity": "legendary", "emoji": ""},
-    "Heavenly Dragon":  {"value": 80_000, "rarity": "mythic",    "emoji": ""},
-    "Celestial Bear":   {"value": 50_000, "rarity": "legendary", "emoji": ""},
-    "Void Phoenix":     {"value": 90_000, "rarity": "mythic",    "emoji": ""},
-    "The Eternal Hunter":{"value":150_000,"rarity": "mythic",    "emoji": ""},
+    "Storm Eagle":      {"value": 40_000, "xp": 12000, "rarity": "epic",    "emoji": ""},
+    "Cloud Serpent":    {"value": 45_000, "xp": 13500, "rarity": "epic",    "emoji": ""},
+    "Thunder Elk":      {"value": 35_000, "xp": 10500, "rarity": "rare",    "emoji": ""},
+    "Sky Leviathan":    {"value": 60_000, "xp": 18000, "rarity": "legendary","emoji": ""},
+    "Divine Wolf":      {"value": 55_000, "xp": 16500, "rarity": "legendary","emoji": ""},
+    "Astral Panther":   {"value": 65_000, "xp": 19500, "rarity": "legendary","emoji": ""},
+    "Heavenly Dragon":  {"value": 80_000, "xp": 24000, "rarity": "mythic",  "emoji": ""},
+    "Celestial Bear":   {"value": 50_000, "xp": 15000, "rarity": "legendary","emoji": ""},
+    "Void Phoenix":     {"value": 90_000, "xp": 27000, "rarity": "mythic",  "emoji": ""},
+    "The Eternal Hunter":{"value":150_000,"xp": 45000, "rarity": "mythic",  "emoji": ""},
 }
 
 ANIMAL_EMOJI = ""
@@ -865,7 +905,7 @@ COLORS = {
     "dark blue":   discord.Color(0x1A237E),
     "rainbow":     discord.Color(0xFFB9FF),
     "platinum":    discord.Color(0xE5E4E2),
-    "colorless":   discord.Color(0x2F3136),
+    "colorless":   discord.Color(0x000000),
 }
 
 COLOR_EMOJIS = {
@@ -1134,8 +1174,8 @@ ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
         "666":   "Satan",
         "730":   "2 years now...",
         "1827":  "5 Year Veteran",
-        "2557":  "Still Going Strong",
-        "3652":  "A Decade of Hunts",
+        "2557":  "Still Going Strong... Continue!",
+        "3652":  "A Decade of Hunts... Nothing is impossible for you!",
     },
 
     "animals_caught": {
@@ -1152,7 +1192,7 @@ ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
     "ammo_used": {
         "100":    "I See Shells on the Ground",
         "1000":   "This Place is Covered in Shells",
-        "10000":  "Moving HQ",
+        "10000":  "Moving HQ, too much shells",
         "100000": "Shells Are the New Dirt",
     },
 
@@ -1164,3 +1204,49 @@ ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
         "1": "Tool Consumer",
     },
 }
+
+# ─────────────────────────────────────────────
+# ANIMALS
+# ─────────────────────────────────────────────
+
+def animal_emoji(animal: str) -> str:
+    e = ANIMAL_DATA.get(animal, {}).get("emoji", "")
+    return e if e else ANIMAL_EMOJI
+
+# ─────────────────────────────────────────────
+# COLORS
+# ─────────────────────────────────────────────
+
+def color_display_name(color_key: str) -> str:
+    if color_key.startswith("#"):
+        return color_key.upper()
+    return COLOR_LABELS.get(color_key, color_key.title())
+
+# ─────────────────────────────────────────────
+# AMOUNT PARSER
+# ─────────────────────────────────────────────
+
+def parse_amount(raw: str) -> int | None:
+    raw = raw.strip().upper().replace(",", "").replace("_", "")
+    for suffix, mult in [("T", 1_000_000_000_000), ("B", 1_000_000_000),
+                          ("M", 1_000_000), ("K", 1_000)]:
+        if raw.endswith(suffix):
+            try:
+                return int(float(raw[:-1]) * mult)
+            except ValueError:
+                return None
+    try:
+        return int(float(raw))
+    except ValueError:
+        return None
+    
+
+# ─────────────────────────────────────────────
+# VERIFY HELPERS
+# ─────────────────────────────────────────────
+
+def generate_verify_code() -> str:
+    return "".join(random.choices(string.ascii_letters + string.digits, k=4))
+
+def init_verify(_: str):
+    return {"needed": False, "time": 250, "code": generate_verify_code()}
