@@ -2468,18 +2468,19 @@ def build_update_components(user_id: str, mode: str = "all", page: int = 0) -> l
     # List view — paginated
     # Build all section components first, then paginate by line count
     sections = []
-    for i, u in enumerate(UPDATE):
+    for i, u in enumerate(reversed(UPDATE)):
+        actual_id = len(UPDATE) - i  # so ID still shows correctly (newest = highest ID)
         date_str = f"<t:{int(u.get('date', 0))}:R>" if u.get('date') else "Unknown"
         section = {
             "type": 9,
             "components": [{"type": 10, "content": (
                 f"**{u['title']}**\n"
                 f"-# By: `{get_username(u['moderator'])}`\n"
-                f"-# {date_str} · ID: {i + 1}"
+                f"-# {date_str} · ID: {actual_id}"
             )}],
             "accessory": {
                 "type": 2, "style": 1, "label": "View",
-                "custom_id": f"update:view:{i}:{user_id}",
+                "custom_id": f"update:view:{len(UPDATE) - 1 - i}:{user_id}",
             }
         }
         sections.append(section)
