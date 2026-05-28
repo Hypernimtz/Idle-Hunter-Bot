@@ -273,16 +273,11 @@ def load_config() -> dict:
 # ─────────────────────────────────────────────
 
 async def migrate_json_to_sqlite():
-    """One-time migration from JSON files to SQLite. Safe to run multiple times."""
     import os
     
-    print(f"🔍 Looking for JSON files in: {os.getcwd()}")
-    print(f"🔍 Files found: {os.listdir('.')}")
-
-    # Migrate users
-    if os.path.exists("data.json"):
+    if os.path.exists("users_info.json"):
         try:
-            with open("data.json", "r") as f:
+            with open("users_info.json", "r") as f:
                 users = json.load(f)
             await backend._pool.executemany("""
                 INSERT OR IGNORE INTO users (user_id, data, username, level, money, prestige)
@@ -293,14 +288,15 @@ async def migrate_json_to_sqlite():
                 for uid, d in users.items()
             ])
             await backend._pool.commit()
-            print(f"✅ Migrated {len(users)} users from data.json")
+            print(f"✅ Migrated {len(users)} users from users_info.json")
         except Exception as e:
             print(f"⚠️ User migration error: {e}")
+    else:
+        print("⚠️ users_info.json not found")
 
-    # Migrate tribes
-    if os.path.exists("tribe_data.json"):
+    if os.path.exists("tribe_info.json"):
         try:
-            with open("tribe_data.json", "r") as f:
+            with open("tribe_info.json", "r") as f:
                 tribes = json.load(f)
             await backend._pool.executemany("""
                 INSERT OR IGNORE INTO tribes (name, data, level, member_count)
@@ -312,9 +308,11 @@ async def migrate_json_to_sqlite():
                 for name, td in tribes.items()
             ])
             await backend._pool.commit()
-            print(f"✅ Migrated {len(tribes)} tribes from tribe_data.json")
+            print(f"✅ Migrated {len(tribes)} tribes from tribe_info.json")
         except Exception as e:
             print(f"⚠️ Tribe migration error: {e}")
+    else:
+        print("⚠️ tribe_info.json not found")
 
 # ─────────────────────────────────────────────
 # INITIAL LOAD (called from on_ready)
@@ -1079,6 +1077,7 @@ async def check_everything(interaction: discord.Interaction, user_id: str):
 # ─────────────────────────────────────────────
 
 def run_hunt(user_id: str) -> dict:
+    global hunt_time  # ← add this
     init_user(user_id)
 
     now = time.time()
