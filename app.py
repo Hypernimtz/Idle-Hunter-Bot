@@ -1864,10 +1864,10 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         total_sell_val += c['sell_value']
         catch_parts.append(
             f"You caught a **{a_em} {animal}**!\n"
-            f"-# {rarity_icon} {rarity.title()}{rare_tag}\n"
+            f"-# {rarity_icon} {rarity.title()}{rare_tag}"
         )
     catch_parts.append(
-        f"\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}\n"
+        f"\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}"
     )
 
     title_content = (
@@ -1884,7 +1884,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": title_content + stats_block},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 10, "content": "\n\n".join(catch_parts)},
+        {"type": 10, "content": "\n".join(catch_parts)},
         {"type": 14, "divider": False, "spacing": 1},
         btn_row,
     ]}]
