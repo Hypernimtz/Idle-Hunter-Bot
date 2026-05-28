@@ -6674,7 +6674,7 @@ async def add_update_cmd(interaction: discord.Interaction, title: str, message: 
         "title": title, 
         "message": message, 
         "moderator": str(interaction.user.id), 
-        "date": time.time(),
+        "date": int(time.time()),
         "id": len(UPDATE) + 1  # Auto-increment ID
     })
     
@@ -6755,7 +6755,7 @@ async def change_update_cmd(
             "title": title,
             "message": message,
             "moderator": str(interaction.user.id),
-            "date": time.time()
+            "date": int(time.time())
         })
         
         # Recalculate IDs
@@ -6771,7 +6771,7 @@ async def change_update_cmd(
             f"### {title}\n"
             f"{message}\n"
             f"-# By: `{get_username(str(interaction.user.id))}`\n"
-            f"-# Date: <t:{time.time()}:D>, ID: {id}",
+            f"-# Date: <t:{int(time.time())}:D>, ID: {id}",
             f"-# Queue size: {len(UPDATE)} updates\n"
             f"-# Oldest ID: 1 · Newest ID: {len(UPDATE)}",
             0x2ECC71
@@ -6883,7 +6883,7 @@ async def change_update_cmd(
             "title": title,
             "message": message,
             "moderator": str(interaction.user.id),
-            "date": time.time(),
+            "date": int(time.time()),
             "id": id
         }
         
@@ -6901,7 +6901,7 @@ async def change_update_cmd(
             f"### {title}\n"
             f"{message}\n"
             f"-# By: `{get_username(str(interaction.user.id))}`\n"
-            f"-# Date: <t:{time.time()}:D>, ID: {id}",
+            f"-# Date: <t:{int(time.time())}:D>, ID: {id}",
             0x2ECC71
         )
 
