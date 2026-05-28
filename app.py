@@ -2452,8 +2452,8 @@ def build_rules_components(user_id: str, page: int = 0) -> list:
         sections.append({
             "type": 9,
             "components": [{"type": 10, "content": (
-                f"**{num}. {title}**\n"
-                f"-# {desc}"
+                f"**{num}. {title}**"
+                f"-# {desc}\n"
             )}],
             "accessory": {
                 "type": 2, "style": 2, "label": f"#{num}",
