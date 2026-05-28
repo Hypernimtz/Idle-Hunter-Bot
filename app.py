@@ -7216,9 +7216,21 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     
     # Initialize SQLite and load data
-    await init_databases()
+    try:
+        await init_databases()
+        print("✅ Database initialized")
+    except Exception as e:
+        print(f"❌ Database init failed: {e}")
+        return
+    
     await migrate_json_to_sqlite()
-    await load_all_data()
+    
+    try:
+        await load_all_data()
+        print("✅ Data loaded")
+    except Exception as e:
+        print(f"❌ Data load failed: {e}")
+        return
     
     # Re-register save callbacks with SQLite functions
     register_save_callbacks(
