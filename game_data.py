@@ -836,6 +836,193 @@ VEHICLES = {
 
 
 # ─────────────────────────────────────────────
+# HUNTING CRATES
+# ─────────────────────────────────────────────
+
+import random as _random
+
+CRATE_TIERS = {
+    "Common Crate": {
+        "emoji": "📦",
+        "price": 50_000,
+        "currency": "money",
+        "description": "A basic crate. Contains modest rewards.",
+        "color": 0x95A5A6,
+    },
+    "Rare Crate": {
+        "emoji": "🎁",
+        "price": 200_000,
+        "currency": "money",
+        "description": "A rarer crate with better loot.",
+        "color": 0x3498DB,
+    },
+    "Epic Crate": {
+        "emoji": "💠",
+        "price": 500,
+        "currency": "gems",
+        "description": "An epic crate. Rare boosts and big rewards.",
+        "color": 0x9B59B6,
+    },
+    "Legendary Crate": {
+        "emoji": "🌟",
+        "price": 2_000,
+        "currency": "gems",
+        "description": "A legendary crate. Permanent boosts possible.",
+        "color": 0xF39C12,
+    },
+    "Mythic Crate": {
+        "emoji": "🌀",
+        "price": 5_000,
+        "currency": "gems",
+        "description": "The rarest crate. Exclusive titles and massive rewards.",
+        "color": 0xE74C3C,
+    },
+}
+
+# Reward pool definitions
+# Each reward: (weight, type, data)
+# types: money, gems, perm_boost, temp_boost, title
+# perm_boost data: {"stat": "luck"|"sell"|"xp", "amount": N}
+# temp_boost data: {"stat": "luck"|"sell"|"xp", "amount": N, "minutes": M}
+# title data: {"title": "..."}
+
+CRATE_REWARDS = {
+    "Common Crate": [
+        (40, "money",      {"min": 50_000,       "max": 500_000}),
+        (30, "money",      {"min": 100_000,      "max": 1_000_000}),
+        (15, "gems",       {"min": 50,           "max": 150}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 10, "minutes": 1}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 10, "minutes": 1}),
+        (10, "temp_boost", {"stat": "xp",    "amount": 10, "minutes": 1}),
+        (5,  "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 2}),
+        (5,  "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 2}),
+        (3,  "perm_boost", {"stat": "luck",  "amount": 1}),
+        (2,  "perm_boost", {"stat": "sell",  "amount": 1}),
+        (2,  "perm_boost", {"stat": "xp",    "amount": 1}),
+    ],
+    "Rare Crate": [
+        (30, "money",      {"min": 500_000,      "max": 5_000_000}),
+        (20, "gems",       {"min": 100,          "max": 300}),
+        (15, "temp_boost", {"stat": "luck",  "amount": 20, "minutes": 3}),
+        (15, "temp_boost", {"stat": "sell",  "amount": 20, "minutes": 3}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 30, "minutes": 5}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 30, "minutes": 5}),
+        (8,  "temp_boost", {"stat": "xp",    "amount": 30, "minutes": 5}),
+        (5,  "perm_boost", {"stat": "luck",  "amount": 2}),
+        (5,  "perm_boost", {"stat": "sell",  "amount": 2}),
+        (5,  "perm_boost", {"stat": "xp",    "amount": 2}),
+        (3,  "title",      {"title": "Lucky Find"}),
+        (2,  "title",      {"title": "The Collector"}),
+    ],
+    "Epic Crate": [
+        (25, "money",      {"min": 5_000_000,    "max": 50_000_000}),
+        (20, "gems",       {"min": 200,          "max": 600}),
+        (15, "temp_boost", {"stat": "luck",  "amount": 40, "minutes": 5}),
+        (15, "temp_boost", {"stat": "sell",  "amount": 40, "minutes": 5}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 50, "minutes": 7}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 50, "minutes": 7}),
+        (10, "temp_boost", {"stat": "xp",    "amount": 50, "minutes": 7}),
+        (8,  "perm_boost", {"stat": "luck",  "amount": 3}),
+        (8,  "perm_boost", {"stat": "sell",  "amount": 3}),
+        (8,  "perm_boost", {"stat": "xp",    "amount": 3}),
+        (5,  "title",      {"title": "Epic Opener"}),
+        (3,  "title",      {"title": "Gear Hoarder"}),
+        (2,  "title",      {"title": "The Fortunate"}),
+    ],
+    "Legendary Crate": [
+        (20, "money",      {"min": 50_000_000,   "max": 500_000_000}),
+        (15, "gems",       {"min": 500,          "max": 1_500}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 60, "minutes": 7}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 60, "minutes": 7}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 75, "minutes": 10}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 75, "minutes": 10}),
+        (10, "temp_boost", {"stat": "xp",    "amount": 75, "minutes": 10}),
+        (10, "perm_boost", {"stat": "luck",  "amount": 5}),
+        (10, "perm_boost", {"stat": "sell",  "amount": 5}),
+        (10, "perm_boost", {"stat": "xp",    "amount": 5}),
+        (5,  "title",      {"title": "Crate Addict"}),
+        (5,  "title",      {"title": "Legend in the Making"}),
+        (3,  "title",      {"title": "The Privileged"}),
+        (2,  "title",      {"title": "Legendary Opener"}),
+    ],
+    "Mythic Crate": [
+        (15, "money",      {"min": 500_000_000,  "max": 5_000_000_000}),
+        (15, "gems",       {"min": 1_000,        "max": 5_000}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 10}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 10}),
+        (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 10}),
+        (10, "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 10}),
+        (10, "temp_boost", {"stat": "xp",    "amount": 100, "minutes": 10}),
+        (10, "perm_boost", {"stat": "luck",  "amount": 8}),
+        (10, "perm_boost", {"stat": "sell",  "amount": 8}),
+        (10, "perm_boost", {"stat": "xp",    "amount": 8}),
+        (5,  "title",      {"title": "Mythic Chaser"}),
+        (5,  "title",      {"title": "Beyond Lucky"}),
+        (3,  "title",      {"title": "The Anointed"}),
+        (2,  "title",      {"title": "Mythic Opener"}),
+        (1,  "title",      {"title": "The One Who Has Everything"}),
+    ],
+}
+
+
+def open_crate(crate_name: str) -> dict:
+    """Roll a reward from the given crate. Returns reward dict."""
+    pool = CRATE_REWARDS.get(crate_name, [])
+    if not pool:
+        return {"type": "money", "amount": 0}
+
+    weights = [w for w, *_ in pool]
+    chosen  = _random.choices(pool, weights=weights, k=1)[0]
+    _, rtype, rdata = chosen
+
+    if rtype == "money":
+        return {"type": "money", "amount": _random.randint(rdata["min"], rdata["max"])}
+    if rtype == "gems":
+        return {"type": "gems", "amount": _random.randint(rdata["min"], rdata["max"])}
+    if rtype == "perm_boost":
+        return {"type": "perm_boost", "stat": rdata["stat"], "amount": rdata["amount"]}
+    if rtype == "temp_boost":
+        return {"type": "temp_boost", "stat": rdata["stat"],
+                "amount": rdata["amount"], "minutes": rdata["minutes"]}
+    if rtype == "title":
+        return {"type": "title", "title": rdata["title"]}
+    return {"type": "money", "amount": 0}
+
+
+# ─────────────────────────────────────────────
+# HUNT CRATE DROP
+# ─────────────────────────────────────────────
+# Each entry: (weight, crate_name_or_None)
+# Base drop chance per hunt (before crate_luck boost):
+#   Common  ~5.5%  |  Rare ~1.8%  |  Epic ~0.5%  |  Legendary ~0.18%
+# Each point of crate_luck boost adds +0.5% to the non-None pool weight.
+
+HUNT_CRATE_DROP_TABLE = [
+    (500, None),
+    (30,  "Common Crate"),
+    (10,  "Rare Crate"),
+    (3,   "Epic Crate"),
+    (1,   "Legendary Crate"),
+    # Mythic Crate intentionally excluded — shop/gem only
+]
+
+def roll_hunt_crate_drop(crate_luck_boost: int = 0) -> str | None:
+    """
+    Roll for a crate drop on a hunt.
+    crate_luck_boost: the player's crate_luck stat (each point adds +0.5 to drop weight).
+    Returns a crate name string, or None for no drop.
+    """
+    bonus = crate_luck_boost * 0.5
+    pool = [
+        (w + bonus if name is not None else w, name)
+        for w, name in HUNT_CRATE_DROP_TABLE
+    ]
+    weights = [w for w, _ in pool]
+    chosen  = _random.choices(pool, weights=weights, k=1)[0]
+    return chosen[1]
+
+
+# ─────────────────────────────────────────────
 # SHOP BOOST ITEMS
 # ─────────────────────────────────────────────
 
@@ -857,6 +1044,12 @@ SHOP_BOOST_ITEMS = {
         "price": 20, "currency": "gems",
         "max_qty": 10,
         "boost_key": "xp", "boost_amt": 5,
+    },
+    "Crate Charm": {
+        "description": "Increases your crate drop chance while hunting by +0.5% per level.",
+        "price": 30, "currency": "gems",
+        "max_qty": 10,
+        "boost_key": "crate_luck", "boost_amt": 1,
     },
 }
 
@@ -1074,6 +1267,7 @@ BADGES = {
     "xp_explosion":     {"label": "XP Explosion",         "abbr": "XE", "stat": "total_xp_earned",  "gold": 100_000,    "plat": 500_000},
     "events_completer": {"label": "Events Completer",     "abbr": "EC", "stat": "events_completed", "gold": 10,         "plat": 20},
     "leveler":          {"label": "Leveler",              "abbr": "LV", "stat": "level",            "gold": 1_000,      "plat": 10_000},
+    "crate_master":     {"label": "Crate Master",   "abbr": "CM", "stat": "crates_opened", "gold": 100,    "plat": 1_000},
 }
 
 
@@ -1155,6 +1349,18 @@ ACHIEVEMENTS: dict[str, list | dict] = {
         (1, [("money", 250_000_000)]),
     ],
 
+    # ── Crates Opened ─────────────────────────────────────────────
+    "crates_opened": [
+        (      1, [("money",           100_000)]),
+        (     10, [("money",         1_000_000)]),
+        (     50, [("money",        10_000_000)]),
+        (    100, [("gems",                500)]),
+        (    250, [("money",       100_000_000)]),
+        (    500, [("money",       500_000_000)]),
+        (  1_000, [("money",     1_000_000_000), ("gems",              1_000)]),
+        ( 10_000, [("money",    10_000_000_000)]),
+    ],
+
     # ── Gamble — skipped by achievement checker ───────────────────
     "gamble": {},
 }
@@ -1202,6 +1408,15 @@ ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
 
     "tools_used_all": {
         "1": "Tool Consumer",
+    },
+
+    "crates_opened": {
+        "1":      "My First Crate",
+        "10":     "Crate Curious",
+        "100":    "Crate Opener",
+        "500":    "Crate Fiend",
+        "1000":   "Crate Addict (Legit)",
+        "10000":  "The Crate Dimension",
     },
 }
 
@@ -1251,6 +1466,335 @@ def generate_verify_code() -> str:
 def init_verify(_: str):
     return {"needed": False, "time": 250, "code": generate_verify_code()}
 
+
+# ─────────────────────────────────────────────
+# QUESTS
+# ─────────────────────────────────────────────
+ 
+# How many quests drop per daily reset
+QUESTS_PER_DAY = 3
+ 
+# Hard cap on stored quests (5 pages × 3 quests each)
+QUESTS_MAX     = 15
+ 
+# Quest difficulty tiers — controls target counts and XP rewards.
+# scale_level: player level used to pick a tier.
+QUEST_TIERS = [
+    {"name": "Easy",   "min_level":    1, "count_mult": 1.0, "xp_mult": 1.0,  "color": 0x2ECC71},
+    {"name": "Medium", "min_level":   50, "count_mult": 2.5, "xp_mult": 2.0,  "color": 0x3498DB},
+    {"name": "Hard",   "min_level":  200, "count_mult": 6.0, "xp_mult": 4.0,  "color": 0x9B59B6},
+    {"name": "Expert", "min_level":  500, "count_mult": 15.0, "xp_mult": 8.0, "color": 0xF39C12},
+    {"name": "Legend", "min_level": 1000, "count_mult": 35.0, "xp_mult": 18.0,"color": 0xE74C3C},
+]
+ 
+ 
+def get_quest_tier(level: int) -> dict:
+    """Return the difficulty tier dict for a given player level."""
+    result = QUEST_TIERS[0]
+    for t in QUEST_TIERS:
+        if level >= t["min_level"]:
+            result = t
+    return result
+ 
+ 
+# Quest type templates.
+# Each entry defines how to generate one quest.
+#
+# Fields:
+#   id          – unique snake_case key
+#   description – f-string template (substitutions applied in generate_quest)
+#   icon        – emoji shown in the UI
+#   stat        – what field in user data or context tracks progress
+#   base_count  – target at tier multiplier 1.0 (scaled by tier count_mult)
+#   base_xp     – XP reward at tier multiplier 1.0 (scaled by tier xp_mult)
+#   requires    – optional dict with extra constraints
+#                   "biome": specific biome key
+#                   "rarity": animal rarity
+#                   "tool_tier_min": minimum tool tier required
+#                   "animal": specific animal name
+#                   "crate_tier": specific crate name
+#
+QUEST_TEMPLATES = [
+    # ── Hunting ───────────────────────────────
+    {
+        "id":          "hunt_any",
+        "description": "Go on **{count}** hunts.",
+        "icon":        "🏹",
+        "stat":        "hunts_done",
+        "base_count":  10,
+        "base_xp":     400,
+    },
+    {
+        "id":          "hunt_biome",
+        "description": "Hunt **{count}** times in the **{biome_name}** biome.",
+        "icon":        "🌍",
+        "stat":        "hunts_in_biome",
+        "base_count":  8,
+        "base_xp":     550,
+        "requires":    {"biome": True},   # True = pick a random biome at gen time
+    },
+    {
+        "id":          "catch_any",
+        "description": "Catch **{count}** animals (any kind).",
+        "icon":        "🐾",
+        "stat":        "animals_caught",
+        "base_count":  15,
+        "base_xp":     500,
+    },
+    {
+        "id":          "catch_specific",
+        "description": "Catch **{count}** **{animal}**.",
+        "icon":        "🦌",
+        "stat":        "animal_caught_specific",
+        "base_count":  5,
+        "base_xp":     700,
+        "requires":    {"animal": True},   # True = pick a random animal at gen time
+    },
+    {
+        "id":          "catch_rarity",
+        "description": "Catch **{count}** animals of **{rarity}** rarity or higher.",
+        "icon":        "⭐",
+        "stat":        "rarity_caught",
+        "base_count":  8,
+        "base_xp":     800,
+        "requires":    {"rarity": True},
+    },
+    {
+        "id":          "perfect_catch",
+        "description": "Land **{count}** Perfect Catches (rare bonus).",
+        "icon":        "✨",
+        "stat":        "perfect_catches",
+        "base_count":  3,
+        "base_xp":     900,
+    },
+    # ── Tools ─────────────────────────────────
+    {
+        "id":          "use_tool_tier",
+        "description": "Hunt **{count}** times using a Tier **{tier}**+ tool.",
+        "icon":        "🔧",
+        "stat":        "tool_tier_hunts",
+        "base_count":  10,
+        "base_xp":     600,
+        "requires":    {"tool_tier_min": True},
+    },
+    {
+        "id":          "use_ammo",
+        "description": "Use **{count}** ammo rounds while hunting.",
+        "icon":        "🎯",
+        "stat":        "ammo_used_quest",
+        "base_count":  20,
+        "base_xp":     500,
+    },
+    # ── Crates ────────────────────────────────
+    {
+        "id":          "open_crate_any",
+        "description": "Open **{count}** crates (any tier).",
+        "icon":        "📦",
+        "stat":        "crates_opened_quest",
+        "base_count":  3,
+        "base_xp":     1200,
+    },
+    {
+        "id":          "open_crate_tier",
+        "description": "Open **{count}** **{crate_tier}**.",
+        "icon":        "🌟",
+        "stat":        "crate_tier_opened",
+        "base_count":  2,
+        "base_xp":     1500,
+        "requires":    {"crate_tier": True},
+    },
+    {
+        "id":          "drop_crate",
+        "description": "Earn **{count}** crate drop(s) while hunting.",
+        "icon":        "🎁",
+        "stat":        "crate_drops_earned",
+        "base_count":  2,
+        "base_xp":     1000,
+    },
+    # ── Economy ───────────────────────────────
+    {
+        "id":          "earn_money",
+        "description": "Earn **◈ {money_fmt}** from selling animals.",
+        "icon":        "💰",
+        "stat":        "money_earned_quest",
+        "base_count":  100_000,
+        "base_xp":     600,
+    },
+    {
+        "id":          "sell_animals",
+        "description": "Sell **{count}** animals from your inventory.",
+        "icon":        "🏪",
+        "stat":        "animals_sold_quest",
+        "base_count":  30,
+        "base_xp":     450,
+    },
+    # ── XP / Level ────────────────────────────
+    {
+        "id":          "earn_xp",
+        "description": "Earn **{xp_fmt} XP** from any activity.",
+        "icon":        "📚",
+        "stat":        "xp_earned_quest",
+        "base_count":  5_000,
+        "base_xp":     700,
+    },
+    {
+        "id":          "level_up",
+        "description": "Level up **{count}** time(s).",
+        "icon":        "⬆️",
+        "stat":        "levels_gained_quest",
+        "base_count":  1,
+        "base_xp":     1000,
+    },
+    # ── Daily / Streak ────────────────────────
+    {
+        "id":          "claim_daily",
+        "description": "Claim your daily reward **{count}** time(s).",
+        "icon":        "📅",
+        "stat":        "dailies_claimed_quest",
+        "base_count":  1,
+        "base_xp":     500,
+    },
+    {
+        "id":          "maintain_streak",
+        "description": "Reach a daily streak of **{count}** days.",
+        "icon":        "🔥",
+        "stat":        "daily_streak_reached",
+        "base_count":  3,
+        "base_xp":     800,
+    },
+    # ── Idle ──────────────────────────────────
+    {
+        "id":          "collect_idle",
+        "description": "Collect from your idle worker **{count}** time(s).",
+        "icon":        "⏰",
+        "stat":        "idle_collections_quest",
+        "base_count":  3,
+        "base_xp":     400,
+    },
+    # ── Meta quests ───────────────────────────
+    {
+        "id":          "complete_quests",
+        "description": "Complete **{count}** other quest(s) today.",
+        "icon":        "📋",
+        "stat":        "quests_completed_today",
+        "base_count":  2,
+        "base_xp":     1500,
+    },
+]
+ 
+# Rarity ladder used for rarity-based quest generation
+_QUEST_RARITY_POOL = ["uncommon", "rare", "epic", "legendary"]
+ 
+ 
+def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = None) -> dict:
+    """
+    Build a single quest dict from a template + player level.
+ 
+    Returns:
+        {
+            "id":          str,          # unique instance id (template_id + seed)
+            "template":    str,          # template id
+            "description": str,          # rendered description string
+            "icon":        str,          # emoji
+            "stat":        str,          # which stat key to track progress on
+            "target":      int,          # how much is needed
+            "progress":    int,          # always starts at 0
+            "xp_reward":   int,          # XP given on completion
+            "completed":   bool,         # False until claimed
+            "claimed":     bool,         # True once XP has been granted
+            "created_date":str,          # ISO date string
+            "requires":    dict,         # snapshot of resolved requires (for tracking)
+        }
+    """
+    import random as _r
+    rng = _r.Random(seed) if seed is not None else _r
+ 
+    t     = quest_id_or_template
+    tier  = get_quest_tier(level)
+ 
+    # Resolve target count and XP, scaled by difficulty tier
+    raw_count = int(t["base_count"] * tier["count_mult"])
+    xp_reward = int(t["base_xp"]    * tier["xp_mult"])
+ 
+    # Clamp count to a reasonable minimum
+    raw_count = max(1, raw_count)
+ 
+    # Resolve 'requires' placeholders
+    resolved = {}
+    req = t.get("requires", {})
+ 
+    if req.get("biome"):
+        # Pick a random biome the player can reach
+        reachable = [(k, lvl) for k, lvl in BIOME_LEVELS if lvl <= max(level, 1)]
+        chosen_biome = rng.choice(reachable)
+        resolved["biome"]      = chosen_biome[0]
+        resolved["biome_name"] = BIOME_NAMES.get(chosen_biome[0], chosen_biome[0].replace("_", " ").title())
+ 
+    if req.get("animal"):
+        # Pick an animal from any unlocked biome
+        all_unlocked = [a for k, lvl in BIOME_LEVELS if lvl <= max(level, 1)
+                          for a in BIOME_ANIMALS.get(k, [])]
+        resolved["animal"] = rng.choice(all_unlocked) if all_unlocked else "Deer"
+ 
+    if req.get("rarity"):
+        resolved["rarity"] = rng.choice(_QUEST_RARITY_POOL)
+ 
+    if req.get("tool_tier_min"):
+        # Pick a random valid tier from 1 to a sensible max for the player
+        max_tier = min(5, max(1, level // 100 + 1))
+        resolved["tier"] = rng.randint(1, max_tier)
+ 
+    if req.get("crate_tier"):
+        resolved["crate_tier"] = rng.choice(["Common Crate", "Rare Crate", "Epic Crate", "Legendary Crate"])
+ 
+    # Render description
+    fmt_vars = dict(resolved)
+    fmt_vars["count"]     = f"{raw_count:,}"
+    fmt_vars["money_fmt"] = f"{raw_count:,}"
+    fmt_vars["xp_fmt"]    = f"{raw_count:,}"
+    try:
+        description = t["description"].format(**fmt_vars)
+    except KeyError:
+        description = t["description"]
+ 
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+ 
+    uid = f"{t['id']}_{seed or _r.randint(0, 999999)}"
+ 
+    return {
+        "id":           uid,
+        "template":     t["id"],
+        "description":  description,
+        "icon":         t["icon"],
+        "stat":         t["stat"],
+        "target":       raw_count,
+        "progress":     0,
+        "xp_reward":    xp_reward,
+        "completed":    False,
+        "claimed":      False,
+        "created_date": today,
+        "requires":     resolved,
+    }
+ 
+ 
+def roll_daily_quests(level: int, existing_templates: list[str]) -> list[dict]:
+    """
+    Generate QUESTS_PER_DAY new quest dicts, avoiding template repeats
+    already in the player's active queue.
+ 
+    existing_templates: list of template ids currently active (to avoid dups).
+    """
+    import random as _r, time as _t
+ 
+    pool = [t for t in QUEST_TEMPLATES if t["id"] not in existing_templates]
+    if not pool:
+        pool = list(QUEST_TEMPLATES)   # fallback: allow repeats if all used
+ 
+    chosen = _r.sample(pool, min(QUESTS_PER_DAY, len(pool)))
+    seed_base = int(_t.time())
+    return [generate_quest(t, level, seed=seed_base + i) for i, t in enumerate(chosen)]
+ 
 
 
 RULES = [
