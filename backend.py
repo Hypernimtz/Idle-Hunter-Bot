@@ -432,7 +432,7 @@ def log_economy_event(
 # SCHEMA VERSION
 # ─────────────────────────────────────────────
 
-CURRENT_SCHEMA: int = 3  # bump whenever a new migration is added
+CURRENT_SCHEMA: int = 4  # bump whenever a new migration is added
 
 
 # ─────────────────────────────────────────────
@@ -1034,10 +1034,19 @@ def _migrate_v3(d: dict) -> dict:
     return d
 
 
+def _migrate_v4(d: dict) -> dict:
+    """v3 → v4: add crate_luck to boosts, ensure crate_inv exists."""
+    d.setdefault("crate_inv", {})
+    boosts = d.setdefault("boosts", {})
+    boosts.setdefault("crate_luck", 0)
+    return d
+
+
 MIGRATIONS: list[tuple[int, Any]] = [
     (1, _migrate_v1),
     (2, _migrate_v2),
     (3, _migrate_v3),
+    (4, _migrate_v4),
 ]
 
 
