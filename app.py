@@ -3,7 +3,6 @@ main.py (a.k.a. bot.py in the main bot)
 Powers the bot. [END]
 
 Current goals:
-1. To SQLite (backend.py). (THIS IS PERIOD ".")
 2. ADD ADD ADD, @AI, Wait till my edit
 
 """
@@ -51,6 +50,11 @@ from game_data import (
     today_utc, parse_amount, generate_verify_code, init_verify,
     # Rules
     RULES,
+    # Hunting Crates
+    CRATE_TIERS, CRATE_REWARDS, open_crate, roll_hunt_crate_drop,
+    # Quests
+    QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
+    generate_quest, roll_daily_quests, get_quest_tier,
 )
 import backend
 from backend import (
@@ -68,6 +72,8 @@ from dotenv import load_dotenv
 import os, csv
 load_dotenv("token.env")
 
+
+# BOT_TOKEN in token.env is for the original bot (minimize data loss)!!!
 BOT_TOKEN = os.getenv("TOKEN")
 
 logger = logging.getLogger(__name__)
@@ -95,6 +101,21 @@ BOT_OWNER_ID = [
 
 def is_owner(interaction: discord.Interaction) -> bool:
     return str(interaction.user.id) in BOT_OWNER_ID
+
+def test_token(token, name):
+    url = "https://discord.com/api/v10/users/@me"
+    headers = {"Authorization": f"Bot {token}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            print(f"✅ {name} token is valid")
+            return True
+        else:
+            print(f"❌ {name} token failed: {resp.status_code} - {resp.text[:200]}")
+            return False
+    except Exception as e:
+        print(f"❌ {name} token error: {e}")
+        return False
 
 # ─────────────────────────────────────────────
 # GLOBALS
@@ -208,6 +229,19 @@ def v2_color(user_id: str) -> discord.Color:
 
 def _accent(user_id: str) -> int:
     return int(v2_color(user_id)) or 0x2ECC71
+
+# ─────────────────────────────────────────────
+# TEMP BOOSTS
+# ─────────────────────────────────────────────
+
+def get_active_temp_boosts(user_id: str) -> dict:
+    """Return combined active temp boost percentages."""
+    now = time.time()
+    boosts = {"luck": 0, "sell": 0, "xp": 0}
+    for b in data[user_id].get("temp_boosts", []):
+        if b["expires_at"] > now:
+            boosts[b["stat"]] = boosts.get(b["stat"], 0) + b["amount"]
+    return boosts
 
 # ─────────────────────────────────────────────
 # PERSISTENCE
@@ -349,7 +383,8 @@ def get_earned_titles(user_id: str) -> list[str]:
         if not isinstance(tiers, list):
             continue
         claimed_up_to = d.get("achievements", {}).get(ach_key, {}).get("claimed_up_to", -1)
-        for i, (threshold, rtype, amount) in enumerate(tiers):
+        for i, tier_entry in enumerate(tiers):
+            threshold = tier_entry[0]
             if i <= claimed_up_to:
                 title_str = ACHIEVEMENT_TITLES.get(ach_key, {}).get(str(threshold))
                 if title_str and title_str not in titles:
@@ -372,11 +407,11 @@ def init_user(user_id: str):
     today   = today_utc()
     defaults = {
         "schema_version": CURRENT_SCHEMA,"username": get_username(user_id),
-        "money": 10000, "level": 1, "xp": 0, "inv": [],
+        "money": 10000, "level": 1, "xp": 0, "inv": [], "_pending_sell": 0,
         "gems": 100, "premium": False, "hunt_cd": 0, "daily_cd": 0,
         "color": "green", "biome": "village", "tribe": None, "tribe_inv": None,
         "verify": init_verify(user_id),
-        "boosts": {"luck": 0, "sell": 0, "xp": 0},
+        "boosts": {"luck": 0, "sell": 0, "xp": 0, "crate_luck": 0},
         "idle": {"active": False, "stacks": 0, "started_at": 0},
         "tool": "Bare Hands", "owned_tools": ["Bare Hands"],
         "prestige": 0, "record": {}, "servers": [], "total_caught": 0,
@@ -399,8 +434,10 @@ def init_user(user_id: str):
             "ammo_used": 0, "lottery_wins": 0, "tools_used": [],
             "events_completed": 0, "total_xp_earned": 0,
             "bj_wins": 0, "cf_wins": 0, "rl_wins": 0,
-            "rps_wins": 0, "slots_wins": 0,
+            "rps_wins": 0, "slots_wins": 0, 
+            "crates_opened": 0,
         },
+        "crate_inv": {},
     }
     if user_id not in data:
         data[user_id] = dict(defaults)
@@ -414,6 +451,10 @@ def init_user(user_id: str):
     data[user_id].setdefault("earned_titles", [])
     data[user_id].setdefault("equipped_title", None)
     data[user_id].setdefault("stats", {})
+    data[user_id]["stats"].setdefault("crates_opened", 0)
+    data[user_id].setdefault("quests", [])
+    data[user_id].setdefault("quests_last_roll", "")   # ISO date of last daily roll
+    data[user_id].setdefault("temp_boosts", [])
 
     for k, v in {
         "ammo_used": 0, "lottery_wins": 0, "tools_used": [], "events_completed": 0,
@@ -425,7 +466,7 @@ def init_user(user_id: str):
     v = data[user_id].setdefault("verify", {})
     v.setdefault("needed", False); v.setdefault("time", 250); v.setdefault("code", generate_verify_code())
     b = data[user_id].setdefault("boosts", {})
-    b.setdefault("luck", 0); b.setdefault("sell", 0); b.setdefault("xp", 0)
+    b.setdefault("luck", 0); b.setdefault("sell", 0); b.setdefault("xp", 0); b.setdefault("crate_luck", 0)
     idle = data[user_id].setdefault("idle", {})
     idle.setdefault("active", False); idle.setdefault("stacks", 0); idle.setdefault("started_at", 0)
     data[user_id].setdefault("ammo_inv", {})
@@ -524,13 +565,15 @@ def get_total_boosts(user_id: str) -> dict:
     tool_xp    = tool_info.get("boost_xp", 0)
     ammo_b     = get_ammo_boosts(user_id)
     vehicle_info = VEHICLES.get(data[user_id].get("vehicle"), {})
+    temp_b = get_active_temp_boosts(user_id)
     vehicle_cd   = vehicle_info.get("boost_cd", 0)
     vehicle_luck = vehicle_info.get("boost_luck", 0)
     total_luck   = personal.get("luck", 0) + t_luck + prestige_b + tool_luck + ammo_b["luck"] + vehicle_luck
     return {
-        "luck":       total_luck,
-        "sell":       personal.get("sell", 0) + t_sell + prestige_b + ammo_b["sell"],
-        "xp":         personal.get("xp",   0) + t_xp   + prestige_b + tool_xp + ammo_b["xp"],
+        "luck":       total_luck + temp_b.get("luck", 0),
+        "sell":       personal.get("sell", 0) + t_sell + prestige_b + ammo_b["sell"] + temp_b.get("sell", 0),
+        "xp":         personal.get("xp",   0) + t_xp   + prestige_b + tool_xp + ammo_b["xp"] + temp_b.get("xp", 0),
+        "crate_luck": personal.get("crate_luck", 0),
         "p_luck":     personal.get("luck", 0),
         "p_sell":     personal.get("sell", 0),
         "p_xp":       personal.get("xp",   0),
@@ -622,7 +665,6 @@ async def run_lottery_draw():
         data[winner_id]["total_money_earned"] = (
             data[winner_id].get("total_money_earned", 0) + pool
         )
-    #  ← DELETE this line
     winner_name = get_username(winner_id)
 
     sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
@@ -904,6 +946,9 @@ def net_worth(user_id: str) -> int:
 # ─────────────────────────────────────────────
 
 def inv_sell_value(user_id: str) -> int:
+    pending = data[user_id].get("_pending_sell")
+    if pending is not None and pending > 0:
+        return pending
     sell_boost = get_total_boosts(user_id)["sell"]
     return sum(int(ANIMAL_DATA.get(a, {}).get("value", 0) * (1 + sell_boost / 100))
                for a in data[user_id].get("inv", []))
@@ -1176,6 +1221,34 @@ def run_hunt(user_id: str) -> dict:
 
     tip = random.choice(TIPS) if random.randint(1, TIP_CHANCE) == 1 else None
 
+    # ── Crate drop ───────────────────────────────────────────────────
+    crate_luck_boost = boosts.get("crate_luck", 0)
+    crate_drop = roll_hunt_crate_drop(crate_luck_boost)
+    if crate_drop:
+        crate_inv = data[user_id].setdefault("crate_inv", {})
+        crate_inv[crate_drop] = crate_inv.get(crate_drop, 0) + 1
+
+    # Quests
+    tool_tier = TOOLS.get(tool_name, {}).get("tier", 1)
+    quest_progress(user_id, "hunts_done",         1)
+    quest_progress(user_id, "hunts_in_biome",     1, biome=biome)
+    quest_progress(user_id, "tool_tier_hunts",    1, tool_tier=tool_tier)
+    if needs_ammo and ammo_name:
+        quest_progress(user_id, "ammo_used_quest",  ammo_cost)
+    for c in catches:
+        animal  = c["animal"]
+        rarity  = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
+        quest_progress(user_id, "animals_caught",       1)
+        quest_progress(user_id, "animal_caught_specific", 1, animal=animal)
+        quest_progress(user_id, "rarity_caught",        1, rarity=rarity)
+        if c.get("is_rare"):
+            quest_progress(user_id, "perfect_catches",  1)
+    if crate_drop:
+        quest_progress(user_id, "crate_drops_earned", 1)
+    if level_ups:
+        quest_progress(user_id, "levels_gained_quest", level_ups)
+    quest_progress(user_id, "xp_earned_quest", total_xp)
+
     add_log_entry(user_id, {
         "ts": int(now), "biome": biome, "tool": tool_name, "ammo": ammo_name,
         "catches": catches, "total_xp": total_xp, "level_ups": level_ups,
@@ -1188,10 +1261,12 @@ def run_hunt(user_id: str) -> dict:
         "level": data[user_id]["level"], "xp": data[user_id]["xp"],
         "xp_needed": xp_for_level(data[user_id]["level"]),
         "balance": data[user_id]["money"],
+        "pending_sell_value": total_val,
         "level_ups": level_ups, "tip": tip,
         "verify": False,
         "next_hunt_ts": int(now + HUNT_COOLDOWN),
         "tool": tool_name, "ammo": ammo_name, "remaining_ammo": remaining_ammo,
+        "crate_drop": crate_drop,
     }
 
 # ─────────────────────────────────────────────
@@ -1202,12 +1277,15 @@ def sell_all_inv(user_id: str) -> dict:
     inv = data[user_id]["inv"]
     if not inv:
         return {"total": 0, "count": 0}
-    sell_boost = get_total_boosts(user_id)["sell"]
-    total      = sum(int(ANIMAL_DATA.get(a, {}).get("value", 0) * (1 + sell_boost / 100)) for a in inv)
-    count      = len(inv)
-    data[user_id]["inv"]    = []
+    count = len(inv)
+    total = data[user_id].pop("_pending_sell", None)
+    if total is None:
+        sell_boost = get_total_boosts(user_id)["sell"]
+        total = sum(int(ANIMAL_DATA.get(a, {}).get("value", 0) * (1 + sell_boost / 100)) for a in inv)
+    data[user_id]["inv"] = []
     add_money(user_id, total, "sell all")
-    data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + total
+    
+    # Don't re-add to total_money_earned — run_hunt already counted it
     return {"total": total, "count": count}
 
 # ─────────────────────────────────────────────
@@ -1266,6 +1344,7 @@ ACH_LABELS = {
     "tools_bought_all":"Buy All Tools",
     "tools_used_all":  "Use All Tools",
     "gamble":          "Gamble",
+    "crates_opened": "Crates Opened",
 }
 
 _ACH_LINES_PER_PAGE = 15
@@ -1295,6 +1374,7 @@ def build_achievements_pages(user_id: str) -> list[str]:
         "tools_bought_all":1 if all_tools_owned else 0,
         "tools_used_all":  1 if all_tools_used  else 0,
         "gamble":          0,
+        "crates_opened": d.get("stats", {}).get("crates_opened", 0),
     }
 
     for ach_key, tiers in ACHIEVEMENTS.items():
@@ -1610,6 +1690,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Daily",        "emoji": {"name": "📅"},  "value": "daily",        "description": "Claim your daily reward"},
             {"label": "Prestige",     "emoji": {"name": "⭐"},  "value": "prestige",     "description": "Prestige for permanent boosts"},
             {"label": "Idle",         "emoji": {"name": "💤"},  "value": "idle",         "description": "Manage your idle income"},
+            {"label": "Crates",       "emoji": {"name": "📦"},  "value": "crates",       "description": "Buy and open hunting crates"},
             {"label": "Equip",        "emoji": {"name": "🔧"},  "value": "equip",        "description": "Equip tools, ammo and vehicles"},
             {"label": f"Mail{mail_indicator}", "emoji": {"name": "📬"}, "value": "mail", "description": "Check your mailbox"},
             {"label": "Tribe",        "emoji": {"id": "1500237653591851080", "name": "Bot_Tribe"}, "value": "tribe", "description": "View your tribe"},
@@ -1619,7 +1700,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Gamble",       "emoji": {"name": "🎲"},  "value": "gamble",       "description": "Try your luck at mini-games"},
             {"label": "Progression",  "emoji": {"name": "🏅"},  "value": "progression",  "description": "View your achievements, badges, and titles"},
             {"label": "Events",       "emoji": {"name": "🌍"},  "value": "events",       "description": "View ongoing global events"},
-            {"label": "Updates", "emoji": {"name": "📋"}, "value": "update", "description": "View latest updates"},
+            {"label": "Updates",      "emoji": {"name": "📋"},  "value": "update",       "description": "View latest updates"},
         ]
     }]}
 
@@ -1867,8 +1948,16 @@ def build_hunt_components(user_id: str, result: dict) -> list:
             f"-# {rarity_icon} {rarity.title()}{rare_tag}"
         )
     catch_parts.append(
-        f"\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}"
+        f"\n\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}"
     )
+
+    crate_drop = result.get("crate_drop")
+    if crate_drop:
+        crate_info = CRATE_TIERS.get(crate_drop, {})
+        catch_parts.append(
+            f"\n{crate_info.get('emoji', '📦')} **Crate Drop!** You found a **{crate_drop}**!"
+            f"\n-# Check your crates to open it."
+        )
 
     title_content = (
         f"### {d.get('_display_name', 'Hunter')}'s "
@@ -2566,6 +2655,119 @@ def build_update_components(user_id: str, mode: str = "all", page: int = 0) -> l
         _back_row(user_id),
     ]}]
 
+_quest_page: dict[str, int] = {}
+ 
+QUESTS_PER_PAGE = 3   # how many quests shown per page
+ 
+def build_quests_components(user_id: str, page: int = 0) -> list:
+    """
+    Build the /quests panel.  Shows QUESTS_PER_PAGE quests per page with
+    Prev / Next buttons and a Claim button per completed quest.
+    """
+    d         = data[user_id]
+    all_quests = d.get("quests", [])
+ 
+    # Separate active from claimed (shown at bottom of last page)
+    active  = [q for q in all_quests if not q.get("claimed")]
+    claimed = [q for q in all_quests if q.get("claimed")]
+ 
+    display = active   # show only active; claimed are hidden to reduce clutter
+ 
+    total_pages = max(1, -(-len(display) // QUESTS_PER_PAGE))  # ceiling div
+    page        = max(0, min(page, total_pages - 1))
+    start       = page * QUESTS_PER_PAGE
+    page_quests = display[start : start + QUESTS_PER_PAGE]
+ 
+    today = today_utc()
+    roll_str = d.get("quests_last_roll", "")
+    from datetime import datetime, timezone
+    next_reset_ts = int(
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        + 86400
+    )
+ 
+    header = (
+        f"### 📋 Quests\n"
+        f"-# **{len(active)}** active · **{len(claimed)}** completed · "
+        f"Next drop: <t:{next_reset_ts}:R>"
+    )
+ 
+    # Build quest lines
+    quest_blocks = []
+    quest_buttons = []
+ 
+    for q in page_quests:
+        bar_filled  = min(10, int(q["progress"] / q["target"] * 10)) if q["target"] else 10
+        bar_empty   = 10 - bar_filled
+        bar         = "█" * bar_filled + "░" * bar_empty
+ 
+        pct  = int(q["progress"] / q["target"] * 100) if q["target"] else 100
+        done = "✅ " if q.get("completed") else ""
+ 
+        line = (
+            f"{done}{q['icon']} {q['description']}\n"
+            f"-# `{bar}` {q['progress']:,}/{q['target']:,}  ·  +{q['xp_reward']:,} XP"
+        )
+        quest_blocks.append(line)
+ 
+        # Claim button (only shown when completed and not yet claimed)
+        if q.get("completed") and not q.get("claimed"):
+            quest_buttons.append({
+                "type": 2, "style": 3,
+                "label": f"Claim: {q['icon']} quest",
+                "custom_id": f"quests:claim:{q['id']}:{user_id}",
+            })
+ 
+    if not page_quests:
+        quest_blocks.append(
+            "-# No quests active right now.\n"
+            "-# Come back tomorrow for a new batch!"
+        )
+ 
+    body = "\n\n".join(quest_blocks)
+ 
+    # Navigation row
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append({
+            "type": 2, "style": 2, "label": "◀ Prev",
+            "custom_id": f"quests:page:{page - 1}:{user_id}",
+        })
+    nav_buttons.append({
+        "type": 2, "style": 2,
+        "label": f"Page {page + 1}/{total_pages}",
+        "custom_id": f"quests:noop:{user_id}",
+        "disabled": True,
+    })
+    if page < total_pages - 1:
+        nav_buttons.append({
+            "type": 2, "style": 2, "label": "Next ▶",
+            "custom_id": f"quests:page:{page + 1}:{user_id}",
+        })
+    nav_buttons.append({
+        "type": 2, "style": 2, "label": "◀ Menu",
+        "custom_id": f"quests:back:{user_id}",
+    })
+ 
+    components = [
+        {"type": 10, "content": header},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": body},
+    ]
+    if quest_buttons:
+        components.append({"type": 14, "divider": False, "spacing": 1})
+        # Discord limits 5 buttons per row; chunk into rows of 5
+        for i in range(0, len(quest_buttons), 5):
+            components.append({"type": 1, "components": quest_buttons[i:i+5]})
+ 
+    components.append({"type": 14, "divider": True,  "spacing": 1})
+    components.append({"type": 1,  "components": nav_buttons})
+ 
+    return [{"type": 17, "accent_color": _accent(user_id),
+             "spoiler": False, "components": components}]
+ 
+ 
+
 def build_idle_components(user_id: str) -> list:
     idle   = data[user_id]["idle"]
     rate   = idle_rate_per_hour(user_id)
@@ -2649,7 +2851,7 @@ def build_prestige_components(user_id: str) -> list:
         f"-# {'✅' if lvl_ok else '❌'} Level **{PRESTIGE_MIN_LEVEL:,}** (you: {level:,})\n"
         f"-# {'✅' if money_ok else '❌'} **◈ {PRESTIGE_MIN_MONEY:,}** (you: ◈ {money:,})\n\n"
         f"**Reward:** +**{boost}%** permanent Luck, Sell & XP\n"
-        f"Prestiges costs almost everything. Please re-think about your decision before you click **Prestige**."
+        f"Prestiges costs almost everything. Please re-think about your decision before you click **Prestige**.\n"
         f"-# Resets: Level, Money, Inventory, Biome, Record, Tools, Ammo\n"
         f"-# Kept: Gems, Tribe, Log"
     )
@@ -2738,6 +2940,242 @@ def build_lottery_components(user_id: str) -> list:
              "custom_id": f"nav:menu:{user_id}"},
         ]},
     ]}]
+
+# ─────────────────────────────────────────────
+# CRATE PANEL
+# ─────────────────────────────────────────────
+
+def _fmt_reward(reward: dict) -> str:
+    t = reward["type"]
+    if t == "money":
+        return f"◈ {reward['amount']:,}"
+    if t == "gems":
+        return f"💎 {reward['amount']:,}"
+    if t == "perm_boost":
+        stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
+        return f"✨ **+{reward['amount']}% {stat_label}** (permanent!)"
+    if t == "temp_boost":
+        stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
+        return f"⏱️ **+{reward['amount']}% {stat_label}** for {reward['minutes']} min"
+    if t == "title":
+        return f'🏷️ Title: **"{reward["title"]}"**'
+    return "???"
+
+def build_crate_shop_components(user_id: str) -> list:
+    d = data[user_id]
+    inv = d.get("crate_inv", {})
+
+    sections = []
+    for name, crate in CRATE_TIERS.items():
+        owned = inv.get(name, 0)
+        ps = f"◈ {crate['price']:,}" if crate["currency"] == "money" else f"💎 {crate['price']:,}"
+        content = (
+            f"{crate['emoji']} **{name}** — {ps} · Owned: **{owned}**\n"
+            f"-# {crate['description']}"
+        )
+        sections.append({
+            "type": 9,
+            "components": [{"type": 10, "content": content}],
+            "accessory": {"type": 2, "style": 1, "label": "Buy",
+                "custom_id": f"crate:buy:{name}:{user_id}"},
+        })
+
+    header = f"### 📦 Crate Shop\n**◈ {d['money']:,}** · 💎 **{d['gems']}**"
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": header},
+        {"type": 14, "divider": True, "spacing": 1},
+        *sections,
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [
+            {"type": 2, "style": 2, "label": "Open Crates",
+             "custom_id": f"crate:open_menu:{user_id}"},
+            _back_row(user_id)["components"][0],
+        ]},
+    ]}]
+
+def build_crate_open_menu_components(user_id: str) -> list:
+    d = data[user_id]
+    inv = d.get("crate_inv", {})
+    owned = {k: v for k, v in inv.items() if v > 0}
+
+    if not owned:
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+            {"type": 10, "content": "### 📦 Open Crates\n\n-# You don't own any crates.\n-# Buy some in the Crate Shop!"},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 2, "label": "◀ Shop",
+                 "custom_id": f"crate:shop:{user_id}"},
+            ]},
+        ]}]
+
+    options = [
+        {"label": f"{CRATE_TIERS[n]['emoji']} {n} (×{v})", "value": n,
+         "description": CRATE_TIERS[n]["description"]}
+        for n, v in owned.items()
+    ]
+
+    inv_lines = "\n".join(
+        f"-# {CRATE_TIERS[n]['emoji']} **{n}** ×{v}" for n, v in owned.items()
+    )
+
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": f"### 📦 Open a Crate\n{inv_lines}"},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [{"type": 3,
+            "custom_id": f"crate:open_select:{user_id}",
+            "placeholder": "Select a crate to open...",
+            "min_values": 1, "max_values": 1, "flows": {},
+            "options": options,
+        }]},
+        {"type": 1, "components": [
+            {"type": 2, "style": 2, "label": "◀ Shop",
+             "custom_id": f"crate:shop:{user_id}"},
+        ]},
+    ]}]
+
+def build_crate_result_components(user_id: str, crate_name: str, reward: dict) -> list:
+    crate = CRATE_TIERS[crate_name]
+    reward_str = _fmt_reward(reward)
+    remaining = data[user_id].get("crate_inv", {}).get(crate_name, 0)
+
+    content = (
+        f"### {crate['emoji']} {crate_name} Opened!\n\n"
+        f"You received:\n**{reward_str}**\n\n"
+        f"-# {crate_name} remaining: **{remaining}**"
+    )
+
+    btns = [{"type": 2, "style": 2, "label": "◀ Back",
+              "custom_id": f"crate:open_menu:{user_id}"}]
+    if remaining > 0:
+        btns.insert(0, {"type": 2, "style": 3, "label": f"Open Another {crate_name}",
+                         "custom_id": f"crate:open_again:{crate_name}:{user_id}"})
+
+    return [{"type": 17, "accent_color": crate["color"], "spoiler": False, "components": [
+        {"type": 10, "content": content},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": btns},
+    ]}]
+
+# ─────────────────────────────────────────────
+# QUEST HELPERS
+# ─────────────────────────────────────────────
+ 
+def quest_daily_roll_if_needed(user_id: str):
+    """
+    If the player hasn't received their daily quest batch yet today,
+    add up to QUESTS_PER_DAY new quests — as long as the total stays
+    under QUESTS_MAX (15).  Called at the top of every quest panel open
+    and also from init_user lazy-init on first hunt.
+    """
+    today = today_utc()
+    d     = data[user_id]
+    if d.get("quests_last_roll") == today:
+        return   # already rolled today
+ 
+    active_quests = d.setdefault("quests", [])
+ 
+    # Drop expired/claimed quests that are more than 7 days old (housekeeping)
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    d["quests"] = [q for q in active_quests
+                   if not q.get("claimed") or q.get("created_date", "") >= cutoff]
+    active_quests = d["quests"]
+ 
+    slots_free = QUESTS_MAX - len(active_quests)
+    if slots_free <= 0:
+        d["quests_last_roll"] = today
+        return
+ 
+    existing_templates = [q["template"] for q in active_quests if not q.get("claimed")]
+    level  = d.get("level", 1)
+    new_qs = roll_daily_quests(level, existing_templates)
+ 
+    # Never exceed cap
+    new_qs = new_qs[:slots_free]
+    d["quests"].extend(new_qs)
+    d["quests_last_roll"] = today
+ 
+ 
+def quest_progress(user_id: str, stat: str, amount: int = 1, **ctx):
+    """
+    Advance progress on all active (unclaimed) quests that track `stat`.
+ 
+    ctx keyword args carry extra context used by some quest types:
+        biome      – current biome key  (for hunts_in_biome)
+        animal     – animal just caught (for animal_caught_specific)
+        rarity     – rarity of caught animal (for rarity_caught)
+        tool_tier  – tier of current tool (for tool_tier_hunts)
+        crate_name – name of opened crate (for crate_tier_opened)
+    """
+    d = data[user_id]
+    newly_completed = []
+ 
+    for q in d.get("quests", []):
+        if q.get("claimed") or q.get("completed"):
+            continue
+        if q["stat"] != stat:
+            continue
+ 
+        req = q.get("requires", {})
+ 
+        # Gating checks — only count if context matches the quest requirement
+        if "biome" in req and ctx.get("biome") != req["biome"]:
+            continue
+        if "animal" in req and ctx.get("animal") != req.get("animal"):
+            continue
+        if "rarity" in req:
+            rarity_order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
+            req_idx  = rarity_order.index(req["rarity"]) if req["rarity"] in rarity_order else 0
+            got_idx  = rarity_order.index(ctx["rarity"]) if ctx.get("rarity") in rarity_order else 0
+            if got_idx < req_idx:
+                continue
+        if "tier" in req and ctx.get("tool_tier", 0) < req["tier"]:
+            continue
+        if "crate_tier" in req and ctx.get("crate_name") != req["crate_tier"]:
+            continue
+ 
+        q["progress"] = min(q["progress"] + amount, q["target"])
+        if q["progress"] >= q["target"] and not q["completed"]:
+            q["completed"] = True
+            newly_completed.append(q)
+ 
+    return newly_completed   # caller can notify if desired
+ 
+ 
+def quest_claim(user_id: str, quest_id: str) -> dict:
+    """
+    Mark quest as claimed and grant XP.
+    Returns {"ok": bool, "xp": int, "level_ups": int}
+    """
+    d = data[user_id]
+    for q in d.get("quests", []):
+        if q["id"] != quest_id:
+            continue
+        if not q.get("completed"):
+            return {"ok": False, "reason": "not_complete"}
+        if q.get("claimed"):
+            return {"ok": False, "reason": "already_claimed"}
+ 
+        xp = q["xp_reward"]
+        q["claimed"] = True
+ 
+        d["xp"] += xp
+        d["stats"]["total_xp_earned"] = d["stats"].get("total_xp_earned", 0) + xp
+ 
+        # Track "complete quests" meta-quest
+        quest_progress(user_id, "quests_completed_today", 1)
+ 
+        level_ups = 0
+        while d["xp"] >= xp_for_level(d["level"]):
+            d["xp"]    -= xp_for_level(d["level"])
+            d["level"] += 1
+            level_ups   += 1
+ 
+        return {"ok": True, "xp": xp, "level_ups": level_ups,
+                "level": d["level"], "xp_now": d["xp"],
+                "xp_needed": xp_for_level(d["level"])}
+ 
+    return {"ok": False, "reason": "not_found"}
 
 # ─────────────────────────────────────────────
 # GAMBLE PANELS
@@ -3911,6 +4349,7 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
         "ammo_used":       d.get("stats", {}).get("ammo_used", 0),
         "tools_bought_all": 1 if all_tools_owned else 0,
         "tools_used_all":  1 if all_tools_used else 0,
+        "crates_opened": d.get("stats", {}).get("crates_opened", 0),
     }
 
     for ach_key, tiers in ACHIEVEMENTS.items():
@@ -4061,6 +4500,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         await smart_update_v2(interaction, build_mail_components(user_id, "tribe"))
     elif panel == "help":
         await smart_update_v2(interaction, build_help_components(user_id))
+    elif panel == "crates":
+        await smart_update_v2(interaction, build_crate_shop_components(user_id))
     elif panel == "update":
         _update_page[user_id] = 0
         await smart_update_v2(interaction, build_update_components(user_id, "all", 0))
@@ -4159,6 +4600,46 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
 
     return user_id
 
+async def _open_crate_and_show(interaction, user_id: str, crate_name: str):
+    inv = data[user_id].get("crate_inv", {})
+    if inv.get(crate_name, 0) <= 0:
+        await send_ephemeral_v2(interaction, f"❌ You don't have any **{crate_name}**.", 0xE74C3C)
+        return
+
+    async with user_transaction(user_id):
+        inv[crate_name] -= 1
+        if inv[crate_name] == 0:
+            del inv[crate_name]
+
+        reward = open_crate(crate_name)
+
+        if reward["type"] == "money":
+            add_money(user_id, reward["amount"], "crate")
+            data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + reward["amount"]
+        elif reward["type"] == "gems":
+            add_gems(user_id, reward["amount"], "crate")
+        elif reward["type"] == "perm_boost":
+            data[user_id]["boosts"][reward["stat"]] = data[user_id]["boosts"].get(reward["stat"], 0) + reward["amount"]
+        elif reward["type"] == "temp_boost":
+            tb = data[user_id].setdefault("temp_boosts", [])
+            tb.append({
+                "stat": reward["stat"],
+                "amount": reward["amount"],
+                "expires_at": time.time() + reward["minutes"] * 60,
+            })
+            # Prune expired entries
+            data[user_id]["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
+        elif reward["type"] == "title":
+            title = reward["title"]
+            earned = data[user_id].setdefault("earned_titles", [])
+            if title not in earned:
+                earned.append(title)
+
+        data[user_id]["stats"]["crates_opened"] = data[user_id]["stats"].get("crates_opened", 0) + 1
+    
+    await smart_update_v2(interaction, build_crate_result_components(user_id, crate_name, reward))
+    await check_achievements_and_badges(interaction, user_id)
+
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     if interaction.type != discord.InteractionType.component:
@@ -4217,6 +4698,98 @@ async def on_interaction(interaction: discord.Interaction):
         elif action == "noop":
             return
         
+    # ── QUESTS ────────────────────────────────
+    if parts[0] == "quests":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await interaction.response.defer()
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        await interaction.response.defer()
+ 
+        if parts[1] == "back":
+            await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
+            return
+ 
+        if parts[1] == "noop":
+            return   # disabled page-counter button
+ 
+        if parts[1] == "page":
+            page = int(parts[2])
+            _quest_page[owner_id] = page
+            await smart_update_v2(interaction, build_quests_components(owner_id, page))
+            return
+ 
+        if parts[1] == "claim":
+            quest_id = parts[2]
+            result   = quest_claim(owner_id, quest_id)
+            if not result["ok"]:
+                reason_msg = {
+                    "not_complete":    "❌ That quest isn't completed yet.",
+                    "already_claimed": "⚠️ Already claimed.",
+                    "not_found":       "❌ Quest not found.",
+                }.get(result.get("reason", ""), "❌ Couldn't claim.")
+                await send_ephemeral_v2(interaction, reason_msg, 0xE74C3C)
+                return
+ 
+            xp_msg = f"+{result['xp']:,} XP"
+            if result["level_ups"] == 1:
+                xp_msg += f" · Level up! Now level **{result['level']}**"
+            elif result["level_ups"] > 1:
+                xp_msg += f" · Level up ×{result['level_ups']}! Now level **{result['level']}**"
+ 
+            await send_ephemeral_v2(interaction, f"✅ Quest complete! {xp_msg}", 0x2ECC71)
+            page = _quest_page.get(owner_id, 0)
+            await smart_update_v2(interaction, build_quests_components(owner_id, page))
+            return
+
+    # ── CRATES ────────────────────────────────
+    if parts[0] == "crate":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await interaction.response.defer()
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+
+        action = parts[1]
+
+        if action == "buy":
+            crate_name = parts[2]
+            if crate_name not in CRATE_TIERS:
+                await interaction.response.defer()
+                await send_ephemeral_v2(interaction, "Unknown crate.", 0xE74C3C)
+                return
+            await interaction.response.send_modal(CrateBuyModal(owner_id, crate_name))
+            return
+
+        await interaction.response.defer()
+
+        if action == "shop":
+            await smart_update_v2(interaction, build_crate_shop_components(owner_id))
+            return
+
+        if action == "open_menu":
+            await smart_update_v2(interaction, build_crate_open_menu_components(owner_id))
+            return
+
+        if action == "open_select":
+            crate_name = values[0] if values else None
+            if not crate_name or crate_name not in CRATE_TIERS:
+                return
+            quest_progress(owner_id, "crates_opened_quest", 1)
+            quest_progress(owner_id, "crate_tier_opened",   1, crate_name=crate_name)
+            await _open_crate_and_show(interaction, owner_id, crate_name)
+            return
+
+        if action == "open_again":
+            crate_name = parts[2]
+            quest_progress(owner_id, "crates_opened_quest", 1)
+            quest_progress(owner_id, "crate_tier_opened",   1, crate_name=crate_name)
+            await _open_crate_and_show(interaction, owner_id, crate_name)
+            return
+
+        return
+
     # ── TUTORIAL ──────────────────────────────
     if parts[0] == "tutorial":
         owner_id = parts[-1]
@@ -4716,6 +5289,7 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "collect":
             async with user_transaction(owner_id):
                 collect_idle(owner_id)
+            quest_progress(owner_id, "idle_collections_quest", 1)
             await smart_update_v2(interaction, build_idle_components(owner_id))
             return
 
@@ -4731,6 +5305,7 @@ async def on_interaction(interaction: discord.Interaction):
                 idle["stacks"]      += 1
                 idle["active"]       = True
                 idle["started_at"]   = time.time()
+            quest_progress(owner_id, "idle_collections_quest", 1)
             await smart_update_v2(interaction, build_idle_components(owner_id))
             return
 
@@ -4776,6 +5351,11 @@ async def on_interaction(interaction: discord.Interaction):
                     amt  = int(base * bonus)
                     add_gems(owner_id, amt, "daily")
                 claimed = True
+            quest_progress(owner_id, "dailies_claimed_quest", 1)
+            quest_progress(owner_id, "daily_streak_reached",
+                data[owner_id].get("daily_streak", 0),
+                # We use a "set target" approach — only counts when target reached
+                )
  
         await check_achievements_and_badges(interaction, owner_id)
         await smart_update_v2(
@@ -4807,6 +5387,7 @@ async def on_interaction(interaction: discord.Interaction):
             data[owner_id].update({
                 "prestige": new_p, "level": 1, "xp": 0, "money": 0,
                 "inv": [], "biome": "village", "record": {}, "total_caught": 0,
+                "_pending_sell": 0,
             })
         await smart_update_v2(interaction, build_prestige_done_components(owner_id, new_p))
         return
@@ -5719,7 +6300,7 @@ async def on_interaction(interaction: discord.Interaction):
         target_id = parts[3]
         if str(interaction.user.id) != viewer_id:
             await interaction.response.defer()
-            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(target_id), 0xE74C3C)
             return
         await interaction.response.defer()
 
@@ -5822,6 +6403,44 @@ class SetBetModal(discord.ui.Modal, title="Set Your Bet"):
             "rps":   lambda: build_rps_panel(self.user_id),
         }
         await smart_update_v2(interaction, builders[self.game]())
+
+class CrateBuyModal(discord.ui.Modal, title="Buy Crates"):
+    qty_input = discord.ui.TextInput(
+        label="How many to buy?",
+        placeholder="e.g. 1, 5, 10",
+        required=True,
+        max_length=6,
+    )
+
+    def __init__(self, user_id: str, crate_name: str):
+        super().__init__()
+        self.user_id    = str(user_id)
+        self.crate_name = crate_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        raw = self.qty_input.value.strip()
+        qty = parse_amount(raw)
+        if not qty or qty <= 0:
+            await send_ephemeral_v2(interaction, "❌ Invalid amount.", 0xE74C3C)
+            return
+
+        crate = CRATE_TIERS[self.crate_name]
+        total_cost = crate["price"] * qty
+
+        if crate["currency"] == "money":
+            if not spend_money(self.user_id, total_cost, "crate buy"):
+                await send_ephemeral_v2(interaction, f"❌ Need ◈ {total_cost:,}.", 0xE74C3C)
+                return
+        else:
+            if not spend_gems(self.user_id, total_cost, "crate buy"):
+                await send_ephemeral_v2(interaction, f"❌ Need 💎 {total_cost:,}.", 0xE74C3C)
+                return
+
+        inv = data[self.user_id].setdefault("crate_inv", {})
+        inv[self.crate_name] = inv.get(self.crate_name, 0) + qty
+
+        await smart_update_v2(interaction, build_crate_shop_components(self.user_id))
 
 class LotteryBuyModal(discord.ui.Modal, title="Buy Lottery Tickets"):
     qty_input = discord.ui.TextInput(
@@ -6351,6 +6970,18 @@ async def mail_cmd(interaction: discord.Interaction):
     if not user_id: return
     await send_v2_followup(interaction, build_mail_components(user_id, "tribe"))
 
+@bot.tree.command(name="quests", description="View and claim your daily quests")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def quests_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return
+    init_user(user_id)
+    quest_daily_roll_if_needed(user_id)
+    _quest_page[user_id] = 0
+    await send_v2_followup(interaction, build_quests_components(user_id, 0))
+
 @bot.tree.command(name="tribe", description="View your current tribe and options")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -6541,6 +7172,15 @@ async def help_cmd(interaction: discord.Interaction):
     init_user(user_id)
     await interaction.response.defer()
     await send_v2_followup(interaction, build_help_components(user_id))
+    await check_everything(interaction, user_id)
+
+@bot.tree.command(name="crate", description="Buy and open Hunting Crates for rewards")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def crate_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    await send_v2_followup(interaction, build_crate_shop_components(user_id))
     await check_everything(interaction, user_id)
 
 @bot.tree.command(name="update", description="View the latest updates from the developers")
@@ -6856,7 +7496,7 @@ async def change_update_cmd(
             f"### {title}\n"
             f"{message}\n"
             f"-# By: `{get_username(str(interaction.user.id))}`\n"
-            f"-# Date: <t:{int(time.time())}:D>, ID: {id}",
+            f"-# Date: <t:{int(time.time())}:D>, ID: {id}"
             f"-# Queue size: {len(UPDATE)} updates\n"
             f"-# Oldest ID: 1 · Newest ID: {len(UPDATE)}",
             0x2ECC71
@@ -7331,6 +7971,8 @@ async def on_ready():
         print(f"Synced {len(synced)} commands")
     except Exception as e:
         print("Sync failed:", e)
+
+    test_token(BOT_TOKEN, "Main bot")
     
     await bot.change_presence(activity=discord.Game(name="/menu | Idle Hunter"))
     
