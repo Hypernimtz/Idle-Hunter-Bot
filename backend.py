@@ -417,6 +417,7 @@ async def mutate_users_and_tribes_state(mutator: Callable) -> None:
 
 ECONOMY_LOG     = "economy_log.csv"
 
+# backend.py — replace the async def with a sync fire-and-forget
 def log_economy_event(
     user_id: str,
     source: str,
@@ -425,7 +426,11 @@ def log_economy_event(
     currency: str = "money",
     path: str = ECONOMY_LOG,
 ) -> None:
-    return log_economy_event_buffered(user_id, source, delta, balance_after, currency)
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(log_economy_event_buffered(user_id, source, delta, balance_after, currency))
+    except RuntimeError:
+        pass  # no running loop (e.g. in tests)
 
 
 # ─────────────────────────────────────────────
