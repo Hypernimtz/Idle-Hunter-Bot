@@ -1212,6 +1212,7 @@ def run_hunt(user_id: str) -> dict:
     data[user_id]["hunt_cd"]            = now + effective_cd
     data[user_id]["xp"]                += total_xp
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + total_val
+    data[user_id]["_pending_sell"]      = (data[user_id].get("_pending_sell") or 0) + total_val
 
     level_ups = 0
     while data[user_id]["xp"] >= xp_for_level(data[user_id]["level"]):
@@ -1948,7 +1949,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
             f"-# {rarity_icon} {rarity.title()}{rare_tag}"
         )
     catch_parts.append(
-        f"\n\n+ {total_xp_earned} XP · Sell Value: ◈ {total_sell_val}"
+        f"\n\n+ {total_xp_earned:,} XP · Sell Value: ◈ {total_sell_val:,}"
     )
 
     crate_drop = result.get("crate_drop")
@@ -4249,7 +4250,7 @@ def build_log_standalone_v2_components(user_id: str, page: int = 0) -> list:
         animal     = c["animal"]
         rarity     = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
         rarity_ico = RARITY_ICONS.get(rarity, "")
-        rare_tag   = " · ✨ **Rare!**" if c.get("is_rare") else ""
+        rare_tag   = " · ✨ **Perfect Catch!**" if c.get("is_rare") else ""
         catch_lines.append(
             f"{animal_emoji(animal)} **{animal}**{rare_tag}\n"
             f"-# {rarity_ico} {rarity.title()} · +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
@@ -4544,7 +4545,8 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
     if user_id in BOT_ADMIN_ID:
         init_user(user_id)
         await update_user_servers(user_id, interaction.guild)
-        await interaction.response.defer()
+        if not interaction.response.is_done():
+            await interaction.response.defer()
         return user_id
 
     # Maintenance — type 4 immediate response, no defer
@@ -4576,7 +4578,8 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
         return None
 
     # Defer immediately — all subsequent sends use followup route
-    await interaction.response.defer()
+    if not interaction.response.is_done():
+        await interaction.response.defer()
 
     tick_verify(user_id)
     if data[user_id]["verify"]["needed"]:
@@ -6824,6 +6827,51 @@ class SuggestionReplyModal(discord.ui.Modal, title="Admin Reply"):
         reply_text = self.reply_input.value.strip()
         verdict    = _VERDICT_LABELS[self.action]
         color      = _VERDICT_COLORS[self.action]
+
+        # Record vote
+        entry = _suggestion_store.get(self.msg_id)
+        if entry:
+            admin_id = str(interaction.user.id)
+            votes = entry.setdefault("votes", {"agree": set(), "neutral": set(), "disagree": set()})
+            for v in votes.values():
+                v.discard(admin_id)  # remove any prior vote from this admin
+            votes[self.action].add(admin_id)
+            agree_n    = len(votes["agree"])
+            neutral_n  = len(votes["neutral"])
+            disagree_n = len(votes["disagree"])
+        else:
+            agree_n = neutral_n = disagree_n = 0
+
+        # Update the suggestion message buttons with new counts
+        try:
+            channel_msg_id = entry.get("channel_msg_id") if entry else None
+            if channel_msg_id:
+                patch_route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}",
+                                    channel_id=SUGGESTION_CHANNEL_ID, message_id=channel_msg_id)
+                await bot.http.request(patch_route, json={
+                    "flags": V2_FLAGS,
+                    "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
+                        "components": [
+                            {"type": 10, "content":
+                                f"### 💡 New Suggestion\n"
+                                f"**From:** <@{entry['user_id']}>\n\n"
+                                f"{entry['text']}"
+                            },
+                            {"type": 14, "divider": True, "spacing": 1},
+                            {"type": 1, "components": [
+                                {"type": 2, "style": 3, "label": f"✅ Agree ({agree_n})",
+                                 "custom_id": f"suggestion:agree:{self.submitter_id}:{self.msg_id}"},
+                                {"type": 2, "style": 2, "label": f"➖ Neutral ({neutral_n})",
+                                 "custom_id": f"suggestion:neutral:{self.submitter_id}:{self.msg_id}"},
+                                {"type": 2, "style": 4, "label": f"❌ Disagree ({disagree_n})",
+                                 "custom_id": f"suggestion:disagree:{self.submitter_id}:{self.msg_id}"},
+                            ]},
+                        ]}],
+                    "allowed_mentions": {"parse": []},
+                })
+        except Exception:
+            pass
+
         # DM the suggester
         try:
             route    = Route("POST", "/users/@me/channels")
@@ -6842,8 +6890,10 @@ class SuggestionReplyModal(discord.ui.Modal, title="Admin Reply"):
             })
         except Exception:
             pass
+
         await send_ephemeral_v2(interaction,
-            f"✅ Verdict **{verdict}** sent to the suggester.", color)
+            f"✅ **{verdict}** sent.\n"
+            f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}", color)
 
 
 
@@ -7320,7 +7370,7 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
             msg_id = _uuid.uuid4().hex[:12]
             route = Route("POST", "/channels/{channel_id}/messages",
                           channel_id=SUGGESTION_CHANNEL_ID)
-            await bot.http.request(route, json={
+            sent = await bot.http.request(route, json={
                 "flags": V2_FLAGS,
                 "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
                     "components": [
@@ -7334,17 +7384,21 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
                         },
                         {"type": 14, "divider": True, "spacing": 1},
                         {"type": 1, "components": [
-                            {"type": 2, "style": 3, "label": "✅ Agree",
+                            {"type": 2, "style": 3, "label": "✅ Agree (0)",
                              "custom_id": f"suggestion:agree:{user_id}:{msg_id}"},
-                            {"type": 2, "style": 2, "label": "➖ Neutral",
+                            {"type": 2, "style": 2, "label": "➖ Neutral (0)",
                              "custom_id": f"suggestion:neutral:{user_id}:{msg_id}"},
-                            {"type": 2, "style": 4, "label": "❌ Disagree",
+                            {"type": 2, "style": 4, "label": "❌ Disagree (0)",
                              "custom_id": f"suggestion:disagree:{user_id}:{msg_id}"},
                         ]},
                     ]}],
                 "allowed_mentions": {"parse": []},
             })
-            _suggestion_store[msg_id] = {"user_id": user_id, "text": suggestion.strip()}
+            _suggestion_store[msg_id] = {
+                "user_id": user_id, "text": suggestion.strip(),
+                "channel_msg_id": sent.get("id"),
+                "votes": {"agree": set(), "neutral": set(), "disagree": set()},
+            }
         except Exception:
             pass
     await send_ephemeral_v2(interaction,
