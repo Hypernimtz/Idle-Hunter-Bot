@@ -4663,7 +4663,6 @@ async def on_interaction(interaction: discord.Interaction):
     # ── RULES ─────────────────────────────────
     if parts[0] == "rules":
         owner_id = parts[-1]
-        await interaction.response.defer()
 
         if parts[1] == "prev":
             _rules_page[owner_id] = max(0, _rules_page.get(owner_id, 0) - 1)
@@ -4678,11 +4677,9 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "update":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
-        await interaction.response.defer()
         action = parts[1]
 
         if action == "view":
@@ -4712,10 +4709,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "quests":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
  
         if parts[1] == "back":
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
@@ -4757,7 +4752,6 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "crate":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
@@ -4766,13 +4760,11 @@ async def on_interaction(interaction: discord.Interaction):
         if action == "buy":
             crate_name = parts[2]
             if crate_name not in CRATE_TIERS:
-                await interaction.response.defer()
                 await send_ephemeral_v2(interaction, "Unknown crate.", 0xE74C3C)
                 return
             await interaction.response.send_modal(CrateBuyModal(owner_id, crate_name))
             return
 
-        await interaction.response.defer()
 
         if action == "shop":
             await smart_update_v2(interaction, build_crate_shop_components(owner_id))
@@ -4804,14 +4796,12 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "tutorial":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         init_tutorial(owner_id)
 
         if parts[1] == "optin":
-            await interaction.response.defer()
             choice = parts[2]
             data[owner_id]["tutorial"]["enabled"] = (choice == "yes")
             
@@ -4831,11 +4821,9 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if parts[1] == "dismiss":
-            await interaction.response.defer()
             return
 
         if parts[1] == "stop":
-            await interaction.response.defer()
             data[owner_id]["tutorial"]["enabled"] = False
             
             await smart_update_v2(interaction, [{"type": 17, "accent_color": _accent(owner_id),
@@ -4849,17 +4837,14 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "hunt":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         if parts[1] == "again":
             can_hunt, remaining = await RateLimiter.can_hunt(owner_id, HUNT_COOLDOWN)
             if not can_hunt:
-                await interaction.response.defer()
                 await send_ephemeral_v2(interaction, f"⏳ Wait **{remaining:.1f}s** before hunting again!", 0xE67E22)
                 return
-            await interaction.response.defer()
             init_user(owner_id)
             async with get_user_lock(owner_id):
                 result = run_hunt(owner_id)
@@ -4891,7 +4876,6 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if parts[1] == "sell_all":
-            await interaction.response.defer()
             init_user(owner_id)
             async with user_transaction(owner_id):
                 sold = sell_all_inv(owner_id)
@@ -4900,7 +4884,6 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if parts[1] == "back":
-            await interaction.response.defer()
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
 
@@ -4908,12 +4891,10 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "menu":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         if parts[1] == "nav":
-            await interaction.response.defer()
             panel = values[0] if values else "menu"
             if panel == "hunt":
                 can_hunt, remaining = await RateLimiter.can_hunt(owner_id, HUNT_COOLDOWN)
@@ -4955,7 +4936,6 @@ async def on_interaction(interaction: discord.Interaction):
                 return
 
         if parts[1] == "help":
-            await interaction.response.defer()
             await smart_update_v2(interaction, build_help_components(owner_id))
             return
         return
@@ -4964,10 +4944,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "nav":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
         action = parts[1]
         if action in ("back", "menu"):
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
@@ -4977,10 +4955,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "hunter_color_select":
         owner_id = parts[1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
         color_key = values[0] if values else None
         if not color_key or color_key not in COLORS:
             await send_ephemeral_v2(interaction, "Invalid color.", 0xE74C3C)
@@ -4993,11 +4969,9 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "hunter_color_hex":
         owner_id = parts[1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         if data[owner_id]["level"] < 1200:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "Unlocks at Level 1200.", 0xE74C3C)
             return
         await interaction.response.send_modal(CustomColorModal(owner_id))
@@ -5007,10 +4981,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "biome" and parts[1] == "select":
         owner_id  = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
         biome_key = values[0] if values else None
         if not biome_key:
             return
@@ -5028,10 +5000,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "tools":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "equip":
             tool_name = values[0] if values else None
@@ -5069,7 +5039,6 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "shop":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
@@ -5077,7 +5046,6 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "ammo_buy_acc":
             ammo_name = parts[2]
             if ammo_name not in AMMO:
-                await interaction.response.defer()
                 await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
                 return
             await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name))
@@ -5086,13 +5054,11 @@ async def on_interaction(interaction: discord.Interaction):
         if parts[1] == "ammo_buy":
             ammo_name = values[0] if values else None
             if not ammo_name or ammo_name not in AMMO:
-                await interaction.response.defer()
                 await send_ephemeral_v2(interaction, "Unknown ammo.", 0xE74C3C)
                 return
             await interaction.response.send_modal(AmmoBuyModal(owner_id, ammo_name))
             return
 
-        await interaction.response.defer()
 
         if parts[1] == "tab_dd":
             tab = values[0] if values else "boosts"
@@ -5291,10 +5257,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "idle":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "collect":
             async with user_transaction(owner_id):
@@ -5323,10 +5287,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "daily" and parts[1] == "claim":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
  
         today_str = today_utc()
         claimed   = False
@@ -5384,10 +5346,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "prestige" and parts[1] == "confirm":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if data[owner_id]["level"] < PRESTIGE_MIN_LEVEL or data[owner_id]["money"] < PRESTIGE_MIN_MONEY:
             await send_ephemeral_v2(interaction, "Requirements not met.", 0xE74C3C)
@@ -5406,10 +5366,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "mail":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "tab_dd":
             tab = values[0] if values else "tribe"
@@ -5483,16 +5441,13 @@ async def on_interaction(interaction: discord.Interaction):
         gdata   = gift_cache.get(gift_id)
 
         if not gdata:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "❌ This gift confirmation expired.", 0xE74C3C)
             return
 
         owner_id = str(gdata["sender_id"])
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if action == "cancel":
             gift_cache.pop(gift_id, None)
@@ -5585,13 +5540,11 @@ async def on_interaction(interaction: discord.Interaction):
         action   = parts[1]
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
         tribe_nm = data[owner_id].get("tribe")
         if not tribe_nm or tribe_nm not in tribe_data:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "You're not in a tribe.", 0xE74C3C)
             return
         sort = _tribe_sort.get(owner_id, "rank")
@@ -5618,7 +5571,6 @@ async def on_interaction(interaction: discord.Interaction):
                     return
                 # Non-modal leave falls through to defer below
 
-        await interaction.response.defer()
 
         if action == "nav":
             page = parts[2]
@@ -5813,7 +5765,6 @@ async def on_interaction(interaction: discord.Interaction):
 
     # ── TRIBE INVITE ACCEPT/DECLINE (DM) ──────
     if cid.startswith("tribe_invite_accept:") or cid.startswith("tribe_invite_decline:"):
-        await interaction.response.defer()
         action_str, owner_id, tribe_nm = cid.split(":", 2)
         if str(interaction.user.id) != owner_id:
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
@@ -5850,12 +5801,10 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "ban" and parts[1] == "appeal":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         b = get_ban(owner_id)
         if b.get("appeals_used", 0) >= b.get("appeals_max", 2):
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "❌ No appeal chances left.", 0xE74C3C)
             return
         await interaction.response.send_modal(BanAppealModal(owner_id))
@@ -5865,10 +5814,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "ach":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "prev":
             _ach_page[owner_id] = max(0, _ach_page.get(owner_id, 0) - 1)
@@ -5907,10 +5854,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "title":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "equip":
             chosen = values[0] if values else None
@@ -5925,10 +5870,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "badge":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         if parts[1] == "prev":
             _badge_page[owner_id] = max(0, _badge_page.get(owner_id, 0) - 1)
@@ -5950,7 +5893,6 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "gamble":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
@@ -5959,8 +5901,6 @@ async def on_interaction(interaction: discord.Interaction):
 
         if sub_key in no_defer_subs or (len(parts) > 2 and parts[2] in ("setbet", "deal")):
             pass  # modal responses handle their own response
-        else:
-            await interaction.response.defer()
 
         init_user(owner_id)
 
@@ -6200,7 +6140,6 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "lottery":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         init_user(owner_id)
@@ -6215,7 +6154,6 @@ async def on_interaction(interaction: discord.Interaction):
     # ── PROFILE ───────────────────────────────
     if parts[0] == "profile":
         owner_id = parts[-1]
-        await interaction.response.defer()
 
         panel = parts[1]
         if panel == "main":
@@ -6241,10 +6179,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "verify":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
         if parts[1] == "refresh":
             await smart_update_v2(interaction, build_verify_v2(owner_id))
         return
@@ -6253,10 +6189,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "log":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         current_page = _profile_log_page.get(owner_id, 0)
         total        = len(data[owner_id].get("log", []))
@@ -6271,10 +6205,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "record":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         current_page = _profile_record_page.get(owner_id, 0)
         total        = len(BIOME_LEVELS)
@@ -6289,10 +6221,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "log_cmd":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         current_page = _log_state.get(owner_id, 0)
         total        = len(data[owner_id].get("log", []))
@@ -6309,10 +6239,8 @@ async def on_interaction(interaction: discord.Interaction):
         viewer_id = parts[2]
         target_id = parts[3]
         if str(interaction.user.id) != viewer_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(target_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         state        = _record_state.get(viewer_id, {"target_id": target_id, "biome_idx": 0})
         current_page = state["biome_idx"]
@@ -6329,10 +6257,8 @@ async def on_interaction(interaction: discord.Interaction):
     if parts[0] == "lb":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
-        await interaction.response.defer()
 
         state  = _lb_state.get(owner_id, {
             "mode": "hunter", "scope": "global",
@@ -6373,7 +6299,6 @@ async def on_interaction(interaction: discord.Interaction):
         msg_id       = parts[3]
 
         if not is_admin(interaction):
-            await interaction.response.defer()
             await send_ephemeral_v2(interaction, "❌ Admins only.", 0xE74C3C)
             return
 
@@ -6385,7 +6310,6 @@ async def on_interaction(interaction: discord.Interaction):
             ))
             return
 
-        await interaction.response.defer()
         return
 
     # ── REPORT buttons (admin + public) ───────
@@ -6432,10 +6356,8 @@ async def on_interaction(interaction: discord.Interaction):
 
         if action == "resolved":
             if not is_admin(interaction):
-                await interaction.response.defer()
                 await send_ephemeral_v2(interaction, "❌ Admins only.", 0xE74C3C)
                 return
-            await interaction.response.defer()
             entry = _report_store.get(msg_id, {})
             # DM the submitter
             try:
@@ -6458,7 +6380,6 @@ async def on_interaction(interaction: discord.Interaction):
             _report_store.pop(msg_id, None)
             return
 
-        await interaction.response.defer()
         return
 
 
@@ -6487,7 +6408,6 @@ class SetBetModal(discord.ui.Modal, title="Set Your Bet"):
             )
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         parsed = parse_amount(self.bet_input.value)
         if not parsed or parsed <= 0:
             await send_ephemeral_v2(interaction, "❌ Invalid amount.", 0xE74C3C)
@@ -6525,7 +6445,6 @@ class CrateBuyModal(discord.ui.Modal, title="Buy Crates"):
         self.crate_name = crate_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raw = self.qty_input.value.strip()
         qty = parse_amount(raw)
         if not qty or qty <= 0:
@@ -6562,7 +6481,6 @@ class LotteryBuyModal(discord.ui.Modal, title="Buy Lottery Tickets"):
         self.user_id = str(user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raw = self.qty_input.value.strip()
         qty = parse_amount(raw)
         if not qty or qty <= 0:
@@ -6594,7 +6512,6 @@ class CustomColorModal(discord.ui.Modal, title="Custom Embed Color"):
         self.user_id = str(user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raw = self.hex_input.value.strip().lstrip("#")
         if len(raw) != 6 or not all(c in string.hexdigits for c in raw):
             await send_ephemeral_v2(interaction, "Invalid hex. Use `#RRGGBB`.", 0xE74C3C)
@@ -6617,7 +6534,6 @@ class AmmoBuyModal(discord.ui.Modal, title="Buy Ammo"):
         self.ammo_name = ammo_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raw = self.qty_input.value.strip()
         if not raw.isdigit() or int(raw) <= 0:
             await send_ephemeral_v2(interaction, "❌ Enter a positive whole number.", 0xE74C3C)
@@ -6668,7 +6584,6 @@ class TribeInviteModal(discord.ui.Modal, title="Invite a Player"):
         self.tribe_name = tribe_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         raw = self.uid_input.value.strip()
         if raw.startswith("<@") and raw.endswith(">"):
             raw = raw.replace("<@", "").replace("!", "").replace(">", "").strip()
@@ -6730,7 +6645,6 @@ class TribeSetDescModal(discord.ui.Modal, title="Set Tribe Description"):
         self.tribe_name = tribe_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         tribe_data[self.tribe_name]["description"] = self.desc_input.value
         
         sort = _tribe_sort.get(self.user_id, "rank")
@@ -6750,7 +6664,6 @@ class TribeLeaveLeaderModal(discord.ui.Modal, title="Assign New Leader Before Le
         self.tribe_name = tribe_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         target = self.uid_input.value.strip()
         td     = tribe_data[self.tribe_name]
         all_ids = td["roles"]["officer"] + td["roles"]["members"]
@@ -6785,7 +6698,6 @@ class TribeCreateModal(discord.ui.Modal, title="Create a Tribe"):
         self.user_id = str(user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         name = self.name_input.value.strip()
         if name in tribe_data:
             await send_ephemeral_v2(interaction, "❌ Tribe name taken.", 0xE74C3C)
@@ -6809,7 +6721,6 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
         self.user_id = str(user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         b       = get_ban(self.user_id)
         used    = b.get("appeals_used", 0)
         max_app = b.get("appeals_max", 2)
@@ -6856,7 +6767,6 @@ class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
         self.user_id = str(user_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         parsed = parse_amount(self.bet_input.value)
         if not parsed or parsed <= 0:
             await send_ephemeral_v2(interaction, "❌ Invalid amount.", 0xE74C3C)
@@ -6911,7 +6821,6 @@ class SuggestionReplyModal(discord.ui.Modal, title="Admin Reply"):
         self.msg_id       = msg_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
         reply_text = self.reply_input.value.strip()
         verdict    = _VERDICT_LABELS[self.action]
         color      = _VERDICT_COLORS[self.action]
