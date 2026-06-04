@@ -4545,8 +4545,10 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
     if user_id in BOT_ADMIN_ID:
         init_user(user_id)
         await update_user_servers(user_id, interaction.guild)
-        if not interaction.response.is_done():
+        try:
             await interaction.response.defer()
+        except Exception:
+            pass
         return user_id
 
     # Maintenance — type 4 immediate response, no defer
@@ -4578,8 +4580,10 @@ async def _common_init(interaction: discord.Interaction) -> str | None:
         return None
 
     # Defer immediately — all subsequent sends use followup route
-    if not interaction.response.is_done():
+    try:
         await interaction.response.defer()
+    except Exception:
+        pass
 
     tick_verify(user_id)
     if data[user_id]["verify"]["needed"]:
