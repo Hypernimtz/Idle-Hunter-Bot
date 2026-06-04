@@ -99,9 +99,6 @@ BOT_OWNER_ID = [
     "1286458710146940980",
 ]
 
-def is_owner(interaction: discord.Interaction) -> bool:
-    return str(interaction.user.id) in BOT_OWNER_ID
-
 def test_token(token, name):
     url = "https://discord.com/api/v10/users/@me"
     headers = {"Authorization": f"Bot {token}"}
@@ -390,13 +387,6 @@ def get_earned_titles(user_id: str) -> list[str]:
                 if title_str and title_str not in titles:
                     titles.append(title_str)
     return titles
-
-def get_equipped_title(user_id: str) -> str | None:
-    return data[user_id].get("equipped_title")
-
-def sync_earned_titles(user_id: str):
-    """Rebuild earned_titles from achievements so nothing is lost on reload."""
-    data[user_id]["earned_titles"] = get_earned_titles(user_id)
 
 # ─────────────────────────────────────────────
 # USER / TRIBE INIT
@@ -973,12 +963,6 @@ async def _raw(interaction: discord.Interaction, payload: dict):
         interaction_id=interaction.id, interaction_token=interaction.token,
     )
     await interaction.client.http.request(route, json=payload)
-
-async def send_v2(interaction: discord.Interaction, components: list):
-    await _raw(interaction, {
-        "type": 4,
-        "data": {"flags": V2_FLAGS, "components": components, "allowed_mentions": {"parse": []}}
-    })
 
 async def update_v2(interaction: discord.Interaction, components: list):
     await _raw(interaction, {
@@ -6341,6 +6325,30 @@ async def on_interaction(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, "✅ Already recorded your confirmation.", 0x95A5A6)
                 return
             seen_set.add(clicker_id)
+            seen_n = len(seen_set)
+            # Patch channel message button label with updated count
+            channel_msg_id = entry.get("channel_msg_id")
+            if channel_msg_id:
+                try:
+                    patch_route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}",
+                                        channel_id=REPORTS_CHANNEL_ID, message_id=channel_msg_id)
+                    await bot.http.request(patch_route, json={
+                        "flags": V2_FLAGS,
+                        "components": [{"type": 17, "accent_color": entry.get("color", 0xE67E22), "spoiler": False,
+                            "components": [
+                                {"type": 10, "content": entry.get("content", "")},
+                                {"type": 14, "divider": True, "spacing": 1},
+                                {"type": 1, "components": [
+                                    {"type": 2, "style": 1, "label": f"👀 I've also seen this ({seen_n})",
+                                     "custom_id": f"report_btn:also_seen:{submitter_id}:{msg_id}"},
+                                    {"type": 2, "style": 3, "label": "✅ Resolved",
+                                     "custom_id": f"report_btn:resolved:{submitter_id}:{msg_id}"},
+                                ]},
+                            ]}],
+                        "allowed_mentions": {"parse": []},
+                    })
+                except Exception:
+                    pass
             await send_ephemeral_v2(interaction, "✅ Noted — thanks for confirming!", 0x2ECC71)
             # DM the original reporter
             try:
@@ -6353,7 +6361,7 @@ async def on_interaction(interaction: discord.Interaction):
                         "components": [{"type": 10, "content":
                             f"### 👀 Someone else has seen your report!\n"
                             f"**{interaction.user.display_name}** confirmed they've also experienced the issue you reported.\n"
-                            f"-# Total confirmations: **{len(seen_set)}**"
+                            f"-# Total confirmations: **{seen_n}**"
                         }]}],
                     "allowed_mentions": {"parse": []},
                 })
@@ -6741,19 +6749,30 @@ class BanAppealModal(discord.ui.Modal, title="Submit a Ban Appeal"):
         exp_str = f"<t:{exp_ts}:R>" if exp_ts != 0 else "Permanent"
         if channel:
             try:
+                import uuid as _uuid
+                appeal_id = _uuid.uuid4().hex[:12]
                 route = Route("POST", "/channels/{channel_id}/messages",
                               channel_id=BAN_APPEAL_CHANNEL_ID)
                 await bot.http.request(route, json={
                     "flags": V2_FLAGS,
                     "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
-                        "components": [{"type": 10, "content":
-                            f"### 📋 Ban Appeal\n"
-                            f"**User:** <@{self.user_id}> (`{self.user_id}`)\n"
-                            f"**Reason for ban:** {b.get('reason', 'N/A')}\n"
-                            f"**Ban expires:** {exp_str}\n"
-                            f"**Appeals used:** {data[self.user_id]['ban']['appeals_used']}/{max_app}\n\n"
-                            f"**Appeal message:**\n{self.reason_input.value}"
-                        }]}],
+                        "components": [
+                            {"type": 10, "content":
+                                f"### 📋 Ban Appeal\n"
+                                f"**User:** <@{self.user_id}> (`{self.user_id}`)\n"
+                                f"**Reason for ban:** {b.get('reason', 'N/A')}\n"
+                                f"**Ban expires:** {exp_str}\n"
+                                f"**Appeals used:** {data[self.user_id]['ban']['appeals_used']}/{max_app}\n\n"
+                                f"**Appeal message:**\n{self.reason_input.value}"
+                            },
+                            {"type": 14, "divider": True, "spacing": 1},
+                            {"type": 1, "components": [
+                                {"type": 2, "style": 3, "label": "✅ Accept",
+                                 "custom_id": f"appeal:accept:{self.user_id}:{appeal_id}"},
+                                {"type": 2, "style": 4, "label": "❌ Reject",
+                                 "custom_id": f"appeal:reject:{self.user_id}:{appeal_id}"},
+                            ]},
+                        ]}],
                     "allowed_mentions": {"parse": []},
                 })
             except Exception as e:
@@ -7355,16 +7374,17 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
     now          = time.time()
     last_suggest = data[user_id].get("last_suggest", 0)
     cooldown     = 3600
-    if now - last_suggest < cooldown:
-        remaining = int(cooldown - (now - last_suggest))
-        mins, secs = remaining // 60, remaining % 60
-        await send_ephemeral_v2(interaction,
-            f"❌ You can suggest again in **{mins}m {secs}s**.", 0xE74C3C)
-        return
-    if len(suggestion.strip()) < 20:
-        await send_ephemeral_v2(interaction,
-            "❌ Suggestion must be at least **20 characters**.", 0xE74C3C)
-        return
+    if is_admin(interaction) == False:
+        if now - last_suggest < cooldown:
+            remaining = int(cooldown - (now - last_suggest))
+            mins, secs = remaining // 60, remaining % 60
+            await send_ephemeral_v2(interaction,
+                f"❌ You can suggest again in **{mins}m {secs}s**.", 0xE74C3C)
+            return
+        if len(suggestion.strip()) < 20:
+            await send_ephemeral_v2(interaction,
+                "❌ Suggestion must be at least **20 characters**.", 0xE74C3C)
+            return
     async with user_transaction(user_id):
         data[user_id]["last_suggest"] = now
     channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
@@ -7434,16 +7454,17 @@ async def report_cmd(interaction: discord.Interaction, type: str,
     now         = time.time()
     last_report = data[user_id].get("last_report", 0)
     cooldown    = 1800
-    if now - last_report < cooldown:
-        remaining = int(cooldown - (now - last_report))
-        mins, secs = remaining // 60, remaining % 60
-        await send_ephemeral_v2(interaction,
-            f"❌ You can submit another report in **{mins}m {secs}s**.", 0xE74C3C)
-        return
-    if len(description.strip()) < 20:
-        await send_ephemeral_v2(interaction,
-            "❌ Description must be at least **20 characters**.", 0xE74C3C)
-        return
+    if is_admin(interaction) == False:
+        if now - last_report < cooldown:
+            remaining = int(cooldown - (now - last_report))
+            mins, secs = remaining // 60, remaining % 60
+            await send_ephemeral_v2(interaction,
+                f"❌ You can submit another report in **{mins}m {secs}s**.", 0xE74C3C)
+            return
+        if len(description.strip()) < 20:
+            await send_ephemeral_v2(interaction,
+                "❌ Description must be at least **20 characters**.", 0xE74C3C)
+            return
     async with user_transaction(user_id):
         data[user_id]["last_report"] = now
     channel = bot.get_channel(REPORTS_CHANNEL_ID)
@@ -7470,14 +7491,14 @@ async def report_cmd(interaction: discord.Interaction, type: str,
                 color = 0xE67E22
             route = Route("POST", "/channels/{channel_id}/messages",
                           channel_id=REPORTS_CHANNEL_ID)
-            await bot.http.request(route, json={
+            sent = await bot.http.request(route, json={
                 "flags": V2_FLAGS,
                 "components": [{"type": 17, "accent_color": color, "spoiler": False,
                     "components": [
                         {"type": 10, "content": content},
                         {"type": 14, "divider": True, "spacing": 1},
                         {"type": 1, "components": [
-                            {"type": 2, "style": 1, "label": "👀 I've also seen this",
+                            {"type": 2, "style": 1, "label": "👀 I've also seen this (0)",
                              "custom_id": f"report_btn:also_seen:{user_id}:{msg_id}"},
                             {"type": 2, "style": 3, "label": "✅ Resolved",
                              "custom_id": f"report_btn:resolved:{user_id}:{msg_id}"},
@@ -7485,7 +7506,12 @@ async def report_cmd(interaction: discord.Interaction, type: str,
                     ]}],
                 "allowed_mentions": {"parse": []},
             })
-            _report_store[msg_id] = {"user_id": user_id, "text": description.strip(), "seen": set()}
+            _report_store[msg_id] = {
+                "user_id": user_id, "text": description.strip(),
+                "content": content, "color": color,
+                "channel_msg_id": sent.get("id"),
+                "seen": set(),
+            }
         except Exception as e:
             print("Report channel send error:", e)
     await send_ephemeral_v2(interaction,
