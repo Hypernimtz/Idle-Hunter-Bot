@@ -1930,7 +1930,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         total_sell_val += c['sell_value']
         catch_parts.append(
             f"You caught a **{a_em} {animal}**!\n"
-            f"-# {rarity_icon} {rarity.title()}{rare_tag}"
+            f"-# {rarity_icon} {rarity.title()}{rare_tag}\n"
         )
     catch_parts.append(
         f"\n\n+ {total_xp_earned:,} XP · Sell Value: ◈ {total_sell_val:,}"
