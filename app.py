@@ -1933,7 +1933,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
             f"-# {rarity_icon} {rarity.title()}{rare_tag}\n"
         )
     catch_parts.append(
-        f"\n\n+ {total_xp_earned:,} XP · Sell Value: ◈ {total_sell_val:,}"
+        f"**+ {total_xp_earned:,} XP · Sell Value: ◈ {total_sell_val:,}**"
     )
 
     crate_drop = result.get("crate_drop")
