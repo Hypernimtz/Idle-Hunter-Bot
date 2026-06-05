@@ -6323,21 +6323,18 @@ async def on_interaction(interaction: discord.Interaction):
                         "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
                             "components": [
                                 {"type": 10, "content":
-                                    f"### 💡 New Suggestion\n"
-                                    f"**From:** {entry.get('display_name', 'Unknown')} (`{entry['user_id']}`)\n"
-                                    f"**Level:** {data.get(entry['user_id'], {}).get('level', '?')} · "
-                                    f"**Prestige:** {data.get(entry['user_id'], {}).get('prestige', 0)} · "
-                                    f"**Caught:** {data.get(entry['user_id'], {}).get('total_caught', 0):,}\n"
-                                    f"{title_line}"
-                                    f"{entry['text']}"
+                                    f"## Suggestion #{entry.get('number', '?')}: {entry.get('title', '')}\n"
+                                    f"-# Submitted by: <@{entry['user_id']}> ({entry.get('username', entry.get('display_name', 'Unknown'))})\n"
+                                    f"{entry['text']}\n\n"
+                                    f"✅ {agree_n} | ➖ {neutral_n} | ❌ {disagree_n}\n"
                                 },
                                 {"type": 14, "divider": True, "spacing": 1},
                                 {"type": 1, "components": [
-                                    {"type": 2, "style": 3, "label": f"✅ Agree ({agree_n})",
+                                    {"type": 2, "style": 3, "label": "✅ Agree",
                                      "custom_id": f"suggestion:agree:{submitter_id}:{msg_id}"},
-                                    {"type": 2, "style": 2, "label": f"➖ Neutral ({neutral_n})",
+                                    {"type": 2, "style": 2, "label": "➖ Neutral",
                                      "custom_id": f"suggestion:neutral:{submitter_id}:{msg_id}"},
-                                    {"type": 2, "style": 4, "label": f"❌ Disagree ({disagree_n})",
+                                    {"type": 2, "style": 4, "label": "❌ Disagree",
                                      "custom_id": f"suggestion:disagree:{submitter_id}:{msg_id}"},
                                 ]},
                             ]}],
@@ -6346,64 +6343,9 @@ async def on_interaction(interaction: discord.Interaction):
             except Exception:
                 pass
 
-            # DM the admin a reply prompt with modal button + skip
-            try:
-                route    = Route("POST", "/users/@me/channels")
-                dm_ch    = await bot.http.request(route, json={"recipient_id": admin_id})
-                dm_route = Route("POST", "/channels/{channel_id}/messages", channel_id=dm_ch["id"])
-                title_line = f"### {entry['title']}\n" if entry.get("title") else ""
-                await bot.http.request(dm_route, json={
-                    "flags": V2_FLAGS,
-                    "components": [{"type": 17, "accent_color": color, "spoiler": False,
-                        "components": [
-                            {"type": 10, "content":
-                                f"### 💡 Vote Recorded — {verdict}\n"
-                                f"**From:** {entry.get('display_name', 'Unknown')} (`{entry['user_id']}`)\n"
-                                f"{title_line}"
-                                f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}\n\n"
-                                f"Want to send a reply to the suggester?"
-                            },
-                            {"type": 14, "divider": True, "spacing": 1},
-                            {"type": 1, "components": [
-                                {"type": 2, "style": 1, "label": "✏️ Add Reply",
-                                 "custom_id": f"suggestion:reply:{submitter_id}:{msg_id}:{action}"},
-                                {"type": 2, "style": 2, "label": "Skip",
-                                 "custom_id": f"suggestion:skip_reply:{submitter_id}:{msg_id}"},
-                            ]},
-                        ]}],
-                    "allowed_mentions": {"parse": []},
-                })
-            except Exception:
-                pass
-
             await send_ephemeral_v2(interaction,
-                f"**{verdict}** recorded. Check your DMs to optionally add a reply.\n"
+                f"**{verdict}** recorded.\n"
                 f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}", color)
-            return
-
-        # ── Admin DM "Add Reply" button → open modal (fresh interaction, never deferred) ──
-        if action == "reply":
-            # custom_id: suggestion:reply:<submitter_id>:<msg_id>:<vote_action>
-            vote_action = parts[4] if len(parts) > 4 else "agree"
-            if not is_admin(interaction):
-                await interaction.response.send_message("❌ Admins only.", ephemeral=True)
-                return
-            await interaction.response.send_modal(SuggestionReplyModal(
-                submitter_id=submitter_id,
-                msg_id=msg_id,
-                vote_action=vote_action,
-            ))
-            return
-
-        if action == "skip_reply":
-            # Acknowledge and edit the DM message to remove buttons
-            try:
-                await interaction.response.edit_message(
-                    components=[{"type": 17, "accent_color": 0x95A5A6, "spoiler": False,
-                        "components": [{"type": 10, "content": "✅ Skipped — no reply sent."}]}]
-                )
-            except Exception:
-                await interaction.response.defer()
             return
 
         return
@@ -7512,6 +7454,7 @@ async def suggest_cmd(interaction: discord.Interaction, title: str, suggestion: 
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.describe(
     type="What are you reporting?",
+    title="Short title for your report",
     target_user="User to report (leave empty for bug reports)",
     description="Describe the issue in detail",
 )
@@ -7520,7 +7463,7 @@ async def suggest_cmd(interaction: discord.Interaction, title: str, suggestion: 
     app_commands.Choice(name="Bug",  value="bug"),
 ])
 async def report_cmd(interaction: discord.Interaction, type: str,
-                     description: str, target_user: discord.User = None):
+                     title: str, description: str, target_user: discord.User = None):
     user_id = str(interaction.user.id)
     init_user(user_id)
     await interaction.response.defer(ephemeral=True)
@@ -7553,19 +7496,19 @@ async def report_cmd(interaction: discord.Interaction, type: str,
             msg_id = _uuid.uuid4().hex[:12]
             if type == "user":
                 content = (
-                    f"### 🚨 User Report\n"
-                    f"**Reported by:** {interaction.user.display_name} (`{user_id}`)\n"
+                    f"### 🚨 User Report: {title.strip()}\n"
+                    f"-# Submitted by: <@{user_id}> ({interaction.user.name})\n"
                     f"**Reported user:** {target_user.display_name} (`{target_user.id}`)\n\n"
-                    f"**Description:**\n{description.strip()}"
+                    f"{description.strip()}"
                 )
                 color = 0xE74C3C
             else:
                 content = (
-                    f"### 🐛 Bug Report\n"
-                    f"**Reported by:** {interaction.user.display_name} (`{user_id}`)\n"
+                    f"### 🐛 Bug Report: {title.strip()}\n"
+                    f"-# Submitted by: <@{user_id}> ({interaction.user.name})\n"
                     f"**Level:** {data[user_id]['level']} · "
                     f"**Prestige:** {data[user_id].get('prestige', 0)}\n\n"
-                    f"**Description:**\n{description.strip()}"
+                    f"{description.strip()}"
                 )
                 color = 0xE67E22
             route = Route("POST", "/channels/{channel_id}/messages",
