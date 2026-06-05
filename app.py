@@ -6294,11 +6294,82 @@ async def on_interaction(interaction: discord.Interaction):
             return
 
         if action in ("agree", "neutral", "disagree"):
-            await interaction.response.send_modal(SuggestionReplyModal(
-                action=action,
-                submitter_id=submitter_id,
-                msg_id=msg_id,
-            ))
+            entry    = _suggestion_store.get(msg_id)
+            verdict  = _VERDICT_LABELS[action]
+            color    = _VERDICT_COLORS[action]
+            admin_id = str(interaction.user.id)
+
+            if not entry:
+                await send_ephemeral_v2(interaction, "❌ Suggestion not found (may have expired).", 0xE74C3C)
+                return
+
+            votes = entry.setdefault("votes", {"agree": set(), "neutral": set(), "disagree": set()})
+            for v in votes.values():
+                v.discard(admin_id)
+            votes[action].add(admin_id)
+            agree_n    = len(votes["agree"])
+            neutral_n  = len(votes["neutral"])
+            disagree_n = len(votes["disagree"])
+
+            # Patch the channel message with updated vote counts
+            try:
+                channel_msg_id = entry.get("channel_msg_id")
+                if channel_msg_id:
+                    title_line = f"### {entry['title']}\n" if entry.get("title") else ""
+                    patch_route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}",
+                                        channel_id=SUGGESTION_CHANNEL_ID, message_id=channel_msg_id)
+                    await bot.http.request(patch_route, json={
+                        "flags": V2_FLAGS,
+                        "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
+                            "components": [
+                                {"type": 10, "content":
+                                    f"### 💡 New Suggestion\n"
+                                    f"**From:** {entry.get('display_name', 'Unknown')} (`{entry['user_id']}`)\n"
+                                    f"**Level:** {data.get(entry['user_id'], {}).get('level', '?')} · "
+                                    f"**Prestige:** {data.get(entry['user_id'], {}).get('prestige', 0)} · "
+                                    f"**Caught:** {data.get(entry['user_id'], {}).get('total_caught', 0):,}\n"
+                                    f"{title_line}"
+                                    f"{entry['text']}"
+                                },
+                                {"type": 14, "divider": True, "spacing": 1},
+                                {"type": 1, "components": [
+                                    {"type": 2, "style": 3, "label": f"✅ Agree ({agree_n})",
+                                     "custom_id": f"suggestion:agree:{submitter_id}:{msg_id}"},
+                                    {"type": 2, "style": 2, "label": f"➖ Neutral ({neutral_n})",
+                                     "custom_id": f"suggestion:neutral:{submitter_id}:{msg_id}"},
+                                    {"type": 2, "style": 4, "label": f"❌ Disagree ({disagree_n})",
+                                     "custom_id": f"suggestion:disagree:{submitter_id}:{msg_id}"},
+                                ]},
+                            ]}],
+                        "allowed_mentions": {"parse": []},
+                    })
+            except Exception:
+                pass
+
+            # DM the suggester with the verdict
+            try:
+                route    = Route("POST", "/users/@me/channels")
+                dm_ch    = await bot.http.request(route, json={"recipient_id": submitter_id})
+                dm_route = Route("POST", "/channels/{channel_id}/messages", channel_id=dm_ch["id"])
+                title_line = f"### {entry['title']}\n" if entry.get("title") else ""
+                await bot.http.request(dm_route, json={
+                    "flags": V2_FLAGS,
+                    "components": [{"type": 17, "accent_color": color, "spoiler": False,
+                        "components": [{"type": 10, "content":
+                            f"### 💡 Your Suggestion Got a Response!\n"
+                            f"**Verdict:** {verdict}\n\n"
+                            f"{title_line}"
+                            f"-# From the dev team.\n"
+                            f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}"
+                        }]}],
+                    "allowed_mentions": {"parse": []},
+                })
+            except Exception:
+                pass
+
+            await send_ephemeral_v2(interaction,
+                f"**{verdict}** recorded.\n"
+                f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}", color)
             return
 
         return
@@ -6830,94 +6901,6 @@ class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
 _VERDICT_LABELS = {"agree": "✅ Agreed", "neutral": "➖ Neutral", "disagree": "❌ Disagreed"}
 _VERDICT_COLORS = {"agree": 0x2ECC71,   "neutral": 0x95A5A6,    "disagree": 0xE74C3C}
 
-class SuggestionReplyModal(discord.ui.Modal, title="Admin Reply"):
-    reply_input = discord.ui.TextInput(
-        label="Your reply to the suggester",
-        placeholder="We'll forward this message to them via DM.",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=800,
-    )
-
-    def __init__(self, action: str, submitter_id: str, msg_id: str):
-        super().__init__()
-        self.action       = action
-        self.submitter_id = submitter_id
-        self.msg_id       = msg_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        reply_text = self.reply_input.value.strip()
-        verdict    = _VERDICT_LABELS[self.action]
-        color      = _VERDICT_COLORS[self.action]
-
-        # Record vote
-        entry = _suggestion_store.get(self.msg_id)
-        if entry:
-            admin_id = str(interaction.user.id)
-            votes = entry.setdefault("votes", {"agree": set(), "neutral": set(), "disagree": set()})
-            for v in votes.values():
-                v.discard(admin_id)  # remove any prior vote from this admin
-            votes[self.action].add(admin_id)
-            agree_n    = len(votes["agree"])
-            neutral_n  = len(votes["neutral"])
-            disagree_n = len(votes["disagree"])
-        else:
-            agree_n = neutral_n = disagree_n = 0
-
-        # Update the suggestion message buttons with new counts
-        try:
-            channel_msg_id = entry.get("channel_msg_id") if entry else None
-            if channel_msg_id:
-                patch_route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}",
-                                    channel_id=SUGGESTION_CHANNEL_ID, message_id=channel_msg_id)
-                await bot.http.request(patch_route, json={
-                    "flags": V2_FLAGS,
-                    "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
-                        "components": [
-                            {"type": 10, "content":
-                                f"### 💡 New Suggestion\n"
-                                f"**From:** <@{entry['user_id']}>\n\n"
-                                f"{entry['text']}"
-                            },
-                            {"type": 14, "divider": True, "spacing": 1},
-                            {"type": 1, "components": [
-                                {"type": 2, "style": 3, "label": f"✅ Agree ({agree_n})",
-                                 "custom_id": f"suggestion:agree:{self.submitter_id}:{self.msg_id}"},
-                                {"type": 2, "style": 2, "label": f"➖ Neutral ({neutral_n})",
-                                 "custom_id": f"suggestion:neutral:{self.submitter_id}:{self.msg_id}"},
-                                {"type": 2, "style": 4, "label": f"❌ Disagree ({disagree_n})",
-                                 "custom_id": f"suggestion:disagree:{self.submitter_id}:{self.msg_id}"},
-                            ]},
-                        ]}],
-                    "allowed_mentions": {"parse": []},
-                })
-        except Exception:
-            pass
-
-        # DM the suggester
-        try:
-            route    = Route("POST", "/users/@me/channels")
-            dm_ch    = await bot.http.request(route, json={"recipient_id": self.submitter_id})
-            dm_route = Route("POST", "/channels/{channel_id}/messages", channel_id=dm_ch["id"])
-            await bot.http.request(dm_route, json={
-                "flags": V2_FLAGS,
-                "components": [{"type": 17, "accent_color": color, "spoiler": False,
-                    "components": [{"type": 10, "content":
-                        f"### 💡 Your Suggestion Got a Response!\n"
-                        f"**Verdict:** {verdict}\n\n"
-                        f"{reply_text}\n\n"
-                        f"-# From the dev team."
-                    }]}],
-                "allowed_mentions": {"parse": []},
-            })
-        except Exception:
-            pass
-
-        await send_ephemeral_v2(interaction,
-            f"✅ **{verdict}** sent.\n"
-            f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}", color)
-
-
 
 @bot.tree.command(name="menu", description="Open the main hunter menu")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -7359,11 +7342,14 @@ async def gamble_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_gamble_menu(user_id))
     await check_everything(interaction, user_id)
 
-@bot.tree.command(name="suggest", description="Send a suggestion to the developers")
+@bot.tree.command(name="suggest", description="Make a suggestion for Idle Hunter")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.describe(suggestion="Your suggestion")
-async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
+@app_commands.describe(
+    title="Short title for your suggestion",
+    suggestion="Your full suggestion",
+)
+async def suggest_cmd(interaction: discord.Interaction, title: str, suggestion: str):
     user_id = str(interaction.user.id)
     init_user(user_id)
     await interaction.response.defer(ephemeral=True)
@@ -7373,7 +7359,7 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
     now          = time.time()
     last_suggest = data[user_id].get("last_suggest", 0)
     cooldown     = 3600
-    if is_admin(interaction) == False:
+    if not is_admin(interaction):
         if now - last_suggest < cooldown:
             remaining = int(cooldown - (now - last_suggest))
             mins, secs = remaining // 60, remaining % 60
@@ -7384,48 +7370,52 @@ async def suggest_cmd(interaction: discord.Interaction, suggestion: str):
             await send_ephemeral_v2(interaction,
                 "❌ Suggestion must be at least **20 characters**.", 0xE74C3C)
             return
+        if len(title.strip()) < 3:
+            await send_ephemeral_v2(interaction,
+                "❌ Title must be at least **3 characters**.", 0xE74C3C)
+            return
     async with user_transaction(user_id):
         data[user_id]["last_suggest"] = now
-    channel = bot.get_channel(SUGGESTION_CHANNEL_ID)
-    if channel:
-        try:
-            import uuid as _uuid
-            msg_id = _uuid.uuid4().hex[:12]
-            route = Route("POST", "/channels/{channel_id}/messages",
-                          channel_id=SUGGESTION_CHANNEL_ID)
-            sent = await bot.http.request(route, json={
-                "flags": V2_FLAGS,
-                "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
-                    "components": [
-                        {"type": 10, "content":
-                            f"### 💡 New Suggestion\n"
-                            f"**From:** {interaction.user.display_name} (`{user_id}`)\n"
-                            f"**Level:** {data[user_id]['level']} · "
-                            f"**Prestige:** {data[user_id].get('prestige', 0)} · "
-                            f"**Caught:** {data[user_id].get('total_caught', 0):,}\n\n"
-                            f"{suggestion.strip()}"
-                        },
-                        {"type": 14, "divider": True, "spacing": 1},
-                        {"type": 1, "components": [
-                            {"type": 2, "style": 3, "label": "✅ Agree (0)",
-                             "custom_id": f"suggestion:agree:{user_id}:{msg_id}"},
-                            {"type": 2, "style": 2, "label": "➖ Neutral (0)",
-                             "custom_id": f"suggestion:neutral:{user_id}:{msg_id}"},
-                            {"type": 2, "style": 4, "label": "❌ Disagree (0)",
-                             "custom_id": f"suggestion:disagree:{user_id}:{msg_id}"},
-                        ]},
-                    ]}],
-                "allowed_mentions": {"parse": []},
-            })
-            _suggestion_store[msg_id] = {
-                "user_id": user_id, "text": suggestion.strip(),
-                "channel_msg_id": sent.get("id"),
-                "votes": {"agree": set(), "neutral": set(), "disagree": set()},
-            }
-        except Exception:
-            pass
+    try:
+        import uuid as _uuid
+        msg_id = _uuid.uuid4().hex[:12]
+        route = Route("POST", "/channels/{channel_id}/messages",
+                      channel_id=SUGGESTION_CHANNEL_ID)
+        sent = await bot.http.request(route, json={
+            "flags": V2_FLAGS,
+            "components": [{"type": 17, "accent_color": 0x3498DB, "spoiler": False,
+                "components": [
+                    {"type": 10, "content":
+                        f"### 💡 New Suggestion\n"
+                        f"**From:** {interaction.user.display_name} (`{user_id}`)\n"
+                        f"**Level:** {data[user_id]['level']} · "
+                        f"**Prestige:** {data[user_id].get('prestige', 0)} · "
+                        f"**Caught:** {data[user_id].get('total_caught', 0):,}\n"
+                        f"### {title.strip()}\n"
+                        f"{suggestion.strip()}"
+                    },
+                    {"type": 14, "divider": True, "spacing": 1},
+                    {"type": 1, "components": [
+                        {"type": 2, "style": 3, "label": "✅ Agree (0)",
+                         "custom_id": f"suggestion:agree:{user_id}:{msg_id}"},
+                        {"type": 2, "style": 2, "label": "➖ Neutral (0)",
+                         "custom_id": f"suggestion:neutral:{user_id}:{msg_id}"},
+                        {"type": 2, "style": 4, "label": "❌ Disagree (0)",
+                         "custom_id": f"suggestion:disagree:{user_id}:{msg_id}"},
+                    ]},
+                ]}],
+            "allowed_mentions": {"parse": []},
+        })
+        _suggestion_store[msg_id] = {
+            "user_id": user_id, "display_name": interaction.user.display_name,
+            "title": title.strip(), "text": suggestion.strip(),
+            "channel_msg_id": sent.get("id"),
+            "votes": {"agree": set(), "neutral": set(), "disagree": set()},
+        }
+    except Exception:
+        pass
     await send_ephemeral_v2(interaction,
-        "### 💡 Suggestion Sent!\nYour suggestion has been sent to the developers. Thank you!", 0x2ECC71)
+        "### 💡 Suggestion Sent!\nYour suggestion has been forwarded to the developers. Thank you!", 0x2ECC71)
 
 @bot.tree.command(name="report", description="Report a user or a bug")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
