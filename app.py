@@ -6346,30 +6346,64 @@ async def on_interaction(interaction: discord.Interaction):
             except Exception:
                 pass
 
-            # DM the suggester with the verdict
+            # DM the admin a reply prompt with modal button + skip
             try:
                 route    = Route("POST", "/users/@me/channels")
-                dm_ch    = await bot.http.request(route, json={"recipient_id": submitter_id})
+                dm_ch    = await bot.http.request(route, json={"recipient_id": admin_id})
                 dm_route = Route("POST", "/channels/{channel_id}/messages", channel_id=dm_ch["id"])
                 title_line = f"### {entry['title']}\n" if entry.get("title") else ""
                 await bot.http.request(dm_route, json={
                     "flags": V2_FLAGS,
                     "components": [{"type": 17, "accent_color": color, "spoiler": False,
-                        "components": [{"type": 10, "content":
-                            f"### 💡 Your Suggestion Got a Response!\n"
-                            f"**Verdict:** {verdict}\n\n"
-                            f"{title_line}"
-                            f"-# From the dev team.\n"
-                            f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}"
-                        }]}],
+                        "components": [
+                            {"type": 10, "content":
+                                f"### 💡 Vote Recorded — {verdict}\n"
+                                f"**From:** {entry.get('display_name', 'Unknown')} (`{entry['user_id']}`)\n"
+                                f"{title_line}"
+                                f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}\n\n"
+                                f"Want to send a reply to the suggester?"
+                            },
+                            {"type": 14, "divider": True, "spacing": 1},
+                            {"type": 1, "components": [
+                                {"type": 2, "style": 1, "label": "✏️ Add Reply",
+                                 "custom_id": f"suggestion:reply:{submitter_id}:{msg_id}:{action}"},
+                                {"type": 2, "style": 2, "label": "Skip",
+                                 "custom_id": f"suggestion:skip_reply:{submitter_id}:{msg_id}"},
+                            ]},
+                        ]}],
                     "allowed_mentions": {"parse": []},
                 })
             except Exception:
                 pass
 
             await send_ephemeral_v2(interaction,
-                f"**{verdict}** recorded.\n"
+                f"**{verdict}** recorded. Check your DMs to optionally add a reply.\n"
                 f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}", color)
+            return
+
+        # ── Admin DM "Add Reply" button → open modal (fresh interaction, never deferred) ──
+        if action == "reply":
+            # custom_id: suggestion:reply:<submitter_id>:<msg_id>:<vote_action>
+            vote_action = parts[4] if len(parts) > 4 else "agree"
+            if not is_admin(interaction):
+                await interaction.response.send_message("❌ Admins only.", ephemeral=True)
+                return
+            await interaction.response.send_modal(SuggestionReplyModal(
+                submitter_id=submitter_id,
+                msg_id=msg_id,
+                vote_action=vote_action,
+            ))
+            return
+
+        if action == "skip_reply":
+            # Acknowledge and edit the DM message to remove buttons
+            try:
+                await interaction.response.edit_message(
+                    components=[{"type": 17, "accent_color": 0x95A5A6, "spoiler": False,
+                        "components": [{"type": 10, "content": "✅ Skipped — no reply sent."}]}]
+                )
+            except Exception:
+                await interaction.response.defer()
             return
 
         return
@@ -6900,6 +6934,62 @@ class BlackjackBetModal(discord.ui.Modal, title="Blackjack — Place Your Bet"):
 
 _VERDICT_LABELS = {"agree": "✅ Agreed", "neutral": "➖ Neutral", "disagree": "❌ Disagreed"}
 _VERDICT_COLORS = {"agree": 0x2ECC71,   "neutral": 0x95A5A6,    "disagree": 0xE74C3C}
+
+class SuggestionReplyModal(discord.ui.Modal, title="Reply to Suggester"):
+    reply_input = discord.ui.TextInput(
+        label="Your reply",
+        placeholder="This message will be sent to the suggester via DM.",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=800,
+    )
+
+    def __init__(self, submitter_id: str, msg_id: str, vote_action: str):
+        super().__init__()
+        self.submitter_id = submitter_id
+        self.msg_id       = msg_id
+        self.vote_action  = vote_action
+
+    async def on_submit(self, interaction: discord.Interaction):
+        reply_text = self.reply_input.value.strip()
+        verdict    = _VERDICT_LABELS.get(self.vote_action, "")
+        color      = _VERDICT_COLORS.get(self.vote_action, 0x3498DB)
+        entry      = _suggestion_store.get(self.msg_id)
+
+        votes      = entry.get("votes", {}) if entry else {}
+        agree_n    = len(votes.get("agree",    set()))
+        neutral_n  = len(votes.get("neutral",  set()))
+        disagree_n = len(votes.get("disagree", set()))
+
+        # DM the suggester
+        try:
+            route    = Route("POST", "/users/@me/channels")
+            dm_ch    = await bot.http.request(route, json={"recipient_id": self.submitter_id})
+            dm_route = Route("POST", "/channels/{channel_id}/messages", channel_id=dm_ch["id"])
+            title_line = f"### {entry['title']}\n" if entry and entry.get("title") else ""
+            await bot.http.request(dm_route, json={
+                "flags": V2_FLAGS,
+                "components": [{"type": 17, "accent_color": color, "spoiler": False,
+                    "components": [{"type": 10, "content":
+                        f"### 💡 Your Suggestion Got a Response!\n"
+                        f"**Verdict:** {verdict}\n\n"
+                        f"{title_line}"
+                        f"{reply_text}\n\n"
+                        f"-# From the dev team.\n"
+                        f"-# Tally — ✅ {agree_n} · ➖ {neutral_n} · ❌ {disagree_n}"
+                    }]}],
+                "allowed_mentions": {"parse": []},
+            })
+        except Exception:
+            pass
+
+        # Update the DM message to show it was handled
+        try:
+            await interaction.message.edit(content=None, view=None)
+        except Exception:
+            pass
+
+        await interaction.response.send_message("✅ Reply sent to the suggester.", ephemeral=True)
 
 
 @bot.tree.command(name="menu", description="Open the main hunter menu")
