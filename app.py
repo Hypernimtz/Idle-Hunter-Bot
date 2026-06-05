@@ -6313,7 +6313,6 @@ async def on_interaction(interaction: discord.Interaction):
 
         if action == "also_seen":
             entry = _report_store.get(msg_id)
-            await interaction.response.defer(ephemeral=True)
             if entry is None:
                 await send_ephemeral_v2(interaction, "❌ Report not found.", 0xE74C3C)
                 return
