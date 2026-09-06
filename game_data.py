@@ -6,11 +6,136 @@ Does NOT import from bot.py or backend.py.
 Discord is imported only for Color constants.
 """
 
-import discord, random, string, datetime
+import discord, random, string, datetime, re
 from datetime import datetime, timezone
 
 def today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# EMOJI  ·  SINGLE SOURCE OF TRUTH
+# ═════════════════════════════════════════════════════════════════════════
+# Every custom emoji the bot uses is defined ONCE here. To change an emoji
+# (new id, point it elsewhere, or swap to a plain-unicode fallback), edit its
+# value in this dict and nowhere else — BIOME_EMOJIS, RARITY_ICONS,
+# TRIBE_EMOJIS, USER_EMOJIS, COLOR_EMOJIS, UPGRADE_EMOJI and the /menu options
+# are all built from it further down.
+#
+# Format: "<:name:id>" for a custom emoji, or just "🐾" for plain unicode.
+
+EMOJI = {
+    # ── Biomes ────────────────────────────────────────────────
+    "village":            "<:village:1545568997565800529>",
+    "forest":             "<:forest:1545568996005249205>",
+    "woods":              "<:woods:1545568994529120416>",
+    "small_desert":       "<:small_desert:1545568992826236939>",
+    "large_desert":       "<:large_desert:1545568991873998858>",
+    "tundra":             "<:tundra:1545568990657519676>",
+    "jungle":             "<:jungle:1545568989323731084>",
+    "swamp":              "<:swamp:1545568987914575983>",
+    "volcanic_highlands": "<:volcanic_highlands:1545569995688255618>",
+    "cursed_ruins":       "<:cursed_ruins:1545568986865999963>",
+    "rainbow":            "<:rainbow:1545568985465225327>",
+    "abyssal_depths":     "<:abyssal_depths:1545568984131178506>",
+    "celestial_peaks":    "<:celestial_peaks:1545568982629883986>",
+
+    # ── Rarity ────────────────────────────────────────────────
+    "rarity_common":      "<:Common_Rarity:1499983185105387590>",
+    "rarity_uncommon":    "<:Uncommon_Rarity:1499983588236460032>",
+    "rarity_rare":        "<:Rare_Rarity:1499983646973497344>",
+    "rarity_epic":        "<:Epic_Rarity:1499983688304431266>",
+    "rarity_legendary":   "<:Legendary_Rarity:1499983727936147547>",
+    "rarity_mythic":      "<:Mythic_Rarity:1499983777923993732>",
+
+    # ── Bot / stat icons ──────────────────────────────────────
+    "upgrade":            "<:Upgrades:1545300062853402746>",
+    "xp":                 "<:XP:1544879141156028558>",
+    "levels":             "<:lvl:1545569013105426493>",
+    "stats":              "<:Stats:1545295849448276041>",
+    "luck":               "<:Luck:1544879017755418634>",
+    "biome":              "<:Biome:1545295450712834118>",
+    "cooldown":           "<:cooldown:1545569008072523847>",
+    "level_up":           "<:Level_Up:1545300418525929552>",
+    "profile":            "<:Profile:1544881489164902480>",
+    "sell_boost":         "<:sell_boost:1545569009414705233>",
+    "xp_boost":           "<:xp_boost:1545569010886774784>",
+    "luck_boost":         "<:luck_boost:1545569011906125915>",
+
+    # ── Currency ──────────────────────────────────────────────
+    "gem":                "<:Gem:1544879711400890398>",
+    "coin_sample":        "<:Currency_SAMPLE:1544879593599803402>",
+
+    # ── Feature icons (menu / screen headers) ────────────────
+    "settings":           "<:Settings:1545295653922537522>",
+    "daily":              "<:Daily:1545296051739828234>",
+    "quests":             "<:Quests:1545296208434561054>",
+    "leaderboard":        "<:Leaderboard:1545296515092713493>",
+    "new_notif":          "<:New_Notif:1545296680373452882>",
+    "achievements":       "<:Achievement:1545299593758244864>",
+    "bow":                "<:Bow:1545299720052678737>",
+    "collection":         "<:Collection:1545300017819164722>",
+    "equipment":          "<:Equipment:1545300191618269184>",
+    "inventory":          "<:Inventory:1545300256139247707>",
+    "key":                "<:Key:1545300311147675688>",
+    "lock":               "<:Lock:1545300385248452638>",
+    "mail":               "<:Mail:1545300476856373298>",
+    "vip":                "<:VIP:1545301018412195850>",
+    "list":               "<:List:1545301191515176971>",
+    "prestige":           "<:Prestige:1545301302756778024>",
+    "season_pass":        "<:Season_Pass:1545301442489880668>",
+    "clock":              "<:Clock:1544880382988517376>",
+    "rare_crate":         "<:rare_crate:1545568981547491368>",
+    "idle_camp":          "<:idle_camp:1545578488197546086>",
+
+    # ── Tribe ─────────────────────────────────────────────────
+    "tribe":              "<:Tribe:1544881569792135198>",
+    "tribe_members":      "<:Members:1545301250784886885>",
+    "tribe_kick":         "<:tribe_kick:1545569000204013578>",
+    "tribe_invite":       "<:tribe_invite:1545569006944133160>",
+    "tribe_ban":          "<:tribe_ban:1545569001273303130>",
+    "tribe_leave":        "<:tribe_leave:1545571276150542366>",
+    "tribe_leader":       "<:Leader:1545300347617280120>",
+    "tribe_officer":      "<:Officer:1545300510108688414>",
+    "tribe_demote":       "<:tribe_demote:1545569003374645288>",
+    "tribe_set_desc":     "<:tribe_set_desc:1545569004524015656>",
+    "tribe_promote":      "<:tribe_promote:1545569002372202587>",
+    "tribe_transfer":     "<:tribe_transfer:1545569005874708500>",
+
+    # ── Container colours ─────────────────────────────────────
+    "color_green":        "<:Village_Green:1499985282785743041>",
+    "color_dark_green":   "<:Forest_Dark_Green:1499985281410138204>",
+    "color_brown":        "<:Woods_Brown:1499985653847425074>",
+    "color_yellow":       "<:Desert_Yellow:1499985279103008838>",
+    "color_dark_yellow":  "<:Desert_Dark_Yellow:1499985277727408169>",
+    "color_light_blue":   "<:Tundra_Light_Blue:1499985276989341777>",
+    "color_lime_green":   "<:Jungle_Lime_Green:1499985275835908106>",
+    "color_dark_brown":   "<:Swamp_Dark_Brown:1499985272690053191>",
+    "color_orange":       "<:Volcanic_Highlands_Orange:1499985274413776946>",
+    "color_purple":       "<:Cursed_Ruins_Purple:1499985271637147678>",
+    "color_dark_blue":    "<:Abyssal_Depths_Blue:1499985270471397518>",
+    "color_rainbow":      "<:Rainbow_Pink:1499985269313634387>",
+    "color_platinum":     "<:Celestial_Peaks_Platinum:1499985268114198618>",
+    "color_colorless":    "<:None_Colorless:1499985266889330708>",
+
+    # ── Animals ───────────────────────────────────────────────
+    "animal_fallback":    "🐾",   # used for any animal with no emoji of its own
+}
+
+_EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]+):(\d+)>$")
+
+def emoji(key: str) -> str:
+    """The `<:name:id>` / unicode string for a registry key (or '' if unknown)."""
+    return EMOJI.get(key, "")
+
+def emoji_partial(key: str) -> dict:
+    """The `{'name', 'id', 'animated'}` form for a component payload's `emoji`
+    field. Accepts a registry key OR a raw `<:name:id>` / unicode string."""
+    s = EMOJI.get(key, key) or ""
+    m = _EMOJI_RE.match(s)
+    if m:
+        return {"name": m.group(2), "id": m.group(3), "animated": bool(m.group(1))}
+    return {"name": s} if s else {}
 
 # ─────────────────────────────────────────────
 # TOOLS
@@ -90,21 +215,12 @@ BIOME_LEVELS = [
     ("celestial_peaks",  1000),
 ]
 
-BIOME_EMOJIS = {
-    "village":             "<:Village:1499198420387369090>",
-    "forest":              "<:Forest:1499200283593674975>",
-    "woods":               "<:Woods:1499201326142455938>",
-    "small_desert":        "<:Small_Desert:1499201560473763850>",
-    "large_desert":        "<:Large_Desert:1499204067929620543>",
-    "tundra":              "<:Tundra:1499230188389797888>",
-    "jungle":              "<:Jungle:1499230354362470490>",
-    "swamp":               "<:Swamp:1499230538056335460>",
-    "volcanic_highlands":  "<:Volcanic_Highlands:1499230604825202871>",
-    "cursed_ruins":        "<:Cursed_Ruins:1499230731376005223>",
-    "rainbow":             "<:Rainbow:1499943967620599979>",
-    "abyssal_depths":      "<:Abyssal_Depths:1499230862250610748>",
-    "celestial_peaks":     "<:Celestial_Peaks:1499230958295973929>",
-}
+# Built from the EMOJI registry at the top of this file — edit ids there.
+BIOME_EMOJIS = {k: EMOJI[k] for k in (
+    "village", "forest", "woods", "small_desert", "large_desert", "tundra",
+    "jungle", "swamp", "volcanic_highlands", "cursed_ruins", "rainbow",
+    "abyssal_depths", "celestial_peaks",
+)}
 
 BIOME_NAMES = {
     "village":             "Village",
@@ -333,56 +449,40 @@ ANIMAL_DATA = {
     "The Eternal Hunter":{"value":150_000,"xp": 45000, "rarity": "mythic",  "emoji": ""},
 }
 
-ANIMAL_EMOJI = ""
+# Fallback icon for any animal whose own "emoji" is blank (currently all of them),
+# so inventory / profile / record lines don't render a gap where an icon belongs.
+ANIMAL_EMOJI = EMOJI["animal_fallback"]
 
 
 # ─────────────────────────────────────────────
 # EMOJIS / ICONS
 # ─────────────────────────────────────────────
 
-UPGRADE_EMOJI = "<:Bot_Upgrade:1500237654891958394>"
+# All built from the EMOJI registry at the top of this file — edit ids there.
+UPGRADE_EMOJI = EMOJI["upgrade"]
 
-RARITY_ICONS = {
-    "common":    "<:Common_Rarity:1499983185105387590>",
-    "uncommon":  "<:Uncommon_Rarity:1499983588236460032>",
-    "rare":      "<:Rare_Rarity:1499983646973497344>",
-    "epic":      "<:Epic_Rarity:1499983688304431266>",
-    "legendary": "<:Legendary_Rarity:1499983727936147547>",
-    "mythic":    "<:Mythic_Rarity:1499983777923993732>",
-}
+RARITY_ICONS = {r: EMOJI[f"rarity_{r}"] for r in
+                ("common", "uncommon", "rare", "epic", "legendary", "mythic")}
 
 TRIBE_EMOJIS = {
-    "members":    "<:Tribe_Members:1500224532022296586>",
-    "kick":       "<:Tribe_Kick:1500224528985620663>",
-    "invite":     "<:Tribe_Invite:1500224530348638329>",
-    "ban":        "<:Tribe_Ban:1500224527756558497>",
-    "leave":      "<:Tribe_Leave:1500224526699597864>",
-    "leader":     "<:Tribe_Leader:1500237652740538388>",
-    "officer":    "<:Tribe_Officer:1500240066801569994>",
-    "tribe":      "<:Bot_Tribe:1500237653591851080>",
-    "demote":     "<:Tribe_Demote:1500237650366304378>",
-    "set_desc":   "<:Tribe_Set_Desc:1500237649112338592>",
-    "xp":         "<:Bot_XP:1500237661422485514>",
-    "levels":     "<:Bot_Levels:1500237660181233735>",
-    "sell_boost": "<:Sell_Boost:1500237659275001856>",
-    "xp_boost":   "<:XP_Boost:1500237658037944400>",
-    "luck_boost": "<:Luck_Boost:1500237656292855839>",
-    "stats":      "<:Bot_Stats:1500242977501483228>",
-    "luck":       "<:Bot_Luck:1500239746570522685>",
+    "members":  EMOJI["tribe_members"], "kick":     EMOJI["tribe_kick"],
+    "invite":   EMOJI["tribe_invite"],  "ban":      EMOJI["tribe_ban"],
+    "leave":    EMOJI["tribe_leave"],   "leader":   EMOJI["tribe_leader"],
+    "officer":  EMOJI["tribe_officer"], "tribe":    EMOJI["tribe"],
+    "demote":   EMOJI["tribe_demote"],  "set_desc": EMOJI["tribe_set_desc"],
+    "xp":       EMOJI["xp"],            "levels":   EMOJI["levels"],
+    "sell_boost": EMOJI["sell_boost"],  "xp_boost": EMOJI["xp_boost"],
+    "luck_boost": EMOJI["luck_boost"],  "stats":    EMOJI["stats"],
+    "luck":     EMOJI["luck"],
 }
 
 USER_EMOJIS = {
-    "profile":    "<:User_Profile:1500237646121930863>",
-    "stats":      "<:Bot_Stats:1500242977501483228>",
-    "xp":         "<:Bot_XP:1500237661422485514>",
-    "levels":     "<:Bot_Levels:1500237660181233735>",
-    "sell_boost": "<:Sell_Boost:1500237659275001856>",
-    "xp_boost":   "<:XP_Boost:1500237658037944400>",
-    "luck_boost": "<:Luck_Boost:1500237656292855839>",
-    "luck":       "<:Bot_Luck:1500239746570522685>",
-    "biome":      "<:Bot_Biome:1500237641998799050>",
-    "cooldown":   "<:Bot_Cooldown:1500237640962670764>",
-    "level_up":   "<:XP_Level_Up:1500239747744792606>",
+    "profile":  EMOJI["profile"],   "stats":      EMOJI["stats"],
+    "xp":       EMOJI["xp"],        "levels":     EMOJI["levels"],
+    "sell_boost": EMOJI["sell_boost"], "xp_boost": EMOJI["xp_boost"],
+    "luck_boost": EMOJI["luck_boost"], "luck":     EMOJI["luck"],
+    "biome":    EMOJI["biome"],     "cooldown":   EMOJI["cooldown"],
+    "level_up": EMOJI["level_up"],
 }
 
 
@@ -850,7 +950,7 @@ CRATE_TIERS = {
         "color": 0x95A5A6,
     },
     "Rare Crate": {
-        "emoji": "🎁",
+        "emoji": emoji("rare_crate"),
         "price": 200_000,
         "currency": "money",
         "description": "A rarer crate with better loot.",
@@ -1101,22 +1201,12 @@ COLORS = {
     "colorless":   discord.Color(0x000000),
 }
 
-COLOR_EMOJIS = {
-    "green":       "<:Village_Green:1499985282785743041>",
-    "dark green":  "<:Forest_Dark_Green:1499985281410138204>",
-    "brown":       "<:Woods_Brown:1499985653847425074>",
-    "yellow":      "<:Desert_Yellow:1499985279103008838>",
-    "dark yellow": "<:Desert_Dark_Yellow:1499985277727408169>",
-    "light blue":  "<:Tundra_Light_Blue:1499985276989341777>",
-    "lime green":  "<:Jungle_Lime_Green:1499985275835908106>",
-    "dark brown":  "<:Swamp_Dark_Brown:1499985272690053191>",
-    "orange":      "<:Volcanic_Highlands_Orange:1499985274413776946>",
-    "purple":      "<:Cursed_Ruins_Purple:1499985271637147678>",
-    "dark blue":   "<:Abyssal_Depths_Blue:1499985270471397518>",
-    "rainbow":     "<:Rainbow_Pink:1499985269313634387>",
-    "platinum":    "<:Celestial_Peaks_Platinum:1499985268114198618>",
-    "colorless":   "<:None_Colorless:1499985266889330708>",
-}
+# Built from the EMOJI registry at the top of this file — edit ids there.
+COLOR_EMOJIS = {c: EMOJI[f"color_{c.replace(' ', '_')}"] for c in (
+    "green", "dark green", "brown", "yellow", "dark yellow", "light blue",
+    "lime green", "dark brown", "orange", "purple", "dark blue", "rainbow",
+    "platinum", "colorless",
+)}
 
 COLOR_LABELS = {
     "green":       "Green",
@@ -1157,32 +1247,36 @@ COLOR_DESCRIPTIONS = {
 # GAMBLE
 # ─────────────────────────────────────────────
 
-ROULETTE_COLORS    = ["red", "black", "green"]   # equal 1/3 each
-
+# Weighted wheel — mirrors real roulette (red/black common, green rare).
+# ROULETTE_BET_TYPES: name -> (label, wheel_weight_pct, payout_multiplier)
 ROULETTE_BET_TYPES = {
-    "red":   ("🔴 Red",   4, 2),
-    "black": ("⚫ Black", 8, 2),
-    "green": ("🟢 Green", 3, 5),
+    "red":   ("🔴 Red",   47, 2),
+    "black": ("⚫ Black", 47, 2),
+    "green": ("🟢 Green",  6, 15),
 }
+ROULETTE_COLORS  = list(ROULETTE_BET_TYPES.keys())
+ROULETTE_WEIGHTS = [v[1] for v in ROULETTE_BET_TYPES.values()]
 
 RPS_CHOICES = {"rock": "✊", "paper": "🖐️", "scissors": "✌️"}
 RPS_BEATS   = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
 
 # (min_bet, max_bet, win_chance_pct, win_multiplier)
+# Multipliers tuned so every biome pays back ~0.92 per ◈ staked (a small,
+# consistent house edge — no biome is a money printer).
 SLOT_BIOME_CONFIG = {
     "village":             (        100,         10_000, 45, 2.0),
     "forest":              (        500,         50_000, 42, 2.2),
-    "woods":               (      1_000,        100_000, 40, 2.5),
-    "small_desert":        (      2_500,        250_000, 37, 2.8),
-    "large_desert":        (      5_000,        500_000, 35, 3.0),
-    "tundra":              (     10_000,      1_000_000, 32, 3.5),
-    "jungle":              (     25_000,      2_500_000, 30, 3.8),
-    "swamp":               (     50_000,      5_000_000, 28, 4.0),
-    "volcanic_highlands":  (    100_000,     10_000_000, 25, 4.5),
-    "cursed_ruins":        (    250_000,     25_000_000, 22, 5.0),
-    "rainbow":             (    500_000,     50_000_000, 18, 6.0),
-    "abyssal_depths":      (  1_000_000,    100_000_000, 15, 7.0),
-    "celestial_peaks":     (  2_500_000,    250_000_000, 12, 8.0),
+    "woods":               (      1_000,        100_000, 40, 2.3),
+    "small_desert":        (      2_500,        250_000, 37, 2.5),
+    "large_desert":        (      5_000,        500_000, 35, 2.6),
+    "tundra":              (     10_000,      1_000_000, 32, 2.9),
+    "jungle":              (     25_000,      2_500_000, 30, 3.1),
+    "swamp":               (     50_000,      5_000_000, 28, 3.3),
+    "volcanic_highlands":  (    100_000,     10_000_000, 25, 3.7),
+    "cursed_ruins":        (    250_000,     25_000_000, 22, 4.2),
+    "rainbow":             (    500_000,     50_000_000, 18, 5.1),
+    "abyssal_depths":      (  1_000_000,    100_000_000, 15, 6.2),
+    "celestial_peaks":     (  2_500_000,    250_000_000, 12, 7.7),
 }
 
 

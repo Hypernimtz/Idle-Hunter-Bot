@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,10 +41,13 @@ async def init_databases():
     await init_schema()
 
 async def close_databases():
-    """Close SQLite connection"""
+    """Close SQLite connection (idempotent)."""
     global _pool
-    if _pool:
-        await _pool.close()
+    if _pool is not None:
+        try:
+            await _pool.close()
+        finally:
+            _pool = None
 
 async def init_schema():
     """Create all tables if they don't exist"""
@@ -110,12 +113,19 @@ async def get_user(user_id: str) -> dict:
         _data_cache[user_id] = data
         return data.copy()
 
+# Upsert that keeps immutable columns (created_at, last_active) intact — plain
+# INSERT OR REPLACE deletes + re-inserts the row, resetting those defaults.
+_USER_UPSERT = """
+    INSERT INTO users (user_id, data, username, level, money, prestige, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET
+        data=excluded.data, username=excluded.username, level=excluded.level,
+        money=excluded.money, prestige=excluded.prestige, updated_at=excluded.updated_at
+"""
+
 async def save_user(user_id: str, data: dict):
     """Save user data to SQLite"""
-    await _pool.execute("""
-        INSERT OR REPLACE INTO users (user_id, data, username, level, money, prestige, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    """, (
+    await _pool.execute(_USER_UPSERT, (
         user_id,
         json.dumps(data),
         data.get("username", ""),
@@ -124,24 +134,27 @@ async def save_user(user_id: str, data: dict):
         data.get("prestige", 0)
     ))
     await _pool.commit()
-    
+
     # Update cache
     _data_cache[user_id] = data
 
 async def bulk_save_users(users: dict[str, dict]):
     """Bulk save multiple users"""
-    await _pool.executemany("""
-        INSERT OR REPLACE INTO users (user_id, data, username, level, money, prestige, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    """, [
-        (uid, json.dumps(data), data.get("username", ""), 
+    await _pool.executemany(_USER_UPSERT, [
+        (uid, json.dumps(data), data.get("username", ""),
          data.get("level", 1), data.get("money", 0), data.get("prestige", 0))
         for uid, data in users.items()
     ])
     await _pool.commit()
-    
+
     # Update cache
     _data_cache.update(users)
+
+async def delete_user(user_id: str) -> None:
+    """Permanently remove a user row from SQLite and drop it from the cache."""
+    await _pool.execute("DELETE FROM users WHERE user_id = ?", (str(user_id),))
+    await _pool.commit()
+    _data_cache.pop(str(user_id), None)
 
 async def get_tribe(tribe_name: str) -> dict:
     """Get tribe data"""
@@ -163,8 +176,11 @@ async def save_tribe(tribe_name: str, data: dict):
     member_count = 1 + len(data.get("roles", {}).get("officer", [])) + len(data.get("roles", {}).get("members", []))
     
     await _pool.execute("""
-        INSERT OR REPLACE INTO tribes (name, data, level, member_count, updated_at)
+        INSERT INTO tribes (name, data, level, member_count, updated_at)
         VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(name) DO UPDATE SET
+            data=excluded.data, level=excluded.level,
+            member_count=excluded.member_count, updated_at=excluded.updated_at
     """, (tribe_name, json.dumps(data), data.get("level", 1), member_count))
     await _pool.commit()
     
@@ -239,7 +255,8 @@ async def log_economy_event_buffered(
     """Buffer economy events for batch writing"""
     if delta == 0:
         return
-    
+
+    to_write = None
     async with _BUFFER_LOCK:
         _economy_buffer.append({
             "user_id": user_id,
@@ -248,24 +265,35 @@ async def log_economy_event_buffered(
             "balance_after": balance_after,
             "currency": currency
         })
-        
         if len(_economy_buffer) >= _BUFFER_SIZE:
-            await _flush_economy_buffer()
+            # Detach the batch while we still hold the lock, then write it OUTSIDE
+            # the lock — calling _flush_economy_buffer() here would re-acquire the
+            # same non-reentrant lock and deadlock forever.
+            to_write = _economy_buffer[:]
+            _economy_buffer.clear()
+
+    if to_write:
+        await _write_economy_rows(to_write)
+
+async def _write_economy_rows(rows: list) -> None:
+    if not rows or _pool is None:
+        return
+    await _pool.executemany("""
+        INSERT INTO economy_log (user_id, source, delta, balance_after, currency)
+        VALUES (?, ?, ?, ?, ?)
+    """, [(e["user_id"], e["source"], e["delta"], e["balance_after"], e["currency"]) for e in rows])
+    await _pool.commit()
 
 async def _flush_economy_buffer():
-    """Write buffered economy events to SQLite"""
+    """Drain and persist whatever is currently buffered. Safe to call on its own
+    (shutdown, periodic flush) — never from inside the buffer lock."""
     global _economy_buffer
     async with _BUFFER_LOCK:
         if not _economy_buffer:
             return
         buffer = _economy_buffer[:]
         _economy_buffer = []
-    
-    await _pool.executemany("""
-        INSERT INTO economy_log (user_id, source, delta, balance_after, currency)
-        VALUES (?, ?, ?, ?, ?)
-    """, [(e["user_id"], e["source"], e["delta"], e["balance_after"], e["currency"]) for e in buffer])
-    await _pool.commit()
+    await _write_economy_rows(buffer)
 
 # Leaderboard using SQLite
 async def update_leaderboard(user_id: str, stat: str, value: int):
@@ -363,6 +391,27 @@ async def user_transaction(user_id: str):
 
 
 @asynccontextmanager
+async def multi_user_transaction(*user_ids: str):
+    """Serialise mutations to several users at once and flush on exit.
+
+    Locks are taken in a globally consistent order (sorted, de-duplicated) so two
+    interactions that touch the same pair of users — e.g. A gifting B while B
+    gifts A — can never each hold one lock while waiting on the other.
+
+        async with multi_user_transaction(sender_id, recipient_id):
+            spend_money(sender_id, n, "gift"); add_money(recipient_id, n, "gift")
+    """
+    uniq = sorted({str(u) for u in user_ids})
+    async with AsyncExitStack() as stack:
+        for uid in uniq:
+            await stack.enter_async_context(get_user_lock(uid))
+        try:
+            yield
+        finally:
+            _flush_users()
+
+
+@asynccontextmanager
 async def user_tribe_transaction(user_id: str):
     """
     Serialise mutations to both data[user_id] and tribe_data, flush both.
@@ -437,7 +486,7 @@ def log_economy_event(
 # SCHEMA VERSION
 # ─────────────────────────────────────────────
 
-CURRENT_SCHEMA: int = 4  # bump whenever a new migration is added
+CURRENT_SCHEMA: int = 5  # bump whenever a new migration is added
 
 
 # ─────────────────────────────────────────────
@@ -482,9 +531,12 @@ class Boosts:
 
 @dataclass
 class IdleState:
-    active:     bool  = False
-    stacks:     int   = 0
-    started_at: float = 0.0
+    active:            bool      = False
+    stacks:            int       = 0       # number of hunters stationed at the camp
+    started_at:        float     = 0.0     # timestamp catches accumulate from
+    camp_biome:        str       = "village"
+    haul:              list[str] = field(default_factory=list)  # caught animals awaiting collection
+    capacity_upgrades: int       = 0
 
     @classmethod
     def from_dict(cls, d: dict) -> "IdleState":
@@ -492,13 +544,19 @@ class IdleState:
             active=bool(d.get("active", False)),
             stacks=int(d.get("stacks", 0)),
             started_at=float(d.get("started_at", 0)),
+            camp_biome=str(d.get("camp_biome", "village") or "village"),
+            haul=list(d.get("haul", [])),
+            capacity_upgrades=int(d.get("capacity_upgrades", 0)),
         )
 
     def to_dict(self) -> dict:
         return {
-            "active":     self.active,
-            "stacks":     self.stacks,
-            "started_at": self.started_at,
+            "active":            self.active,
+            "stacks":            self.stacks,
+            "started_at":        self.started_at,
+            "camp_biome":        self.camp_biome,
+            "haul":              self.haul,
+            "capacity_upgrades": self.capacity_upgrades,
         }
 
 
@@ -1047,11 +1105,25 @@ def _migrate_v4(d: dict) -> dict:
     return d
 
 
+def _migrate_v5(d: dict) -> dict:
+    """v4 → v5: Hunting Camp idle rework — camp biome, haul buffer, storage upgrades.
+
+    Existing idle ``stacks`` (hunters) and ``started_at`` carry over unchanged; the
+    camp starts in whatever biome the player currently hunts.
+    """
+    idle = d.setdefault("idle", {})
+    idle.setdefault("camp_biome", d.get("biome", "village") or "village")
+    idle.setdefault("haul", [])
+    idle.setdefault("capacity_upgrades", 0)
+    return d
+
+
 MIGRATIONS: list[tuple[int, Any]] = [
     (1, _migrate_v1),
     (2, _migrate_v2),
     (3, _migrate_v3),
     (4, _migrate_v4),
+    (5, _migrate_v5),
 ]
 
 
