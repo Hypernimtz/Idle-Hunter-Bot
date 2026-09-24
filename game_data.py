@@ -614,12 +614,42 @@ EMOJI["coinflip"]       = EMOJI["coin_sample"]   # 🪙 coinflip / "sell all"
 EMOJI["money_bag"]      = EMOJI["coin_sample"]   # 💰 was a bare-unicode placeholder (2026-09-22)
 EMOJI["trophy"]         = EMOJI["leaderboard"]   # 🏆 trophies / records
 EMOJI["book"]           = EMOJI["collection"]    # 📖 help / tutorial / stats
+_EMOJI_ALIASES = {"hp": "heart"}   # alias -> source, re-pointed by adopt_named_emojis()
 EMOJI["hp"]             = EMOJI["heart"]         # ❤️ player/animal HP — was genuinely undefined, unlike
                                                   # the four above (this key never existed at all, so
                                                   # every `emoji("hp")` call was silently falling back to
                                                   # its own hardcoded "❤️" default every time)
 
+# Single-codepoint glyphs whose DEFAULT presentation is text, not emoji (❤ ⚙ 🛡 …).
+# Without U+FE0F Discord renders these as a small monochrome symbol — the registry
+# stored them bare, which is why the HP heart looked like plain unicode text.
+_TEXT_DEFAULT_GLYPHS = set("🏕🗺🏷🎖🛡⚙❤⬆⏱⏹⛑🖐✌♀☠☀❄♻⚔✖🏞🌦🌧🕸🕴🕳🗡🛠🗳🏍🐿")
+for _k, _v in list(EMOJI.items()):
+    if len(_v) == 1 and _v in _TEXT_DEFAULT_GLYPHS:
+        EMOJI[_k] = _v + "️"
+
 _EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]+):(\d+)>$")
+
+def adopt_named_emojis(available: dict[str, str]) -> list[str]:
+    """Auto-activate art by NAME. ``available`` maps an uploaded emoji's name to its
+    ``<:name:id>`` string (application + server emojis). Any registry key that is
+    still a plain-unicode placeholder and has an uploaded emoji of the same name is
+    switched to it — so finishing an icon is just "upload it named like the key",
+    then restart; no id copy-paste. Returns the keys adopted."""
+    adopted = []
+    for key, val in list(EMOJI.items()):
+        if val.startswith("<"):
+            continue
+        cand = available.get(key)
+        if cand and _EMOJI_RE.match(cand):
+            EMOJI[key] = cand
+            adopted.append(key)
+    # aliases that were copied by value at import time
+    for alias, src in _EMOJI_ALIASES.items():
+        if not EMOJI.get(alias, "<").startswith("<") and EMOJI.get(src, "").startswith("<"):
+            EMOJI[alias] = EMOJI[src]
+            adopted.append(alias)
+    return adopted
 
 def emoji(key: str) -> str:
     """The `<:name:id>` / unicode string for a registry key (or '' if unknown)."""

@@ -64,7 +64,7 @@ from game_data import (
     # Rarity icons
     RARITY_ICONS, RARITY_KEYS, SHARD_ICONS, CRYSTAL_ICONS, GEMSTONE_ICONS,
     # Emojis
-    UPGRADE_EMOJI, TRIBE_EMOJIS, USER_EMOJIS, EMOJI, emoji, emoji_partial,
+    UPGRADE_EMOJI, TRIBE_EMOJIS, USER_EMOJIS, EMOJI, emoji, emoji_partial, adopt_named_emojis,
     # Tips
     TIPS,
     # Commands
@@ -332,9 +332,9 @@ ADMIN_BUFF_EVENT = {
         f"{ph('🔨')} Crystal crafting is **instant**",
         f"{ph('🔫')} Ammo is **not consumed** while hunting",
         f"{ph('💲')} Sell price **×2**",
-        f"{ph('✨')} XP **×2**",
-        f"{ph('🏕️')} Idle camp: **×2** catch rate & **×2** storage",
-        f"{ph('💎')} Shard drops **10% → 25%**, crate drops **5% → 15%**",
+        f"{ph(emoji('sparkles'))} XP **×2**",
+        f"{ph(emoji('idle_camp'))} Idle camp: **×2** catch rate & **×2** storage",
+        f"{ph(emoji('gem'))} Shard drops **10% → 25%**, crate drops **5% → 15%**",
         f"{ph('📅')} Daily reward **×2**",
         f"{emoji('shop')} Shop **50% off** everything",
         f"{emoji('dice')} Gamble: **no cooldown between wagers**",
@@ -510,7 +510,7 @@ def event_banner_line() -> str:
     if not ev:
         return ""
     spec = EVENTS.get(ev["key"], ADMIN_BUFF_EVENT)
-    return f"{spec.get('emoji','🎉')} **{ev['name']}** is live — ends <t:{int(ev['ends_ts'])}:R>"
+    return f"{spec.get('emoji', emoji('party_popper'))} **{ev['name']}** is live — ends <t:{int(ev['ends_ts'])}:R>"
 
 # ═══════════════════════════════════════════════════════════════
 # WORLD CONDITIONS  ·  rotating per-region wildlife/weather state (V2)
@@ -861,7 +861,7 @@ def trial_tool_line(user_id: str) -> str:
     if not tr:
         return ""
     t_info = TOOLS.get(tr["tool"], {})
-    return (f"{t_info.get('emoji','🏹')} **Training {tr['tool']}** (loaner) — "
+    return (f"{t_info.get('emoji', emoji('bow'))} **Training {tr['tool']}** (loaner) — "
            f"returns <t:{int(tr['expires_at'])}:R>")
 
 # ═══════════════════════════════════════════════════════════════
@@ -999,7 +999,7 @@ def _fox_reward(user_id: str) -> str:
     st["lead"] = FOX_LEAD_START + st["recovered"]   # the fox gets craftier
     line = "`🦊` You corner the fox and grab the parcel — " + " and ".join(bits) + "!"
     if got:
-        line += "\n-# `🏅` Unlocked " + " + ".join(got) + "."
+        line += f"\n-# {emoji('sports_medal')} Unlocked " + " + ".join(got) + "."
     return line
 
 def fox_route(user_id: str, route: str) -> dict:
@@ -1040,7 +1040,7 @@ def _build_fox_panel(user_id: str) -> list:
         f"-# {st['lead']} lengths ahead" + ("" if st.get('perfect', True) else " · trail broken (no *Outfoxed* this run)") + "\n"
         f"-# {emoji('gift')} Parcel tokens: **{st.get('parcels',0)}** · recovered **{st.get('recovered',0)}**"
         + (f" (need {FOX_TITLE_AT} clean for *Outfoxed*)" if st.get('recovered',0) < FOX_TITLE_AT else "") + "\n"
-        f"-# `🐾` Tracking runs left today: **{left}/{FOX_ATTEMPTS_DAY}** · {_event_end_line(ev)[2:]}"
+        f"-# {emoji('animal_fallback')} Tracking runs left today: **{left}/{FOX_ATTEMPTS_DAY}** · {_event_end_line(ev)[2:]}"
     )
     rows = [{"type": 10, "content": content}, {"type": 14, "divider": True, "spacing": 1}]
     rows.append({"type": 1, "components": [
@@ -1068,7 +1068,7 @@ def ship_dive(user_id: str, spot: str) -> dict:
     if s["risk"] and random.randint(1, 100) <= s["risk"]:
         lost = int(st["unbanked"] * s["loss"])
         st["unbanked"] = max(0, st["unbanked"] - lost)
-        msg += f"\n-# `💥` A beam gives way — you drop **{lost}** unbanked salvage scrambling out. (Banked salvage is safe.)"
+        msg += f"\n-# {emoji('impact')} A beam gives way — you drop **{lost}** unbanked salvage scrambling out. (Banked salvage is safe.)"
     return {"msg": msg}
 
 def ship_bank(user_id: str) -> dict:
@@ -1078,7 +1078,7 @@ def ship_bank(user_id: str) -> dict:
     moved = st.get("unbanked", 0)
     st["banked"] = st.get("banked", 0) + moved
     st["unbanked"] = 0
-    return {"msg": f"`🏦` Banked **{moved}** salvage — that's yours for keeps."}
+    return {"msg": f"{emoji('bank')} Banked **{moved}** salvage — that's yours for keeps."}
 
 def _build_shipwreck_panel(user_id: str) -> list:
     ev = get_active_event()
@@ -1087,7 +1087,7 @@ def _build_shipwreck_panel(user_id: str) -> list:
     content = (
         f"# `🏴‍☠️` {ev['name']}\n{EVENTS['shipwreck']['blurb']}\n\n"
         f"`⚓` **Unbanked salvage:** {st.get('unbanked',0)}  (at risk on deep dives)\n"
-        f"`🏦` **Banked salvage:** {st.get('banked',0)}  (safe — spend it in the shop)\n"
+        f"{emoji('bank')} **Banked salvage:** {st.get('banked',0)}  (safe — spend it in the shop)\n"
         f"-# `🤿` Dives left today: **{left}/{SHIP_DIVES_DAY}** · {_event_end_line(ev)[2:]}\n"
         f"-# Nothing you own or bought is ever at risk — only unbanked salvage."
     )
@@ -1097,7 +1097,7 @@ def _build_shipwreck_panel(user_id: str) -> list:
          "label": v["label"], "custom_id": f"event:ship:{k}:{user_id}"}
         for k, v in SHIP_SPOTS.items()]})
     rows.append({"type": 1, "components": [
-        {"type": 2, "style": 1, "label": "🏦 Bank Salvage", "custom_id": f"event:ship:bank:{user_id}",
+        {"type": 2, "style": 1, "label": "Bank Salvage", "emoji": emoji_partial('bank'), "custom_id": f"event:ship:bank:{user_id}",
          "disabled": st.get("unbanked", 0) <= 0},
         _event_shop_btn(user_id, "shipwreck"),
         _back_row(user_id)["components"][0]]})
@@ -1169,10 +1169,10 @@ def duck_feed(user_id: str) -> str:
     msg = f"`🍞` You toss **{give}** crumbs to the flock."
     if comm["progress"] >= comm["goal"] and not ev.get("ending"):
         _duck_resolve(ev)
-        msg += "\n-# `🎉` The community goal is met — the ducks are dealt with!"
+        msg += f"\n-# {emoji('party_popper')} The community goal is met — the ducks are dealt with!"
     got = _duck_try_claim(user_id)
     if got:
-        msg += "\n-# `🏅` You earned " + " + ".join(got) + "."
+        msg += f"\n-# {emoji('sports_medal')} You earned " + " + ".join(got) + "."
     return msg
 
 def _build_duck_panel(user_id: str) -> list:
@@ -2026,7 +2026,7 @@ def _exp_start(tname: str, uid: str, key: str) -> tuple[bool, str]:
         "route": None, "votes": {}, "participants": [], "contributions": {},
         "progress": 0, "goal": 0, "ends_ts": 0, "done": False, "opened_by": str(uid),
     }
-    _tribe_log(td, f"`🏕️` `{get_username(uid)}` opened **{spec['name']}** — vote a route!")
+    _tribe_log(td, f"{emoji('tribe')} `{get_username(uid)}` opened **{spec['name']}** — vote a route!")
     return True, f"**{spec['name']}** opened. Everyone vote a route in `/expedition`."
 
 def _exp_vote(tname: str, uid: str, route: str) -> tuple[bool, str]:
@@ -2155,9 +2155,9 @@ def build_expedition_components(user_id: str) -> list:
         {"type": 2, "style": 2, "label": "Menu", "custom_id": f"nav:menu:{user_id}"}]}
 
     if not FEATURE_EXPEDITIONS:
-        return _wrap("### `🏕️` Tribe Expeditions\n-# Not active right now.", [back])
+        return _wrap(f"### {emoji('tribe')} Tribe Expeditions\n-# Not active right now.", [back])
     if not tname or tname not in tribe_data:
-        return _wrap("### `🏕️` Tribe Expeditions\nJoin or create a tribe first — "
+        return _wrap(f"### {emoji('tribe')} Tribe Expeditions\nJoin or create a tribe first — "
                      "expeditions are a group effort.", [back])
 
     td = tribe_data[tname]
@@ -2173,12 +2173,12 @@ def build_expedition_components(user_id: str) -> list:
             last = (f"\n-# Last: **{sp.get('name','')}** — "
                     f"{emoji('check_mark') + ' complete' if exp.get('success') else emoji('cross_mark') + ' failed'}.")
         if not can_lead:
-            return _wrap(f"### `🏕️` Tribe Expeditions — {tname}\n"
+            return _wrap(f"### {emoji('tribe')} Tribe Expeditions — {tname}\n"
                         f"No expedition running. A leader or officer can start one.{last}", [back])
         opts = [{"label": s["name"], "value": k, "emoji": {"name": s["emoji"]},
                  "description": s["blurb"][:100]} for k, s in TRIBE_EXPEDITIONS.items()]
         return _wrap(
-            f"### `🏕️` Tribe Expeditions — {tname}\n"
+            f"### {emoji('tribe')} Tribe Expeditions — {tname}\n"
             f"Pick an expedition. Your tribe then votes a route, and every hunt, "
             f"daily and mythic kill fills the shared bar.{last}\n"
             f"-# Needs **{TRIBE_EXPEDITION_MIN_MEMBERS}+** members.",
@@ -2188,7 +2188,7 @@ def build_expedition_components(user_id: str) -> list:
     spec = TRIBE_EXPEDITIONS.get(exp["key"], {})
     if exp.get("stage") == "voting":
         tally = Counter(exp.get("votes", {}).values())
-        lines = [f"### {spec.get('emoji','🏕️')} {spec.get('name','Expedition')} — Route Vote",
+        lines = [f"### {spec.get('emoji', emoji('tribe'))} {spec.get('name','Expedition')} — Route Vote",
                  f"-# {spec.get('blurb','')}", ""]
         rows = []
         rbtns = []
@@ -2205,7 +2205,7 @@ def build_expedition_components(user_id: str) -> list:
     if exp.get("stage") == "rewarding":
         r = spec.get("routes", {}).get(exp.get("route", ""), {})
         return _wrap(
-            f"### {spec.get('emoji','🏕️')} {spec.get('name','Expedition')} — "
+            f"### {spec.get('emoji', emoji('tribe'))} {spec.get('name','Expedition')} — "
             f"{'Complete! ' + emoji('trophy') if exp.get('success') else 'Failed'}\n"
             + ("Rewards are being handed out to everyone who contributed — "
                "crates land within the half hour." if exp.get("success")
@@ -2219,7 +2219,7 @@ def build_expedition_components(user_id: str) -> list:
     top = sorted(exp.get("contributions", {}).items(), key=lambda kv: kv[1], reverse=True)[:5]
     top_txt = "\n".join(f"-# `{get_username(u)}` — {v:,}" for u, v in top) or "-# No points yet."
     body = (
-        f"### {spec.get('emoji','🏕️')} {spec.get('name','Expedition')}\n"
+        f"### {spec.get('emoji', emoji('tribe'))} {spec.get('name','Expedition')}\n"
         f"-# Route: {r.get('emoji','')} **{r.get('label','')}** · ends <t:{int(exp.get('ends_ts',0))}:R>\n\n"
         f"{_exp_bar(prog, goal)}  **{prog:,}/{goal:,}**\n\n"
         f"Your contribution: **{mine:,}**\n\n"
@@ -2794,7 +2794,7 @@ async def run_lottery_draw():
     winner_name = get_username(winner_id)
 
     sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
-    medals        = {0: "`🥇`", 1: "`🥈`", 2: "`🥉`"}
+    medals        = {0: f"{emoji('first_place_medal')}", 1: f"{emoji('second_place_medal')}", 2: f"{emoji('third_place_medal')}"}
     top_lines     = []
     for i, (uid, tc) in enumerate(sorted_buyers[:5]):
         chance = (tc / total_t) * 100
@@ -3160,7 +3160,7 @@ def session_summary_lines(sess: dict) -> list[str]:
     lines = [f"`⏱️` Session length: **{dur_min} min**",
              f"{emoji('bow')} Hunts: **{sess['hunts']}** · ◈ Earned: **{sess['value_earned']:,}**"]
     if sess.get("recent_catches"):
-        lines.append("`📖` Recent: " + " · ".join(sess["recent_catches"][:5]))
+        lines.append(f"{emoji('book')} Recent: " + " · ".join(sess["recent_catches"][:5]))
     games = sess.get("games") or {}
     if games:
         parts = []
@@ -3177,7 +3177,7 @@ def session_hunt_line(user_id: str) -> str:
     sess = data.get(user_id, {}).get("session")
     if not sess:
         return ""
-    bits = [f"`📊` This session: **{sess['hunts']}** hunts · ◈ **{sess['value_earned']:,}** earned"]
+    bits = [f"{emoji('stats')} This session: **{sess['hunts']}** hunts · ◈ **{sess['value_earned']:,}** earned"]
     if sess.get("recent_catches"):
         bits.append("Recent: " + " · ".join(sess["recent_catches"][:3]))
     return " — ".join(bits)
@@ -3642,7 +3642,7 @@ async def maybe_grant_event_gift(interaction: discord.Interaction, user_id: str)
         await send_ephemeral_v2(interaction,
             f"### {g['emoji']} Welcome Bonus Check\n"
             f"The admin left this on your desk on the way out:\n"
-            f"-# **◈ {g['gift_money']:,}** · {emoji('gem')} **{g['gift_gems']}** · 📦 **1× {g['gift_crate']}**\n"
+            f"-# **◈ {g['gift_money']:,}** · {emoji('gem')} **{g['gift_gems']}** · {emoji('package')} **1× {g['gift_crate']}**\n"
             f"-# {event_banner_line()}", 0x2ECC71)
     except Exception:
         pass
@@ -3784,7 +3784,7 @@ def gemstone_line(user_id: str) -> str:
     """Profile line for decorative gemstones — '' when the player has none."""
     g = data.get(user_id, {}).get("gemstones", {}) or {}
     parts = [f"{GEMSTONE_ICONS[r]} {int(g[r])}" for r in RARITY_KEYS if g.get(r, 0) > 0]
-    return ("`💎` Gemstones: " + " · ".join(parts)) if parts else ""
+    return (f"{emoji('gem')} Gemstones: " + " · ".join(parts)) if parts else ""
 
 def craft_queue_summary(user_id: str) -> str:
     q = sorted(data.get(user_id, {}).get("craft_queue", []), key=lambda e: e.get("done_ts", 0))
@@ -4113,7 +4113,7 @@ def run_hunt(user_id: str) -> dict:
         if roll["crate"]:
             if auto_open:
                 reward, extras, _ = _resolve_crate_reward(user_id, roll["crate"])
-                bonus = f" +{GEMSTONE_ICONS.get(extras['gemstone'],'`💎`')}" if extras.get("gemstone") else ""
+                bonus = f" +{GEMSTONE_ICONS.get(extras['gemstone'], emoji('gem'))}" if extras.get("gemstone") else ""
                 auto_opened.append(f"{CRATE_TIERS[roll['crate']]['emoji']} {roll['crate']} → {_fmt_reward(reward)}{bonus}")
             else:
                 ci = data[user_id].setdefault("crate_inv", {})
@@ -4377,7 +4377,7 @@ def build_tracking_components(user_id: str, line: str = "") -> list:
     rows = [
         {"type": 1, "components": [_tb("follow", 3), _tb("observe", 2), _tb("flank", 2)]},
         {"type": 1, "components": [_tb("push", 4)] + (
-            [{"type": 2, "style": 1, "label": "Close In", "emoji": {"name": "🎯"},
+            [{"type": 2, "style": 1, "label": "Close In", "emoji": emoji_partial('target'),
               "custom_id": f"hunt:track:closein:{trid}:{user_id}"}] if near else [])},
     ]
     return [{"type": 17, "accent_color": 0x8E44AD, "spoiler": False, "components": [
@@ -4479,12 +4479,12 @@ def build_share_public_components(sid: str) -> list:
                 "Your move, hunter.")
         color = 0xF1C40F
     elif kind == "prestige":
-        body = (f"## `⭐` Prestige {sh.get('prestige', '')}\n"
+        body = (f"## {emoji('prestige')} Prestige {sh.get('prestige', '')}\n"
                 f"**{name}** just reset everything for permanent power. Again.\n\n"
                 "Start your own climb.")
         color = 0xE67E22
     elif kind == "expedition":
-        body = (f"## `🏕️` Expedition Complete\n"
+        body = (f"## {emoji('tribe')} Expedition Complete\n"
                 f"**{name}**'s tribe cleared **{sh.get('expedition','an expedition')}**.\n\n"
                 "Build a tribe. Run your own.")
         color = 0x1ABC9C
@@ -4496,7 +4496,7 @@ def build_share_public_components(sid: str) -> list:
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "🏹 Start Hunting", "custom_id": f"hunt:again:{owner}"},
+            {"type": 2, "style": 3, "label": "Start Hunting", "emoji": emoji_partial('bow'), "custom_id": f"hunt:again:{owner}"},
             {"type": 2, "style": 5, "label": "Add Idle Hunter", "url": invite_url()},
         ]},
     ]}]
@@ -4597,7 +4597,7 @@ async def _referral_check_qualified(user_id: str) -> None:
         add_gems(uid, REFERRAL_QUALIFY_GEMS, "referral")
         _grant_title(uid, "Brought In")
     try:
-        await _dm_user(uid, f"## `🤝` Referral reward!\nYou hit Level {REFERRAL_QUALIFY_LEVEL} "
+        await _dm_user(uid, f"## {emoji('handshake')} Referral reward!\nYou hit Level {REFERRAL_QUALIFY_LEVEL} "
                             f"— you and the hunter who invited you each earned "
                             f"**{emoji('gem')} {REFERRAL_QUALIFY_GEMS}** and a title.")
     except Exception:
@@ -4622,7 +4622,7 @@ async def _referral_check_qualified(user_id: str) -> None:
     try:
         extra = (" You also unlocked " + " + ".join(got) + "!") if got else ""
         await _dm_user(referrer,
-            f"## `🤝` One of your hunters made it!\n"
+            f"## {emoji('handshake')} One of your hunters made it!\n"
             f"A hunter you referred just reached Level {REFERRAL_QUALIFY_LEVEL}. "
             f"You earned **{emoji('gem')} {REFERRAL_QUALIFY_GEMS}**.{extra}\n"
             f"-# Qualified referrals: **{n_qual}**")
@@ -4642,7 +4642,7 @@ def build_refer_components(user_id: str, code: str,
         for n, m in sorted(REFERRAL_MILESTONES.items())
     )
     body = (
-        "## `🤝` Invite a Hunter\n"
+        f"## {emoji('handshake')} Invite a Hunter\n"
         f"Your referral code:\n# `{code or '—'}`\n\n"
         "A friend enters it with `/refer code:<code>` in their first few levels. "
         f"When they reach **Level {REFERRAL_QUALIFY_LEVEL}**, **{REFERRAL_QUALIFY_HUNTS} hunts** "
@@ -4797,17 +4797,17 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
     elif action == "power":
         if random.random() < POWER_ATTACK_ACCURACY:
             dealt = int(R(dmin, dmax) * POWER_ATTACK_DAMAGE_MULT)
-            log.append(f"`💥` Power attack connects for **{dealt}**!")
+            log.append(f"{emoji('impact')} Power attack connects for **{dealt}**!")
         else:
-            log.append("`💥` You overcommit and miss completely.")
+            log.append(f"{emoji('impact')} You overcommit and miss completely.")
     elif action == "defend":
         f["guard"] = True
-        log.append("`🛡️` You brace for its counterattack.")
+        log.append(f"{emoji('shield')} You brace for its counterattack.")
     elif action == "heal":
         item = next((n for n in HEALING_ITEMS
                     if data[user_id].get("healing_inv", {}).get(n, 0) > 0), None)
         if not item:
-            log.append("`🩹` You don't have anything to heal with.")
+            log.append(f"{emoji('adhesive_bandage')} You don't have anything to heal with.")
         else:
             inv = data[user_id]["healing_inv"]
             inv[item] -= 1
@@ -4815,7 +4815,7 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
                 del inv[item]
             before = h["hp"]
             h["hp"] = min(effective_max_hp(user_id), h["hp"] + HEALING_ITEMS[item]["heal"])
-            log.append(f"`🩹` You use a **{item}** (+{h['hp']-before} HP).")
+            log.append(f"{emoji('adhesive_bandage')} You use a **{item}** (+{h['hp']-before} HP).")
     else:
         return {"kind": "none"}
 
@@ -4831,7 +4831,7 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
         base = R(*stats["damage"])
         mdmg = max(1, int(base * 0.4)) if guarded else base
         if guarded:
-            log.append(f"`🛡️` It lunges — your guard soaks most of it (**{mdmg}**).")
+            log.append(f"{emoji('shield')} It lunges — your guard soaks most of it (**{mdmg}**).")
         else:
             log.append(f"{emoji('warning')} The {name} strikes back for **{mdmg}**.")
         h["hp"] = max(0, h["hp"] - mdmg)
@@ -4885,10 +4885,10 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
     return [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 1, "components": [_abtn("attack", "Attack", 3, "🏹"),
-                                    _abtn("power", "Power Attack", 1, "💥")]},
-        {"type": 1, "components": [_abtn("defend", "Defend", 2, "🛡️"),
-                                    _abtn("heal", "Heal", 2, "🩹", disabled=not heal_avail),
+        {"type": 1, "components": [_abtn("attack", "Attack", 3, "bow"),
+                                    _abtn("power", "Power Attack", 1, "impact")]},
+        {"type": 1, "components": [_abtn("defend", "Defend", 2, "shield"),
+                                    _abtn("heal", "Heal", 2, "adhesive_bandage", disabled=not heal_avail),
                                     _abtn("flee", "Flee", 4, "🏃")]},
     ]}]
 
@@ -4910,7 +4910,7 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
         )
         color = 0x2ECC71
     elif kind == "ko":
-        rescue = ("\n-# `🛡️` **Rookie Protection** kicked in — your first knockout is always a soft landing."
+        rescue = (f"\n-# {emoji('shield')} **Rookie Protection** kicked in — your first knockout is always a soft landing."
                   if outcome.get("rookie_save") else "")
         body = (
             f"### `💀` Knocked Out\n"
@@ -5034,13 +5034,13 @@ def three_goals_lines(user_id: str) -> list[str]:
     next_biome = next(((k, lvl) for k, lvl in BIOME_LEVELS if lvl > d.get("level", 1)), None)
     if next_biome:
         bk, lvl = next_biome
-        lines.append(f"`🗺️` **Soon:** Reach Level **{lvl}** to unlock **{BIOME_NAMES.get(bk, bk)}**")
+        lines.append(f"{emoji('world_map')} **Soon:** Reach Level **{lvl}** to unlock **{BIOME_NAMES.get(bk, bk)}**")
 
     discovered = len(d.get("record", {}))
     total_species = len(ANIMAL_DATA)
     if discovered < total_species:
         target = min(total_species, ((discovered // 10) + 1) * 10)
-        lines.append(f"`📖` **Long-term:** Discover **{target}** species ({discovered}/{target})")
+        lines.append(f"{emoji('book')} **Long-term:** Discover **{target}** species ({discovered}/{target})")
 
     return lines
 
@@ -5112,7 +5112,7 @@ def _grant_hunters_path_reward(user_id: str, step: dict) -> str:
     if "crate" in r:
         ci = data[user_id].setdefault("crate_inv", {})
         ci[r["crate"]] = ci.get(r["crate"], 0) + 1
-        parts.append(f"{CRATE_TIERS.get(r['crate'], {}).get('emoji', '📦')} {r['crate']}")
+        parts.append(f"{CRATE_TIERS.get(r['crate'], {}).get('emoji', emoji('package'))} {r['crate']}")
     return " · ".join(parts)
 
 def hunters_path_maybe_complete(user_id: str) -> dict:
@@ -5152,7 +5152,7 @@ def hunters_path_line(user_id: str) -> str:
     if i >= len(HUNTERS_PATH_STEPS):
         return ""
     step = HUNTERS_PATH_STEPS[i]
-    return f"`🗺️` **Hunter's Path** {i}/{len(HUNTERS_PATH_STEPS)} — {step['emoji']} {step['label']}"
+    return f"{emoji('world_map')} **Hunter's Path** {i}/{len(HUNTERS_PATH_STEPS)} — {step['emoji']} {step['label']}"
 
 def hunters_path_next_hint(user_id: str) -> str:
     """A short 'what to do next' line for panels that just finished a step —
@@ -5176,7 +5176,7 @@ async def _hunters_path_notify(interaction: discord.Interaction, user_id: str, r
         return
     if result.get("all_done"):
         await send_ephemeral_v2(interaction,
-            f"`🎉` **Hunter's Path complete!** +{HUNTERS_PATH_REWARD_GEMS} gems and the "
+            f"{emoji('party_popper')} **Hunter's Path complete!** +{HUNTERS_PATH_REWARD_GEMS} gems and the "
             f"**{HUNTERS_PATH_REWARD_TITLE}** title — you've got the run of the place now.",
             0x2ECC71)
         return
@@ -5199,12 +5199,12 @@ def build_hunters_path_components(user_id: str) -> list:
     cur  = hunters_path_current_step(user_id)
     total = len(HUNTERS_PATH_STEPS)
 
-    lines = [f"### `🗺️` Hunter's Path — {sum(done)}/{total}"]
+    lines = [f"### {emoji('world_map')} Hunter's Path — {sum(done)}/{total}"]
     if cur >= total:
         lines.append("-# All done — you've got the run of the place now.")
     else:
         lines.append("-# Finish these in order — each one pays out immediately, "
-                      f"and the whole path is worth `🔸` **{HUNTERS_PATH_REWARD_GEMS} gems** "
+                      f"and the whole path is worth {emoji('diamond_small')} **{HUNTERS_PATH_REWARD_GEMS} gems** "
                       f"and the **{HUNTERS_PATH_REWARD_TITLE}** title.")
     for i, step in enumerate(HUNTERS_PATH_STEPS):
         if done[i]:
@@ -5437,7 +5437,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
                 log.append(f"{emoji('fire')} The hit catches fire — it'll burn for **{b['burn_dmg']}**/turn.")
             b["first_hit_done"] = True
         if trophy_proc(user_id, "double_hit_pct"):                                    # Scylla: Six-Fanged Collar
-            log.append(f"`💥` The strike lands twice!")
+            log.append(f"{emoji('impact')} The strike lands twice!")
             dealt *= 2
         if trophy_proc(user_id, "enemy_skip_pct"):                                    # Cockatrice: Petrifying Eye
             b["stun"] = True
@@ -5903,7 +5903,7 @@ def _badge_entry_text(user_id: str, badge_key: str, bdef: dict, featured: str) -
 
     maxed = tier >= 2 or (tier >= 1 and not plat_t)
     if maxed:
-        medal     = emoji('trophy') if tier == 2 else "`🥇`"
+        medal     = emoji('trophy') if tier == 2 else f"{emoji('first_place_medal')}"
         tier_name = _BADGE_TIER_NAME.get(tier, "GOLD")
         return (f"{medal} **{label}** · {tier_name}{star}\n"
                 f"-# {tracks}\n"
@@ -5911,7 +5911,7 @@ def _badge_entry_text(user_id: str, badge_key: str, bdef: dict, featured: str) -
 
     next_target = gold_t if tier == 0 else plat_t
     next_name   = "Gold" if tier == 0 else "Platinum"
-    lead_icon   = emoji('lock') if tier == 0 else "`🥇`"
+    lead_icon   = emoji('lock') if tier == 0 else f"{emoji('first_place_medal')}"
     title_line  = f"{lead_icon} **{label}**{' · GOLD' if tier == 1 else ''}{star}"
 
     if next_target <= 3:
@@ -5924,7 +5924,7 @@ def _badge_entry_text(user_id: str, badge_key: str, bdef: dict, featured: str) -
     bar, pct_label = ui_progress(cur, next_target)
     return (f"{title_line}\n"
             f"-# {tracks}\n"
-            f"-# {emoji('trophy') if tier == 1 else '`🥇`'} Next: {next_name}\n"
+            f"-# {emoji('trophy') if tier == 1 else emoji('first_place_medal')} Next: {next_name}\n"
             f"-# {_short_num(cur)} / {_short_num(next_target)}\n"
             f"-# {bar} {pct_label}")
 
@@ -5972,24 +5972,24 @@ def build_progression_hub(user_id: str) -> list:
     best, close_count = _closest_achievement_reward(user_id)
 
     lines = [
-        ui_header("🏆", "PROGRESSION",
+        ui_header(emoji('trophy'), "PROGRESSION",
                   f"Level {d['level']} · Prestige {d.get('prestige', 0)}\n"
-                  f"{ph('📖')} World Completion **{gc['world_pct']:.0f}%**"),
+                  f"{ph(emoji('book'))} World Completion **{gc['world_pct']:.0f}%**"),
         "",
-        f"{ph('🏅')} **ACHIEVEMENTS**",
+        f"{ph(emoji('sports_medal'))} **ACHIEVEMENTS**",
         f"{total_ach}/{total_possible}" + (f" · {close_count} reward{'s' if close_count != 1 else ''} close" if close_count else ""),
         "",
-        f"{ph('🎖️')} **BADGES**",
+        f"{ph(emoji('military_medal'))} **BADGES**",
         f"{badge_count}/{len(BADGES)}" + (f" (+{special_count} `★` special)" if special_count else "") + f" · {featured_line}",
         "",
-        f"{ph('🏷️')} **TITLES**",
+        f"{ph(emoji('label'))} **TITLES**",
         f"{title_count} unlocked · {title_line}",
     ]
     if best:
         bar, pct_label = ui_progress(best["current"], best["threshold"])
         lines += [
             "",
-            f"{ph('🎯')} **CLOSEST REWARD**",
+            f"{ph(emoji('target'))} **CLOSEST REWARD**",
             best["label"],
             f"{bar} {_short_num(best['current'])}/{_short_num(best['threshold'])} ({pct_label})",
             f"Reward: {best['reward']}",
@@ -6000,15 +6000,15 @@ def build_progression_hub(user_id: str) -> list:
         {"type": 10, "content": content},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Achievements", "emoji": {"name": "🏅"},
+            {"type": 2, "style": 1, "label": "Achievements", "emoji": emoji_partial('sports_medal'),
              "custom_id": f"ach:achievements:{user_id}"},
-            {"type": 2, "style": 1, "label": "Badges", "emoji": {"name": "🎖️"},
+            {"type": 2, "style": 1, "label": "Badges", "emoji": emoji_partial('military_medal'),
              "custom_id": f"ach:badges:{user_id}"},
         ]},
         {"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Titles", "emoji": {"name": "🏷️"},
+            {"type": 2, "style": 1, "label": "Titles", "emoji": emoji_partial('label'),
              "custom_id": f"ach:titles:{user_id}"},
-            {"type": 2, "style": 2, "label": "Collection", "emoji": {"name": "📖"},
+            {"type": 2, "style": 2, "label": "Collection", "emoji": emoji_partial('book'),
              "custom_id": f"guide:open:{user_id}"},
         ]},
         ui_footer(user_id),
@@ -6045,7 +6045,7 @@ def build_badges_components(user_id: str) -> list:
     if featured:
         feat_line = (f"\n-# `★` Featured: {featured_badge_icon(user_id)} "
                      f"**{badge_meta(featured).get('label', featured)}** — shown next to your name on leaderboards.")
-    content = f"### `🎖️` Badges — Page {page+1}/{total}{feat_line}\n\n{pages[page]}"
+    content = f"### {emoji('military_medal')} Badges — Page {page+1}/{total}{feat_line}\n\n{pages[page]}"
 
     comps = [
         {"type": 10, "content": content},
@@ -6092,7 +6092,7 @@ def build_title_components(user_id: str) -> list:
 
     if not earned:
         content = (
-            "### `🏷️` Titles\n\n"
+            f"### {emoji('label')} Titles\n\n"
             "-# You haven't unlocked any titles yet.\n"
             "-# Complete achievements to earn titles!"
         )
@@ -6107,7 +6107,7 @@ def build_title_components(user_id: str) -> list:
         f"{emoji('check_mark') if t == equipped else '`⬜`'} {t}" for t in earned
     )
     content = (
-        f"### `🏷️` Titles\n"
+        f"### {emoji('label')} Titles\n"
         f"{equipped_line}\n\n"
         f"**Unlocked ({len(earned)}):**\n{lines}"
     )
@@ -6144,11 +6144,11 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     biome     = d.get("biome", "village")
     tool_name = d.get("tool", "Bare Hands")
     level     = d["level"]
-    mail_indicator = " `📬`" if has_unread_mail(user_id) else ""
+    mail_indicator = f" {emoji('mail')}" if has_unread_mail(user_id) else ""
 
     where_line = (travel_status_line(user_id) if is_traveling(user_id)
                   else f"{BIOME_NAMES[biome]} · {tool_name} · {hp_status_line(user_id)}")
-    header = ui_header("🏹", f"{display_name} — Level {level}", where_line)
+    header = ui_header(emoji('bow'), f"{display_name} — Level {level}", where_line)
 
     xp_bar, xp_pct = ui_progress(d["xp"], xp_for_level(level))
     wallet_block = (
@@ -6158,7 +6158,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
 
     ammo_name  = d.get("equipped_ammo")
     ammo_count = get_ammo_count(user_id, ammo_name) if ammo_name else 0
-    ammo_line  = f"{ammo_emoji(ammo_name)} {ammo_name} ×{ammo_count}" if ammo_name else f"{ph('🔸')} No ammo"
+    ammo_line  = f"{ammo_emoji(ammo_name)} {ammo_name} ×{ammo_count}" if ammo_name else f"{ph(emoji('diamond_small'))} No ammo"
     vehicle_name = d.get("vehicle", "None")
     v_info       = VEHICLES.get(vehicle_name, {})
     equip_bits = [f"{tool_emoji(tool_name)} {tool_name}", ammo_line]
@@ -6170,7 +6170,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     _goals = three_goals_lines(user_id)
     if _goals:
         _goal_text = _goals[0].split("**Now:** ", 1)[-1]
-        goal_block = f"\n\n{ph('🎯')} **NEXT GOAL**\n{_goal_text}"
+        goal_block = f"\n\n{ph(emoji('target'))} **NEXT GOAL**\n{_goal_text}"
 
     now_bits = []
     _wc_here = active_world_condition(biome)
@@ -6185,7 +6185,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     if stacks:
         idle_haul = idle_pending_preview(user_id)
         idle_cap  = idle_capacity(user_id)
-        now_bits.append(f"{ph('📦')} Camp haul: **{idle_haul}/{idle_cap}**")
+        now_bits.append(f"{ph(emoji('package'))} Camp haul: **{idle_haul}/{idle_cap}**")
     now_block = ("\n\n" + "\n".join(f"-# {b}" for b in now_bits)) if now_bits else ""
 
     content = f"{header}\n\n{wallet_block}{equip_block}{goal_block}{now_block}"
@@ -6210,7 +6210,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
         "min_values": 1, "max_values": 1, "flows": {},
         "options": [
             {"label": "Equipment",      "emoji": emoji_partial("equipment"),      "value": "equip",       "description": "Equip tools, ammo and vehicles"},
-            {"label": "Quests",         "emoji": {"name": "📜"},                  "value": "quests",      "description": "Daily quest progress and rewards"},
+            {"label": "Quests",         "emoji": emoji_partial('quests'),                  "value": "quests",      "description": "Daily quest progress and rewards"},
             {"label": "Daily",          "emoji": emoji_partial("daily"),          "value": "daily",       "description": "Claim your daily reward"},
             {"label": "Camp",           "emoji": emoji_partial("idle_camp"),      "value": "idle",        "description": "Manage your Hunting Camp"},
             {"label": "Tribe",          "emoji": emoji_partial("tribe"),          "value": "tribe",       "description": "View your tribe"},
@@ -6222,15 +6222,15 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": f"Mail{mail_indicator}", "emoji": emoji_partial("mail"),    "value": "mail",        "description": "Check your mailbox"},
             {"label": "Settings",       "emoji": emoji_partial("settings"),       "value": "settings",    "description": "Preferences and the hunter's guide"},
             {"label": "Updates",        "emoji": emoji_partial("list"),           "value": "update",      "description": "View latest updates"},
-            {"label": "Collection",     "emoji": {"name": "📖"},                  "value": "guide",       "description": "Species, Mythicals, trophies & world completion"},
-            {"label": "Refer a Friend", "emoji": {"name": "🤝"},                  "value": "refer",       "description": "Your referral code — you both earn"},
+            {"label": "Collection",     "emoji": emoji_partial('book'),                  "value": "guide",       "description": "Species, Mythicals, trophies & world completion"},
+            {"label": "Refer a Friend", "emoji": emoji_partial('handshake'),                  "value": "refer",       "description": "Your referral code — you both earn"},
         ]
     }]}
 
     menu_rows = [row1, row2, more_row]
     if hunters_path_active(user_id):
         menu_rows.append({"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Hunter's Path", "emoji": {"name": "🗺️"},
+            {"type": 2, "style": 1, "label": "Hunter's Path", "emoji": emoji_partial('world_map'),
              "custom_id": f"nav:hpath:{user_id}"},
         ]})
 
@@ -6257,7 +6257,7 @@ def _profile_owner_seg(target_id: str, viewer_id) -> str:
 
 def _profile_title(icon: str, name: str, noun: str, target_id: str, viewer_id) -> str:
     if _viewing_other(target_id, viewer_id):
-        return f"### `👀` {name}'s {noun}"
+        return f"### {emoji('eyes')} {name}'s {noun}"
     return f"### {icon} {name}'s {noun}"
 
 def _profile_tab_rows(active: str, target_id: str, viewer_id=None) -> list:
@@ -6314,8 +6314,8 @@ def build_profile_components(user_id: str, display_name: str,
     gem_str        = gemstone_line(user_id)
     gem_disp       = f"{gem_str}\n" if gem_str else ""
 
-    viewing_note = "-# `👀` You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
-    tester_note  = "-# `🧪` **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
+    viewing_note = f"-# {emoji('eyes')} You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
+    tester_note  = f"-# {emoji('test_tube')} **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
     stats = (
         f"{_profile_title(USER_EMOJIS['profile'], display_name, 'Profile', user_id, viewer_id)}\n"
         f"{viewing_note}"
@@ -6328,7 +6328,7 @@ def build_profile_components(user_id: str, display_name: str,
            if is_traveling(user_id) else
            f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · {biome_region(biome)['region']}\n")
         + f"{tool_emoji(tool_name)} **{tool_name}** (T{get_tool_tier(tool_name)})\n"
-        f"{ph('🔸')} Ammo: {ammo_line}\n"
+        f"{ph(emoji('diamond_small'))} Ammo: {ammo_line}\n"
         f"{ph(emoji('jeep'))} Vehicle: {vehicle_line}\n"
         f"{TRIBE_EMOJIS['tribe']} {tribe_line}\n"
         f"{gem_disp}\n"
@@ -6375,9 +6375,9 @@ def build_statistics_components(user_id: str, display_name: str, viewer_id: str 
         f"{emoji('fire')} Current daily streak: **{streak}**\n"
         f"{emoji('trophy')} Best daily streak: **{best_streak}**\n\n"
         f"{emoji('money_bag')} Net worth: **◈ {nw:,}**\n"
-        f"`📦` Total ◈ earned: **◈ {total_earned:,}**\n"
+        f"{emoji('package')} Total ◈ earned: **◈ {total_earned:,}**\n"
         f"{emoji('target')} Total animals caught: **{total_caught:,}**\n"
-        f"`🔸` Ammo used: **{s.get('ammo_used', 0):,}**\n"
+        f"{emoji('diamond_small')} Ammo used: **{s.get('ammo_used', 0):,}**\n"
         f"{emoji('dice')} Gamble wins — BJ: **{s.get('bj_wins',0):,}** · CF: **{s.get('cf_wins',0):,}** · "
         f"RL: **{s.get('rl_wins',0):,}** · RPS: **{s.get('rps_wins',0):,}** · "
         f"Slots: **{s.get('slots_wins',0):,}**\n"
@@ -6410,7 +6410,7 @@ def build_inventory_components(user_id: str, display_name: str, viewer_id: str =
     total_items = len(inv)
 
     if standalone:
-        header = ui_header("🎒", "INVENTORY",
+        header = ui_header(emoji('inventory'), "INVENTORY",
                             f"{total_items} animal{'s' if total_items != 1 else ''} · worth {ui_money(sell_value)}")
         if not inv:
             content = header + "\n\n-# Inventory is empty. Go hunt something."
@@ -6472,7 +6472,7 @@ def build_inventory_components(user_id: str, display_name: str, viewer_id: str =
             {"type": 1, "components": [
                 {"type": 2, "style": 1, "label": f"Sell All · {ui_money(sell_value)}",
                  "custom_id": f"hunt:sell_all:{user_id}"},
-                {"type": 2, "style": 2, "label": "Materials", "emoji": {"name": "💎"},
+                {"type": 2, "style": 2, "label": "Materials", "emoji": emoji_partial('gem'),
                  "custom_id": f"nav:craft:{user_id}"},
             ]},
             ui_footer(user_id),
@@ -6536,11 +6536,11 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         if c.get("is_new_species"):
             tag = f"\n{ph('🆕')} **NEW SPECIES!**"
         elif c.get("is_personal_best"):
-            tag = f"\n{ph('🏆')} **Personal best!**"
+            tag = f"\n{ph(emoji('trophy'))} **Personal best!**"
         if c.get("is_first_rare"):
             tag += f"\n{ph('🌟')} **First rare catch!**"
         if c["is_rare"]:
-            tag += f"\n`✨` **Perfect Catch!**"
+            tag += f"\n{emoji('sparkles')} **Perfect Catch!**"
         catch_parts.append(
             f"{a_em} **{animal}**\n"
             f"-# {rarity_icon} {rarity.title()} · {ui_money(c['sell_value'])} · +{c['xp_earned']} XP"
@@ -6554,7 +6554,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     _discovered    = sum(1 for a in _biome_animals if a in d.get("record", {}))
     xp_bar, xp_pct = ui_progress(result["xp"], result["xp_needed"])
     progress_block = (
-        f"{ph('📖')} {result['biome_name']}  {_discovered}/{len(_biome_animals)} species\n"
+        f"{ph(emoji('book'))} {result['biome_name']}  {_discovered}/{len(_biome_animals)} species\n"
         f"XP {xp_bar} {xp_pct}"
     )
     if result.get("level_ups"):
@@ -6568,11 +6568,11 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     if shard_drops:
         got = " · ".join(f"{SHARD_ICONS.get(r,'')} {n}× {_rarity_label(r)} Shard"
                          for r, n in shard_drops.items())
-        extra_bits.append(f"-# `💎` Shard drop: {got}")
+        extra_bits.append(f"-# {emoji('gem')} Shard drop: {got}")
     if crate_drops:
         got = " · ".join(f"{CRATE_TIERS[n]['emoji']} {cnt}× **{n}**"
                          for n, cnt in crate_drops.items())
-        extra_bits.append(f"-# `📦` Crate drop: {got}")
+        extra_bits.append(f"-# {emoji('package')} Crate drop: {got}")
     auto_opened = result.get("auto_opened") or []
     if auto_opened:
         extra_bits.append(f"-# {emoji('crate_sample')} Auto-opened: " + " · ".join(auto_opened))
@@ -6583,7 +6583,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         return build_animal_fight_components(user_id, intro=True, extra_catches=result["catches"])
     extra_block = ("\n" + "\n".join(extra_bits)) if extra_bits else ""
 
-    footer_bits = [f"{ph('🎒')} {inv_count} animal{'s' if inv_count != 1 else ''} · worth {ui_money(sell_val)} "
+    footer_bits = [f"{ph(emoji('inventory'))} {inv_count} animal{'s' if inv_count != 1 else ''} · worth {ui_money(sell_val)} "
                    f"· balance {ui_money(d['money'])}"]
     _sess_line = session_hunt_line(user_id)
     if _sess_line:
@@ -6704,8 +6704,8 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
                    else "You're bleeding, but you're standing. It isn't.")
         first_line = ""
         if outcome.get("is_first_kill"):
-            title_bit = f" · `🏷️` Title unlocked: **\"{outcome['first_title']}\"**" if outcome.get("first_title") else ""
-            first_line = f"\n-# `🎉` **Your first Mythical kill ever.** This one's paying out big{title_bit}."
+            title_bit = f" · {emoji('label')} Title unlocked: **\"{outcome['first_title']}\"**" if outcome.get("first_title") else ""
+            first_line = f"\n-# {emoji('party_popper')} **Your first Mythical kill ever.** This one's paying out big{title_bit}."
         drop = outcome.get("drop", "")
         eff  = TROPHY_EFFECTS.get(drop, {})
         if outcome.get("is_new_discovery") and eff:
@@ -6730,7 +6730,7 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
         )
         color = 0x2ECC71
     elif kind == "death":
-        rescue = ("\n-# `🛡️` **Rookie Protection** kicked in — your first knockout is always a soft landing."
+        rescue = (f"\n-# {emoji('shield')} **Rookie Protection** kicked in — your first knockout is always a soft landing."
                   if outcome.get("rookie_save") else "")
         phoenix = (f"\n-# {emoji('fire')} **Everburning Ember** flared — you're back on your feet."
                   if outcome.get("phoenix_save") else "")
@@ -6986,7 +6986,7 @@ def build_onboarding_components(user_id: str) -> list:
             "Something just moved in the brush ahead of you.\n"
             "-# Every hunter starts here. Let's see what it is."
         )
-        rows = [{"type": 1, "components": [_onb_btn(user_id, "track", "Track It", 3, "🐾")]}]
+        rows = [{"type": 1, "components": [_onb_btn(user_id, "track", "Track It", 3, "animal_fallback")]}]
 
     elif step == "catch":
         animal = _onb_first_animal()
@@ -7013,7 +7013,7 @@ def build_onboarding_components(user_id: str) -> list:
             f"{a_em} **{animal}**\n\n"
             f"**+ {xp} XP** · **+ ◈ {val:,}**"
             f"{lvl_line}\n\n"
-            f"`📖` **New Field Guide entry** — 1/{len(BIOME_ANIMALS.get('village', []))} "
+            f"{emoji('book')} **New Field Guide entry** — 1/{len(BIOME_ANIMALS.get('village', []))} "
             f"Pacific Northwest species discovered\n"
             f"{emoji('gift')} **+1 Bandage** (restores 25 HP — you'll want it later)\n\n"
             "-# A trader in the village will take the catch off your hands. Money "
@@ -7025,7 +7025,7 @@ def build_onboarding_components(user_id: str) -> list:
         t_info = TOOLS.get(TRIAL_TOOL, {})
         body = (
             f"### {emoji('gift')} Training Loan\n"
-            f"{t_info.get('emoji','🏹')} **Training {TRIAL_TOOL}** — yours for the next "
+            f"{t_info.get('emoji', emoji('bow'))} **Training {TRIAL_TOOL}** — yours for the next "
             f"**{TRIAL_TOOL_MIN} minutes**.\n\n"
             f"-# Multi-catch: **{t_info.get('multi_catch', 2)}** — it catches more than "
             f"one animal per hunt. Try it out."
@@ -7043,12 +7043,12 @@ def build_onboarding_components(user_id: str) -> list:
             danger_line = f"{emoji('trophy')} **First dangerous hunt won!** Title unlocked: *\"Rookie Hunter\"* · {emoji('gift')} First Aid Kit\n\n"
         elif note == "ko":
             danger_line = ("`💀` That one got the better of you — a ranger dragged you back. "
-                           "`🛡️` Rookie Protection covered you. Nothing lost.\n\n")
+                           f"{emoji('shield')} Rookie Protection covered you. Nothing lost.\n\n")
         elif note == "fled":
             danger_line = "`💨` It got away. Nothing lost — on to the next one.\n\n"
         body = (
             f"{danger_line}"
-            "### `🎒` Choose a Starting Specialty\n"
+            f"### {emoji('inventory')} Choose a Starting Specialty\n"
             "Pick the edge that suits how you want to play. It lasts 30 minutes — "
             "just enough to find your feet.\n\n" + lines
         )
@@ -7073,23 +7073,23 @@ def build_onboarding_components(user_id: str) -> list:
         body = (
             f"### {emoji('bow')} You're a Hunter Now\n"
             f"{USER_EMOJIS['levels']} Level **{data[user_id]['level']}** · "
-            f"{hp_status_line(user_id)} · `📖` **{len(data[user_id].get('record', {}))}** species discovered · "
+            f"{hp_status_line(user_id)} · {emoji('book')} **{len(data[user_id].get('record', {}))}** species discovered · "
             f"**◈ {data[user_id]['money']:,}**\n"
             f"{pk_line}\n\n"
             "**Next goals:**\n"
             f"{emoji('bow')} Earn your real **{TRIAL_TOOL}** — ◈ {real_price:,}\n"
-            f"`📖` Discover 5 Pacific Northwest species\n"
+            f"{emoji('book')} Discover 5 Pacific Northwest species\n"
             f"{emoji('earth')} Investigate your first World Condition\n"
             f"`👹` Find your first Mythical Creature\n"
-            f"`🏕️` Join or create a Tribe\n\n"
+            f"{emoji('tribe')} Join or create a Tribe\n\n"
             f"{rookie_goals_block(user_id)}"
         )
         rows = [{"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "Hunt Again", "emoji": {"name": "🏹"},
+            {"type": 2, "style": 3, "label": "Hunt Again", "emoji": emoji_partial('bow'),
              "custom_id": f"hunt:again:{user_id}"},
-            {"type": 2, "style": 2, "label": "View the World", "emoji": {"name": "🗺️"},
+            {"type": 2, "style": 2, "label": "View the World", "emoji": emoji_partial('world_map'),
              "custom_id": f"nav:world:{user_id}"},
-            {"type": 2, "style": 2, "label": "Find a Tribe", "emoji": {"name": "🏕️"},
+            {"type": 2, "style": 2, "label": "Find a Tribe", "emoji": emoji_partial('tribe'),
              "custom_id": f"nav:tribe:{user_id}"},
         ]}]
 
@@ -7193,7 +7193,7 @@ def _biome_select_row(user_id: str) -> dict:
         needs_tool = tool_tier < BIOME_TOOL_TIER.get(biome_key, 1)
         mins       = travel_time_min(current_biome, biome_key)
         if locked:
-            desc = f"`🔒` Unlocks at Level {lvl_req}"
+            desc = f"{emoji('lock')} Unlocks at Level {lvl_req}"
         elif biome_key == current_biome:
             desc = f"`📍` You are here · {r['region']}"
         else:
@@ -7246,7 +7246,7 @@ def _world_region_rows(user_id: str) -> list[str]:
         cond = active_world_condition(biome_key)
         sight = _sighting_here(biome_key)
         if sight:
-            rows.append(f"{em} **{BIOME_NAMES[biome_key]}** — `🚨` {sight}{here}")
+            rows.append(f"{em} **{BIOME_NAMES[biome_key]}** — {emoji('siren')} {sight}{here}")
         elif cond:
             spec = cond["spec"]
             hot = f" {emoji('fire')}" if spec.get("myth_mult", 1) > 1 or spec.get("rare_mult", 1) >= 1.3 else ""
@@ -7295,7 +7295,7 @@ def build_world_components(user_id: str, goal_line: str = "") -> list:
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "Hunt", "emoji": emoji_partial("bow"),
              "custom_id": f"hunt:again:{user_id}"},
-            {"type": 2, "style": 2, "label": "Collection", "emoji": {"name": "📖"},
+            {"type": 2, "style": 2, "label": "Collection", "emoji": emoji_partial('book'),
              "custom_id": f"guide:open:{user_id}"},
             {"type": 2, "style": 2, "label": "All Regions", "emoji": {"name": "🌐"},
              "custom_id": f"nav:allregions:{user_id}"},
@@ -7311,7 +7311,7 @@ def build_world_regions_components(user_id: str) -> list:
     gc = guide_completion(user_id)
     header = ui_header("🌐", "ALL REGIONS")
     body = header + "\n\n" + "\n".join(_world_region_rows(user_id))
-    body += (f"\n\n-# `📖` Field Guide: **{gc['world_pct']:.0f}%** of the world "
+    body += (f"\n\n-# {emoji('book')} Field Guide: **{gc['world_pct']:.0f}%** of the world "
              f"({gc['species_have']}/{gc['species_total']} species · "
              f"{gc['myths_have']}/{gc['myths_total']} mythic)")
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
@@ -7355,7 +7355,7 @@ def build_collection_components(user_id: str) -> list:
         f"-# World Completion: **{gc['world_pct']:.1f}%**",
         _guide_bar(int(gc['world_pct']), 100),
         "",
-        f"🐾 Species        **{gc['species_have']}** / {gc['species_total']}",
+        f"{emoji('animal_fallback')} Species        **{gc['species_have']}** / {gc['species_total']}",
         f"{emoji('ghost')} Mythicals       **{gc['myths_have']}** / {gc['myths_total']}",
         f"{emoji('trophy')} Trophies        **{trophies_have}** / {gc['myths_total']}",
         f"{emoji('earth')} Regions         **{gc['regions_have']}** / {gc['regions_total']}",
@@ -7367,7 +7367,7 @@ def build_collection_components(user_id: str) -> list:
         {"type": 10, "content": "\n".join(lines)},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 2, "label": "Species", "emoji": emoji_partial("🐾"),
+            {"type": 2, "style": 2, "label": "Species", "emoji": emoji_partial("animal_fallback"),
              "custom_id": f"collection:species:{user_id}"},
             {"type": 2, "style": 2, "label": "Mythicals", "emoji": emoji_partial("ghost"),
              "custom_id": f"collection:mythicals:{user_id}"},
@@ -7575,10 +7575,10 @@ def build_equip_components(user_id: str) -> list:
     v_info_eq        = VEHICLES.get(equipped_vehicle, {})
 
     loadout = [
-        ui_header("⚙️", "LOADOUT"),
+        ui_header(emoji('settings'), "LOADOUT"),
         "",
         f"{tool_emoji(equipped)} **{equipped}** · Tier {get_tool_tier(equipped)}",
-        f"{ph('🎯')} {t_info['multi_catch']} catch{'es' if t_info['multi_catch'] != 1 else ''}/hunt",
+        f"{ph(emoji('target'))} {t_info['multi_catch']} catch{'es' if t_info['multi_catch'] != 1 else ''}/hunt",
         f"{USER_EMOJIS['luck_boost']} +{t_info['boost_luck']}% Luck · "
         f"{USER_EMOJIS['xp_boost']} +{t_info['boost_xp']}% XP",
     ]
@@ -7684,10 +7684,10 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     shop_header = ui_header("🛒", "SHOP", f"{ui_money(d['money'])} · {emoji('gem')} {d['gems']}") + _ev_note
 
     tab_options = [
-        {"label": "Boosts",   "emoji": {"name": "🧪"}, "value": "boosts",   "default": tab == "boosts"},
-        {"label": "Tools",    "emoji": {"name": "🔧"}, "value": "tools",    "default": tab == "tools"},
-        {"label": "Ammo",     "emoji": {"name": "🔸"}, "value": "ammo",     "default": tab == "ammo"},
-        {"label": "Healing",  "emoji": {"name": "🩹"}, "value": "healing",  "default": tab == "healing"},
+        {"label": "Boosts",   "emoji": emoji_partial('test_tube'), "value": "boosts",   "default": tab == "boosts"},
+        {"label": "Tools",    "emoji": emoji_partial('wrench'), "value": "tools",    "default": tab == "tools"},
+        {"label": "Ammo",     "emoji": emoji_partial('diamond_small'), "value": "ammo",     "default": tab == "ammo"},
+        {"label": "Healing",  "emoji": emoji_partial('adhesive_bandage'), "value": "healing",  "default": tab == "healing"},
         {"label": "Vehicles", "emoji": emoji_partial('jeep'), "value": "vehicles", "default": tab == "vehicles"},
     ]
     tab_dropdown = {"type": 1, "components": [{"type": 3,
@@ -7964,7 +7964,7 @@ TUTORIAL_GUIDE: list[tuple[str, str]] = [
         "-# Sell boost increases how much ◈ you get per animal."
     )),
     ("Biome", (
-        "### `🗺️` Try a new biome!\n"
+        f"### {emoji('world_map')} Try a new biome!\n"
         "Better biomes have rarer animals and higher payouts.\n"
         "Use `/world` → **Travel** to switch once you level up.\n"
         "-# Each biome has a minimum level and tool tier requirement."
@@ -7976,12 +7976,12 @@ TUTORIAL_GUIDE: list[tuple[str, str]] = [
         "-# Higher tier tools unlock higher tier biomes."
     )),
     ("Ammo", (
-        "### `🔸` Some tools need ammo!\n"
+        f"### {emoji('diamond_small')} Some tools need ammo!\n"
         "Buy ammo in `/shop` → Ammo, then equip via `/equip`.\n"
         "-# Running out of ammo mid-hunt will block hunting."
     )),
     ("Equip", (
-        "### `⚙️` Equip your gear!\n"
+        f"### {emoji('settings')} Equip your gear!\n"
         "Purchases don't auto-equip — use `/equip` to switch tools and load ammo.\n"
         "-# Vehicles reduce your hunt cooldown."
     )),
@@ -7998,7 +7998,7 @@ TUTORIAL_GUIDE: list[tuple[str, str]] = [
         "haul doesn't fill up while you're gone."
     )),
     ("Tribe", (
-        "### `🏕️` Join a tribe!\n"
+        f"### {emoji('tribe')} Join a tribe!\n"
         "Tribes share Luck, Sell, and XP boosts across all members.\n"
         "-# Use `/id` to get a friend's user ID."
     )),
@@ -8042,7 +8042,7 @@ def build_settings_components(user_id: str) -> list:
     the ON/OFF state itself as the clickable accessory."""
     init_notif(user_id)
     n = data[user_id]["notif"]
-    header = ui_header("⚙️", "SETTINGS")
+    header = ui_header(emoji('settings'), "SETTINGS")
 
     def _setting_section(key: str, icon: str, label: str, blurb: str, on: bool):
         content = f"{icon} **{label}**\n-# {blurb}"
@@ -8120,7 +8120,7 @@ def build_rules_components(user_id: str, page: int = 0) -> list:
     ]}
 
     return [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False, "components": [
-        {"type": 10, "content": f"### `📜` Idle Hunter Rules\n-# Page {page + 1}/{total_pages} · {len(RULES)} rules total"},
+        {"type": 10, "content": f"### {emoji('quests')} Idle Hunter Rules\n-# Page {page + 1}/{total_pages} · {len(RULES)} rules total"},
         {"type": 14, "divider": True, "spacing": 1},
         *sections,
         {"type": 14, "divider": True, "spacing": 1},
@@ -8494,7 +8494,7 @@ def _idle_biome_select(user_id: str) -> dict:
     for biome_key, lvl_req in BIOME_LEVELS:
         tier_req = BIOME_TOOL_TIER.get(biome_key, 1)
         if lvl < lvl_req:
-            desc = f"`🔒` Unlocks at Level {lvl_req:,}"
+            desc = f"{emoji('lock')} Unlocks at Level {lvl_req:,}"
         elif tier < tier_req:
             desc = f"{emoji('warning')} Needs a Tier {tier_req}+ tool"
         else:
@@ -8525,8 +8525,8 @@ def build_idle_components(user_id: str) -> list:
             f"{emoji('red_ball')} **No hunters stationed.**\n"
             f"-# Hire a hunter and they'll bring back animals from your camp biome "
             f"while you're away — you collect the haul into your inventory.\n\n"
-            f"-# `🗺️` Camp biome: {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n"
-            f"-# `📦` Haul storage: **{haul_n}/{cap}**\n"
+            f"-# {emoji('world_map')} Camp biome: {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n"
+            f"-# {emoji('package')} Haul storage: **{haul_n}/{cap}**\n"
             f"-# Balance: **◈ {d['money']:,}**"
         )
         rows = []
@@ -8562,7 +8562,7 @@ def build_idle_components(user_id: str) -> list:
     body = (
         f"### {emoji('idle_camp')} Hunting Camp\n"
         f"{emoji('green_ball')} **{hunters}** hunter(s) camping in {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n\n"
-        f"`📦` **Haul: {haul_n}/{cap}**\n"
+        f"{emoji('package')} **Haul: {haul_n}/{cap}**\n"
         f"-# {_progress_bar(haul_n, cap, width=14)}\n"
         f"{fill_line}\n\n"
         f"-# `📈` Rate: **~{rate:.1f} catches/hr**\n"
@@ -8576,7 +8576,8 @@ def build_idle_components(user_id: str) -> list:
          "label": "👤 Hunters maxed" if hunters_maxed else f"👤 Hire (◈ {_short_num(hire_cost)})",
          "custom_id": f"idle:hire:{user_id}", "disabled": hunters_maxed},
         {"type": 2, "style": 1,
-         "label": "📦 Storage maxed" if up_maxed else f"📦 +Storage (◈ {_short_num(up_cost)})",
+         "label": "Storage maxed" if up_maxed else f"+Storage (◈ {_short_num(up_cost)})",
+         "emoji": emoji_partial('package'),
          "custom_id": f"idle:upgrade:{user_id}", "disabled": up_maxed},
     ]
     return [{"type": 17, "accent_color": accent, "spoiler": False, "components": [
@@ -8607,7 +8608,7 @@ def build_idle_haul_result_components(user_id: str, result: dict) -> list:
 
     lines = []
     for animal, e in sorted(result["per_animal"].items(), key=lambda kv: -kv[1]["value"]):
-        rare_tag = f" · {e['rare']}`✨`" if e["rare"] else ""
+        rare_tag = f" · {e['rare']}{emoji('sparkles')}" if e["rare"] else ""
         lines.append(f"-# {animal_emoji(animal)} **{animal}** ×{e['count']}{rare_tag} · ◈ {e['value']:,}")
 
     lvl_line = ""
@@ -8873,7 +8874,7 @@ def _fmt_reward(reward: dict) -> str:
         return f"{emoji('gem')} {reward['amount']:,}"
     if t == "perm_boost":
         stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
-        return f"`✨` **+{reward['amount']}% {stat_label}** (permanent!)"
+        return f"{emoji('sparkles')} **+{reward['amount']}% {stat_label}** (permanent!)"
     if t == "temp_boost":
         stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
         return f"{emoji('clock')} **+{reward['amount']}% {stat_label}** for {reward['minutes']} min"
@@ -8922,7 +8923,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
 
     if not owned:
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": "### `📦` Open Crates\n\n-# You don't own any crates.\n-# Buy some in `/craft`."},
+            {"type": 10, "content": f"### {emoji('package')} Open Crates\n\n-# You don't own any crates.\n-# Buy some in `/craft`."},
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
                 {"type": 2, "style": 2, "label": "◀ Craft",
@@ -8941,7 +8942,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
     )
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": f"### `📦` Open a Crate\n{inv_lines}"},
+        {"type": 10, "content": f"### {emoji('package')} Open a Crate\n{inv_lines}"},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [{"type": 3,
             "custom_id": f"crate:open_select:{user_id}",
@@ -8965,7 +8966,7 @@ def build_crate_result_components(user_id: str, crate_name: str, reward: dict,
     bonus = ""
     if extras.get("gemstone"):
         r = extras["gemstone"]
-        bonus += f"\n{GEMSTONE_ICONS.get(r,'`💎`')} **Bonus:** a {_rarity_label(r)} Gemstone!"
+        bonus += f"\n{GEMSTONE_ICONS.get(r, emoji('gem'))} **Bonus:** a {_rarity_label(r)} Gemstone!"
 
     content = (
         f"### {crate['emoji']} {crate_name} Opened!\n\n"
@@ -9043,7 +9044,7 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
         rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
 
     rows.append({"type": 14, "divider": True, "spacing": 1})
-    rows.append({"type": 10, "content": f"### `📦` Crate Shop\n{_crystals_owned_line(user_id)}"})
+    rows.append({"type": 10, "content": f"### {emoji('package')} Crate Shop\n{_crystals_owned_line(user_id)}"})
     rows.extend(_crate_shop_sections(user_id))
 
     rows.append({"type": 1, "components": [
@@ -9331,7 +9332,7 @@ def build_gamble_menu(user_id: str) -> list:
     game_options = [
         {"label": "Coinflip", "emoji": emoji_partial("coinflip"),  "value": "coinflip",
          "description": "Double or nothing on a coin toss"},
-        {"label": "🎰 Slots",               "value": "slots",
+        {"label": "Slots", "emoji": emoji_partial("slot_machine"), "value": "slots",
          "description": "Spin the reels — higher biomes, bigger wins"},
         {"label": "🃏 Blackjack",           "value": "blackjack",
          "description": "Beat the dealer to 21"},
@@ -9464,7 +9465,7 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
         if outcome == "win":
             head, money = f"{emoji('check_mark')} You won!", f"**+◈ {payout - bet:,}**"
         elif outcome == "push":
-            head, money = "`🤝` Push — same card", f"Bet refunded"
+            head, money = f"{emoji('handshake')} Push — same card", f"Bet refunded"
         else:
             head, money = f"{emoji('cross_mark')} You lost!", f"**-◈ {bet:,}**"
         content = (
@@ -9624,10 +9625,10 @@ def build_slots_chances_panel(user_id: str) -> list:
         locked   = user_level < lvl_req
         lock_str = f" {emoji('lock')}" if locked else ""
         lines.append(
-            f"{BIOME_EMOJIS.get(biome_key, '`🗺️`')} **{BIOME_NAMES.get(biome_key, biome_key)}**{lock_str}\n"
+            f"{BIOME_EMOJIS.get(biome_key, emoji('world_map'))} **{BIOME_NAMES.get(biome_key, biome_key)}**{lock_str}\n"
             f"-# Bet: ◈{min_b:,}–◈{max_b:,} · Win: {chance}% · ×{mult}"
         )
-    content = "### `🎰` Slots — Win Chances by Biome\n\n" + "\n\n".join(lines)
+    content = f"### {emoji('slot_machine')} Slots — Win Chances by Biome\n\n" + "\n\n".join(lines)
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
         {"type": 14, "divider": True, "spacing": 1},
@@ -9652,8 +9653,8 @@ def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> 
     bet_line = f"Bet: **◈ {current_bet:,}**" if current_bet else "Bet: *not set — use Change Bet*"
     if state == "bet":
         content = (
-            f"### `🎰` Slots Machine\n"
-            f"{BIOME_EMOJIS.get(biome, '`🗺️`')} **{BIOME_NAMES.get(biome, biome)}**\n\n"
+            f"### {emoji('slot_machine')} Slots Machine\n"
+            f"{BIOME_EMOJIS.get(biome, emoji('world_map'))} **{BIOME_NAMES.get(biome, biome)}**\n\n"
             f"Min: **◈ {min_b:,}** · Max: **◈ {max_b:,}**\n"
             f"Win: **{chance}%** · Multiplier: **×{mult}**\n\n{bet_line}"
         )
@@ -9663,9 +9664,9 @@ def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> 
         reel_str = f"[ {reels[0]} | {reels[1]} | {reels[2]} ]"
         outcome  = f"{emoji('check_mark')} **Won! +◈ {payout - bet:,}**" if won else f"{emoji('cross_mark')} **No win. -◈ {bet:,}**"
         content  = (
-            f"### `🎰` Slots Machine\n{reel_str}\n\n"
+            f"### {emoji('slot_machine')} Slots Machine\n{reel_str}\n\n"
             f"{outcome}\nBalance: **◈ {d['money']:,}**\n\n"
-            f"{BIOME_EMOJIS.get(biome,'`🗺️`')} {BIOME_NAMES.get(biome,biome)} · "
+            f"{BIOME_EMOJIS.get(biome,emoji('world_map'))} {BIOME_NAMES.get(biome,biome)} · "
             f"Win: {chance}% · ×{mult}\n{bet_line}"
         )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
@@ -9674,7 +9675,7 @@ def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> 
         biome_dd,
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "🎰 Roll!",
+            {"type": 2, "style": 3, "label": "Roll!", "emoji": emoji_partial("slot_machine"),
              "custom_id": f"gamble:slots:spin:{user_id}", "disabled": no_bet},
             {"type": 2, "style": 2, "label": "Change Bet",
              "custom_id": f"gamble:slots:setbet:{user_id}"},
@@ -9836,7 +9837,7 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
             )
         elif outcome == "tie":
             content = (
-                f"### `✊` RPS — `🤝` Tie!\n"
+                f"### `✊` RPS — {emoji('handshake')} Tie!\n"
                 f"You: **{p_ico} {pick.title()}** vs Bot: **{b_ico} {bot_pick.title()}**\n\n"
                 f"Bet refunded · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
@@ -9925,7 +9926,7 @@ def build_mail_components(user_id: str, tab: str = "tribe", mark_read: bool = Tr
             total = 1 + len(td["roles"]["officer"]) + len(td["roles"]["members"])
             unread_tag = "" if d.get("tribe_inv_read", False) else f" {emoji('new_notif')}"
             content = (
-                f"### `🏕️` Tribe Invites{unread_tag}\n\n"
+                f"### {emoji('tribe')} Tribe Invites{unread_tag}\n\n"
                 f"Pending invite to **{tribe_inv}**!\n\n"
                 f"-# {TRIBE_EMOJIS['members']} {total}/{td['max_members']} members\n"
                 f"-# {TRIBE_EMOJIS['luck_boost']} {td['luck_boost']}% · "
@@ -9948,7 +9949,7 @@ def build_mail_components(user_id: str, tab: str = "tribe", mark_read: bool = Tr
             ]}]
         else:
             return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-                {"type": 10, "content": "### `🏕️` Tribe Invites\n\n-# No pending tribe invites."},
+                {"type": 10, "content": f"### {emoji('tribe')} Tribe Invites\n\n-# No pending tribe invites."},
                 {"type": 14, "divider": True, "spacing": 1},
                 tab_dd,
                 {"type": 14, "divider": True, "spacing": 1},
@@ -10174,7 +10175,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
         # level, size, weekly contract progress, and your own contribution.
         desc_line = f"\n`📝` *{td['description']}*" if td.get("description") else ""
         xp_bar, xp_pct = ui_progress(td["xp"], to_next) if lvl < TRIBE_LEVEL_CAP else ("", "")
-        header = ui_header("🏕️", tribe_name.upper(), f"Level {lvl} Tribe{desc_line}")
+        header = ui_header(emoji('tribe'), tribe_name.upper(), f"Level {lvl} Tribe{desc_line}")
         lines = [
             header, "",
             f"{TRIBE_EMOJIS['members']} **{total_m}/{td['max_members']}** Members",
@@ -10192,12 +10193,12 @@ def build_tribe_components(user_id: str, tribe_name: str,
 
         wk_contrib   = td["week"]["contrib"].get(user_id, 0)
         life_contrib = td["contrib_lifetime"].get(user_id, 0)
-        lines += ["", f"{ph('🎯')} **YOUR CONTRIBUTION**",
+        lines += ["", f"{ph(emoji('target'))} **YOUR CONTRIBUTION**",
                   f"This week: **{wk_contrib:,}** XP · Lifetime: **{life_contrib:,}** XP"]
         content = "\n".join(lines)
 
         nav_btn_rows = []
-        row1 = [{"type": 2, "style": 1, "label": "Contracts", "emoji": {"name": "📜"},
+        row1 = [{"type": 2, "style": 1, "label": "Contracts", "emoji": emoji_partial('quests'),
                  "custom_id": f"tribe:nav:contracts:{user_id}"},
                 {"type": 2, "style": 1, "label": "Members", "emoji": {"name": "👥"},
                  "custom_id": f"tribe:nav:roles:{user_id}"}]
@@ -10211,7 +10212,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
         row2 = [{"type": 2, "style": 2, "label": "Perks", "emoji": {"name": "🛠️"},
                  "custom_id": f"tribe:nav:shop:{user_id}"}]
         if is_leader or is_officer:
-            row2.append({"type": 2, "style": 2, "label": "Manage", "emoji": {"name": "⚙️"},
+            row2.append({"type": 2, "style": 2, "label": "Manage", "emoji": emoji_partial('settings'),
                          "custom_id": f"tribe:nav:actions:{user_id}"})
         nav_btn_rows.append({"type": 1, "components": row2})
 
@@ -10292,7 +10293,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
             f"### {TRIBE_EMOJIS['tribe']} {tribe_name} — Roles\n"
             f"-# Recruits become full Members after {TRIBE_RECRUIT_PROBATION_H}h."
             + _grp("`👑` Leader", groups["leader"])
-            + _grp("`🎖️` Officers", groups["officer"])
+            + _grp(f"{emoji('military_medal')} Officers", groups["officer"])
             + _grp("`🧑` Members", groups["member"])
             + _grp("`🌱` Recruits", groups["recruit"], _prob)
         )
@@ -10510,7 +10511,7 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
                                      scope: str = "global", stat: str = "Level",
                                      page: int = 0, period: str = "all") -> list:
     PS     = 10
-    medals = {0: "`🥇`", 1: "`🥈`", 2: "`🥉`"}
+    medals = {0: f"{emoji('first_place_medal')}", 1: f"{emoji('second_place_medal')}", 2: f"{emoji('third_place_medal')}"}
     if mode == "hunter":
         val_fn = lambda u: _lb_period_value(u, stat, period)
         cands  = get_server_user_ids(guild) if scope == "server" else list(data.keys())
@@ -10635,7 +10636,7 @@ def build_record_v2_components(user_id: str, biome_idx: int = 0) -> list:
                 top_tool = max(entry.get("tools", {"?": 0}), key=entry.get("tools", {"?": 0}).get)
                 lines.append(
                     f"{animal_emoji(animal)} {rarity_ico} **{animal}**\n"
-                    f"-# ×{entry['count']} caught · ◈ {entry['total_earned']:,} · `🔧` {top_tool}"
+                    f"-# ×{entry['count']} caught · ◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
                 )
             else:
                 lines.append(f"{ANIMAL_EMOJI} {rarity_ico} **{animal}**\n-# Not caught yet")
@@ -10677,7 +10678,7 @@ def build_record_standalone_v2_components(viewer_id: str, target_id: str, biome_
                 top_tool = max(entry.get("tools", {"?": 0}), key=entry.get("tools", {"?": 0}).get)
                 lines.append(
                     f"{animal_emoji(animal)} {rarity_ico} **{animal}**\n"
-                    f"-# ×{entry['count']} · ◈ {entry['total_earned']:,} · `🔧` {top_tool}"
+                    f"-# ×{entry['count']} · ◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
                 )
             else:
                 lines.append(f"{ANIMAL_EMOJI} {rarity_ico} **{animal}**\n-# Not caught yet")
@@ -10704,7 +10705,7 @@ def build_log_v2_components(user_id: str, page: int = 0,
                             display_name: str = "", viewer_id: str = None) -> list:
     seg     = _profile_owner_seg(user_id, viewer_id)
     other   = _viewing_other(user_id, viewer_id)
-    title   = f"### 👀 {display_name}'s Hunt Log" if other and display_name else f"### {emoji('list')} Hunt Log"
+    title   = f"### {emoji('eyes')} {display_name}'s Hunt Log" if other and display_name else f"### {emoji('list')} Hunt Log"
     log   = data[user_id].get("log", [])
     total = len(log)
     if not log or page >= total:
@@ -10734,7 +10735,7 @@ def build_log_v2_components(user_id: str, page: int = 0,
         animal     = c["animal"]
         rarity     = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
         rarity_ico = RARITY_ICONS.get(rarity, "")
-        rare_tag   = " · `✨` **Rare!**" if c.get("is_rare") else ""
+        rare_tag   = f" · {emoji('sparkles')} **Rare!**" if c.get("is_rare") else ""
         catch_lines.append(
             f"{animal_emoji(animal)} **{animal}**{rare_tag}\n"
             f"-# {rarity_ico} {rarity.title()} · +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
@@ -10786,7 +10787,7 @@ def build_log_standalone_v2_components(user_id: str, page: int = 0) -> list:
         animal     = c["animal"]
         rarity     = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
         rarity_ico = RARITY_ICONS.get(rarity, "")
-        rare_tag   = " · `✨` **Perfect Catch!**" if c.get("is_rare") else ""
+        rare_tag   = f" · {emoji('sparkles')} **Perfect Catch!**" if c.get("is_rare") else ""
         catch_lines.append(
             f"{animal_emoji(animal)} **{animal}**{rare_tag}\n"
             f"-# {rarity_ico} {rarity.title()} · +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
@@ -10820,13 +10821,13 @@ def build_log_standalone_v2_components(user_id: str, page: int = 0) -> list:
 def build_personal_leaderboard_components(user_id: str, display_name: str = "",
                                           viewer_id: str = None) -> list:
     d             = data[user_id]
-    heading = (f"### `👀` {display_name}'s Rankings"
+    heading = (f"### {emoji('eyes')} {display_name}'s Rankings"
                if _viewing_other(user_id, viewer_id) else f"### {emoji('leaderboard')} Your Rankings")
 
     if not _lb_eligible(user_id):
         content = (
             f"{heading}\n\n"
-            f"### `🧪` Not ranked — TESTER account\n"
+            f"### {emoji('test_tube')} Not ranked — TESTER account\n"
             f"-# Tester accounts are excluded from every leaderboard.\n\n"
             f"-# ◈ {d['money']:,} · Lv. {d['level']} · {d.get('total_caught', 0):,} caught"
         )
@@ -10958,7 +10959,7 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
                 if title_str not in earned:
                     earned.append(title_str)
                     notifs.append((
-                        "`🏷️` Title Unlocked!",
+                        f"{emoji('label')} Title Unlocked!",
                         f'**"{title_str}"**\n-# Equip it with /title',
                         0x3498DB,
                     ))
@@ -10993,7 +10994,7 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
                 d["featured_badge"] = badge_key
             if not bstate.get("notified_gold"):
                 bstate["notified_gold"] = True
-                notifs.append(("`🥇` Gold Badge Earned!",
+                notifs.append((f"{emoji('first_place_medal')} Gold Badge Earned!",
                     f"**{label}** `[{abbr}🥇]`\n-# Keep going for Platinum!", 0xF1C40F))
 
         if plat_t and cur_tier < 2 and cur >= plat_t:
@@ -11181,10 +11182,10 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
             "flags": V2_FLAGS | 64,
             "components": [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
                 "components": [{"type": 10, "content":
-                    "### `🔧` Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
+                    f"### {emoji('wrench')} Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
                     f"Reason: {maintenance_message}\n"
                     "Please be patient — we'll be back shortly!\n\n"
-                    "-# All your data is safe. See you soon, hunter. `🏕️`"
+                    f"-# All your data is safe. See you soon, hunter. {emoji('idle_camp')}"
                 }]}],
             "allowed_mentions": {"parse": []},
         }})
@@ -11263,7 +11264,7 @@ async def _modal_gate(interaction: discord.Interaction, user_id: str | None = No
     if maintenance_mode:
         await send_ephemeral_v2(
             interaction,
-            "### `🔧` Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
+            f"### {emoji('wrench')} Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
             f"Reason: {maintenance_message}\n\n-# Please try again shortly.",
             0xE67E22)
         return False
@@ -11323,10 +11324,10 @@ async def _tree_gate(interaction: discord.Interaction) -> bool:
             "flags": V2_FLAGS | 64,
             "components": [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
                 "components": [{"type": 10, "content":
-                    "### `🔧` Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
+                    f"### {emoji('wrench')} Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
                     f"Reason: {maintenance_message}\n"
                     "Please be patient — we'll be back shortly!\n\n"
-                    "-# All your data is safe. See you soon, hunter. `🏕️`"
+                    f"-# All your data is safe. See you soon, hunter. {emoji('idle_camp')}"
                 }]}],
             "allowed_mentions": {"parse": []},
         }})
@@ -11841,7 +11842,7 @@ async def _dispatch_component(interaction: discord.Interaction):
             if arg == "v2_sighting":
                 sg = spawn_world_sighting(force=True)
                 admin_audit(admin_id, "v2_sighting", sg.get("biome", "?") if sg else "none")
-                note = (f"`🚨` Sighting spawned in **{BIOME_NAMES.get(sg['biome'], sg['biome'])}** "
+                note = (f"{emoji('siren')} Sighting spawned in **{BIOME_NAMES.get(sg['biome'], sg['biome'])}** "
                         f"({sg['creature']})." if sg else f"{emoji('cross_mark')} Couldn't spawn a sighting.")
                 await smart_update_v2(interaction, build_admin_panel(admin_id, "info", note))
                 return
@@ -12369,7 +12370,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                 ran_out = result.get("ran_out", False)
                 atype   = result.get("ammo_type", "ammo")
                 if ran_out:
-                    msg = f"`💥` You ran out of {atype}! Your ammo was unequipped."
+                    msg = f"{emoji('impact')} You ran out of {atype}! Your ammo was unequipped."
                 elif result.get("owns_ammo"):
                     msg = (f"{emoji('warning')} **{result['tool_name']}** needs {atype} equipped. "
                            f"You own some — load it in </equip:{COMMAND_ID.get('equip','0')}>.")
@@ -12580,7 +12581,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                     ran_out = result.get("ran_out", False)
                     atype   = result.get("ammo_type", "ammo")
                     if ran_out:
-                        msg = f"`💥` You ran out of {atype}! Your ammo was unequipped."
+                        msg = f"{emoji('impact')} You ran out of {atype}! Your ammo was unequipped."
                     elif result.get("owns_ammo"):
                         msg = (f"{emoji('warning')} **{result['tool_name']}** needs {atype} equipped. "
                                f"You own some — load it in </equip:{COMMAND_ID.get('equip','0')}>.")
@@ -13194,7 +13195,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                 cur  = idle.get("capacity_upgrades", 0)
                 cost = idle_capacity_upgrade_cost(cur)
                 if cur >= IDLE_MAX_CAPACITY_UPGRADES:
-                    _err = "`📦` Storage is already fully upgraded."
+                    _err = f"{emoji('package')} Storage is already fully upgraded."
                 elif data[owner_id]["money"] < cost:
                     _err = (f"{emoji('cross_mark')} You need **◈ {cost:,}** to expand storage "
                             f"(+{IDLE_CAPACITY_PER_UPGRADE} slots).")
@@ -14391,7 +14392,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                         st["player"].append(st["deck"].pop())
                         pv = _bj_hand_value(st["player"])
                         if pv > 21:
-                            st.update({"done": True, "outcome": "`💥` Bust!", "net": -st["bet"]})
+                            st.update({"done": True, "outcome": f"{emoji('impact')} Bust!", "net": -st["bet"]})
                         elif pv == 21:
                             action = "stand"
                     if not st.get("done") and action == "stand":
@@ -14408,7 +14409,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                             )
                         elif p_val == d_val:
                             add_money(owner_id, bet, "blackjack: tie")
-                            st.update({"done": True, "outcome": "`🤝` Push!", "net": 0})
+                            st.update({"done": True, "outcome": f"{emoji('handshake')} Push!", "net": 0})
                         else:
                             st.update({"done": True, "outcome": f"{emoji('cross_mark')} Dealer wins.", "net": -bet})
             await smart_update_v2(interaction, build_blackjack_panel(owner_id))
@@ -14686,7 +14687,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                                 {"type": 10, "content": entry.get("content", "")},
                                 {"type": 14, "divider": True, "spacing": 1},
                                 {"type": 1, "components": [
-                                    {"type": 2, "style": 1, "label": f"👀 I've also seen this ({seen_n})",
+                                    {"type": 2, "style": 1, "label": f"I've also seen this ({seen_n})", "emoji": emoji_partial("eyes"),
                                      "custom_id": f"report_btn:also_seen:{submitter_id}:{msg_id}"},
                                     {"type": 2, "style": 3, "label": "Resolved", "emoji": emoji_partial('check_mark'),
                                      "custom_id": f"report_btn:resolved:{submitter_id}:{msg_id}"},
@@ -14706,7 +14707,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                     "flags": V2_FLAGS,
                     "components": [{"type": 17, "accent_color": 0xF39C12, "spoiler": False,
                         "components": [{"type": 10, "content":
-                            f"### `👀` Someone else has seen your report!\n"
+                            f"### {emoji('eyes')} Someone else has seen your report!\n"
                             f"**{interaction.user.display_name}** confirmed they've also experienced the issue you reported.\n"
                             f"-# Total confirmations: **{seen_n}**"
                         }]}],
@@ -15277,7 +15278,7 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
                 if st and st.get("hid") == hid and not st.get("done"):
                     if p_bj and d_bj:
                         add_money(self.user_id, parsed, "blackjack: push (both 21)")
-                        st.update({"done": True, "outcome": "`🤝` Push — both blackjack", "net": 0})
+                        st.update({"done": True, "outcome": f"{emoji('handshake')} Push — both blackjack", "net": 0})
                     elif p_bj:
                         payout = int(parsed * 2.5)
                         add_money(self.user_id, payout, "blackjack: 21")
@@ -15499,7 +15500,7 @@ async def hunt_cmd(interaction: discord.Interaction):
         ran_out = result.get("ran_out", False)
         atype = result.get("ammo_type", "ammo")
         if ran_out:
-            msg = f"`💥` You ran out of {atype}! Your ammo was unequipped."
+            msg = f"{emoji('impact')} You ran out of {atype}! Your ammo was unequipped."
         elif result.get("owns_ammo"):
             msg = (f"{emoji('warning')} **{result['tool_name']}** needs {atype} equipped. "
                    f"You own some — load it in </equip:{COMMAND_ID.get('equip','0')}>.")
@@ -15745,7 +15746,7 @@ async def _tribe_menu_send(interaction: discord.Interaction, user_id: str):
                     f"### {TRIBE_EMOJIS['tribe']} No Tribe\n"
                     "You are not in a tribe! Create one with `/tribe create` or wait for an invite."},
                 {"type": 1, "components": [
-                    {"type": 2, "style": 1, "label": "🏕️ Create Tribe",
+                    {"type": 2, "style": 1, "label": "Create Tribe", "emoji": emoji_partial('tribe'),
                      "custom_id": f"tribe_create:{user_id}"},
                 ]},
             ]}])
@@ -16267,7 +16268,7 @@ def _info_render_biome(key: str):
     if myths:
         lines.append(f"-# **{RARITY_ICONS.get('mythic','')} Mythical creatures:** "
                      + ", ".join(myths))
-    lines += ["", "### `🐾` Animals here"]
+    lines += ["", f"### {emoji('animal_fallback')} Animals here"]
     for a in animals:
         ad = ANIMAL_DATA[a]
         lines.append(f"-# {RARITY_ICONS.get(ad['rarity'], '')} **{a}** — "
@@ -16326,7 +16327,7 @@ def _info_render_animal(key: str):
     unlock = min((dict(BIOME_LEVELS)[b] for b in biomes), default=1)
     a_em   = animal_emoji(key)
     lines = [
-        "### `🐾` Hunting Information",
+        f"### {emoji('animal_fallback')} Hunting Information",
         f"-# **Rarity:** {RARITY_ICONS.get(r, '')} {r.title()}",
         f"-# **Found in:** {b_txt}",
         f"-# **Unlocks at:** Level {unlock:,}",
@@ -16353,7 +16354,7 @@ def _info_render_myth(key: str):
         f"-# **Diet:** {c['diet']}",
         f"-# **Behavior:** {c['behavior']}",
         "",
-        "### `🗺️` Hunting Information",
+        f"### {emoji('world_map')} Hunting Information",
         f"-# **Region:** {BIOME_NAMES.get(biome, biome)} — {emoji('location_pin')} {reg['region']}, {reg['continent']}",
         f"-# **Encounter:** ~{MYTH_ENCOUNTER_BASE*100:.1f}%–{MYTH_ENCOUNTER_MAX*100:.0f}% per hunt there "
         f"ambiently (scales with luck); a Global Sighting there makes it guaranteed-huntable "
@@ -16388,7 +16389,7 @@ def _info_render_badge(key: str):
     gold_e  = badge_emoji(key, 1) or "🥇"
     plat_e  = badge_emoji(key, 2) or "🏆"
     lines = [
-        "### `🎖️` Badge Info",
+        f"### {emoji('military_medal')} Badge Info",
         f"-# **Tracks:** {b.get('tracks', b['stat'])}",
         f"-# {gold_e} **Gold** at {b['gold']:,}",
     ]
@@ -16399,7 +16400,7 @@ def _info_render_badge(key: str):
     lines += [
         f"-# **Tag:** `[{b['abbr']}]` (shown on your profile once earned)",
         "",
-        "-# Earn badges just by playing — check progress in `/progression` → `🎖️` Badges.",
+        f"-# Earn badges just by playing — check progress in `/progression` → {emoji('military_medal')} Badges.",
     ]
     return (f"# {gold_e} {b['label']}", f"-# {b['blurb']}", "\n".join(lines),
             _emoji_cdn_url(badge_emoji(key, 1)))
@@ -16776,7 +16777,7 @@ async def report_cmd(interaction: discord.Interaction, type: str,
             msg_id = _uuid.uuid4().hex[:12]
             if type == "user":
                 content = (
-                    f"### `🚨` User Report: {title.strip()}\n"
+                    f"### {emoji('siren')} User Report: {title.strip()}\n"
                     f"-# Submitted by: <@{user_id}> ({interaction.user.name})\n"
                     f"**Reported user:** {target_user.display_name} (`{target_user.id}`)\n\n"
                     f"{description.strip()}"
@@ -16800,7 +16801,7 @@ async def report_cmd(interaction: discord.Interaction, type: str,
                         {"type": 10, "content": content},
                         {"type": 14, "divider": True, "spacing": 1},
                         {"type": 1, "components": [
-                            {"type": 2, "style": 1, "label": "👀 I've also seen this (0)",
+                            {"type": 2, "style": 1, "label": "I've also seen this (0)", "emoji": emoji_partial("eyes"),
                              "custom_id": f"report_btn:also_seen:{user_id}:{msg_id}"},
                             {"type": 2, "style": 3, "label": "Resolved", "emoji": emoji_partial('check_mark'),
                              "custom_id": f"report_btn:resolved:{user_id}:{msg_id}"},
@@ -16955,11 +16956,11 @@ async def _broadcast_expedition_result(tname: str, success: bool) -> None:
     rspec = spec.get("routes", {}).get(exp.get("route", ""), {})
     if success:
         body = announce_card(
-            "result", spec.get("emoji", "🏕️"), f"{spec.get('name', 'Expedition')} Complete",
+            "result", spec.get('emoji', emoji('tribe')), f"{spec.get('name', 'Expedition')} Complete",
             subtitle=tname,
             flavor=f"**{tname}** cleared it via {rspec.get('label', 'their chosen route')}.",
             actions=[f"{emoji('gift')} Every contributor received a {rspec.get('crate', 'Rare Crate')}",
-                     f"`✨` +{rspec.get('xp', 500):,} tribe XP"],
+                     f"{emoji('sparkles')} +{rspec.get('xp', 500):,} tribe XP"],
         )
         color = 0x1ABC9C
     else:
@@ -16989,15 +16990,15 @@ async def _broadcast_event_start(ev: dict) -> None:
         }
 
     body = announce_card(
-        "event", spec.get("emoji", "🎉"), ev.get("name", "An Event"),
+        "event", spec.get('emoji', emoji('party_popper')), ev.get("name", "An Event"),
         flavor=spec.get("blurb", ""), actions=actions,
         ends_ts=ev.get("ends_ts"), **progress_kwargs,
     )
     buttons = [{"type": 2, "style": 1, "label": "Join Event",
-                "emoji": {"name": spec.get("emoji", "🎉")}, "custom_id": "announce:events:open"}]
+                "emoji": {"name": spec.get('emoji', emoji('party_popper'))}, "custom_id": "announce:events:open"}]
     if kind != "buff":
         buttons.append({"type": 2, "style": 3, "label": "Hunt",
-                         "emoji": {"name": "🏹"}, "custom_id": "announce:hunt:go"})
+                         "emoji": emoji_partial('bow'), "custom_id": "announce:hunt:go"})
     await _announce(body, color=0xF1C40F, buttons=buttons)
 
 class UpdateAddModal(_V2Modal, title="📢 Add Update"):
@@ -17324,14 +17325,14 @@ async def session_start_cmd(interaction: discord.Interaction):
     if session_active(user_id):
         await send_ephemeral_v2(
             interaction,
-            "`📊` You already have a session running — `/session stop` to close it out first, "
+            f"{emoji('stats')} You already have a session running — `/session stop` to close it out first, "
             "or `/session status` to check it.",
             0xE67E22)
         return
     session_start(user_id)
     await send_ephemeral_v2(
         interaction,
-        "`📊` **Session started.** Your hunts and gambling from here on get tallied up — "
+        f"{emoji('stats')} **Session started.** Your hunts and gambling from here on get tallied up — "
         "check in any time with `/session status`, or wrap it up with `/session stop`.",
         0x2ECC71)
 
@@ -17343,11 +17344,11 @@ async def session_status_cmd(interaction: discord.Interaction):
     if not sess:
         await send_ephemeral_v2(
             interaction,
-            "`📊` No session running. Start one with `/session start`.",
+            f"{emoji('stats')} No session running. Start one with `/session start`.",
             0xE67E22)
         return
     lines = "\n".join(session_summary_lines(sess))
-    await send_ephemeral_v2(interaction, f"### `📊` Session So Far\n{lines}", 0x3498DB)
+    await send_ephemeral_v2(interaction, f"### {emoji('stats')} Session So Far\n{lines}", 0x3498DB)
 
 @session_group.command(name="stop", description="Stop your session and see the final tally")
 async def session_stop_cmd(interaction: discord.Interaction):
@@ -17357,12 +17358,12 @@ async def session_stop_cmd(interaction: discord.Interaction):
     if not sess:
         await send_ephemeral_v2(
             interaction,
-            "`📊` No session running. Start one with `/session start`.",
+            f"{emoji('stats')} No session running. Start one with `/session start`.",
             0xE67E22)
         return
     session_stop(user_id)
     lines = "\n".join(session_summary_lines(sess))
-    await send_ephemeral_v2(interaction, f"### `📊` Session Complete\n{lines}", 0x2ECC71)
+    await send_ephemeral_v2(interaction, f"### {emoji('stats')} Session Complete\n{lines}", 0x2ECC71)
 
 bot.tree.add_command(session_group)
 
@@ -19036,10 +19037,10 @@ def _weekly_leaderboard_recap_text(new_tag: str) -> str:
             rows.append((uid, gained))
     rows.sort(key=lambda r: r[1], reverse=True)
     if not rows:
-        return announce_card("result", "🏆", "Weekly Leaderboard", subtitle="Top Earner",
+        return announce_card("result", emoji('trophy'), "Weekly Leaderboard", subtitle="Top Earner",
                               flavor="No qualifying activity was recorded last week.")
     winner_uid, winner_gained = rows[0]
-    medals = {1: "`🥈`", 2: "`🥉`"}
+    medals = {1: f"{emoji('second_place_medal')}", 2: f"{emoji('third_place_medal')}"}
     runner_ups = [
         f"{medals.get(i, f'#{i+1}')} `{get_username(uid)}`{featured_badge_suffix(uid)} — {ui_money(gained)}"
         for i, (uid, gained) in enumerate(rows[1:5], start=1)
@@ -19070,7 +19071,7 @@ async def weekly_leaderboard_task():
         _last_weekly_lb_tag = tag
         await _announce(text, channel_id=COMPETITIVE_CHANNEL_ID, role_id=COMPETITIVE_ROLE_ID, color=0xF1C40F,
                          buttons=[{"type": 2, "style": 1, "label": "View Leaderboard",
-                                   "emoji": {"name": "🏆"}, "custom_id": "announce:leaderboard:open"}])
+                                   "emoji": emoji_partial('trophy'), "custom_id": "announce:leaderboard:open"}])
     except Exception as e:
         print("weekly_leaderboard_task error:", e)
 
@@ -19292,11 +19293,19 @@ async def on_ready():
     # (guild emoji from every server it's in, plus its own application emoji)
     try:
         _usable_emoji_ids.update(str(e.id) for e in bot.emojis)
+        _named_emojis = {e.name: str(e) for e in bot.emojis}
         try:
             for _ae in await bot.fetch_application_emojis():
                 _usable_emoji_ids.add(str(_ae.id))
+                _named_emojis[_ae.name] = str(_ae)
         except Exception:
             pass
+        # Registry keys still on a unicode placeholder switch to an uploaded emoji
+        # of the same name (name it exactly like the key, e.g. `heart`).
+        _adopted = adopt_named_emojis(_named_emojis)
+        if _adopted:
+            print(f"🎨 Adopted {len(_adopted)} uploaded emoji by name: {sorted(_adopted)[:20]}"
+                  + (" …" if len(_adopted) > 20 else ""))
         _missing = sorted({
             eid for k in EMOJI
             if (eid := emoji_partial(k).get("id")) and eid not in _usable_emoji_ids

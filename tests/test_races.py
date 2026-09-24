@@ -513,6 +513,39 @@ def test_crate_money_ladder_monotonic():
     assert vals[-1] < 100_000_000, "Mythic average money must stay bounded"
 
 
+# ── emoji ─────────────────────────────────────────────────────
+def test_menu_uses_registry_icons_not_literals():
+    _reset()
+    uid = "1501"
+    _mk_user(uid, level=24, money=166_902, gems=75)
+    import json
+    blob = json.dumps(app.build_menu_components(uid, "Tester"), ensure_ascii=False)
+    # 🏹 / 🎯 / 📬 have custom art in the registry; the menu must use it.
+    for glyph in ("🏹", "🎯", "📬", "📦"):
+        assert glyph not in blob or glyph in game_data.EMOJI.values(), glyph
+    assert game_data.EMOJI["bow"] in blob and game_data.EMOJI["target"] in blob
+
+
+def test_text_default_glyphs_get_emoji_presentation():
+    assert game_data.EMOJI["hp"].endswith("️")        # ❤ renders as an emoji, not a text glyph
+    assert game_data.EMOJI["gear"].endswith("️")
+
+
+def test_adopt_named_emojis_switches_placeholders():
+    saved = dict(game_data.EMOJI)
+    try:
+        got = game_data.adopt_named_emojis({"heart": "<:heart:123456789012345678>",
+                                            "bow": "<:bow:1>",             # already custom: untouched
+                                            "wolf": "garbage"})            # invalid: ignored
+        assert "heart" in got and "hp" in got            # alias follows its source
+        assert game_data.EMOJI["hp"] == "<:heart:123456789012345678>"
+        assert game_data.EMOJI["bow"] == saved["bow"]
+        assert game_data.EMOJI["wolf"] == saved["wolf"]
+    finally:
+        game_data.EMOJI.clear()
+        game_data.EMOJI.update(saved)
+
+
 # ── data safety ───────────────────────────────────────────────
 def test_saves_disabled_after_lock_loss():
     _reset()
