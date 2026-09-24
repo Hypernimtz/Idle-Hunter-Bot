@@ -12,6 +12,7 @@ import csv
 import json
 import logging
 import os
+import sqlite3
 import time
 from contextlib import asynccontextmanager, AsyncExitStack
 from dataclasses import dataclass, field
@@ -56,7 +57,7 @@ async def init_databases():
     await init_schema()
 
 async def backup_database(backup_dir: str | None = None, keep: int = 7) -> str | None:
-    """Write a consistent snapshot of the live DB (VACUUM INTO — safe while the
+    """Write a consistent snapshot of the live DB (online backup API — safe while the
     bot is running, unlike copying the file) and prune to the newest ``keep``.
     Returns the new backup's path, or None if there is no open DB."""
     if _pool is None:
@@ -64,7 +65,33 @@ async def backup_database(backup_dir: str | None = None, keep: int = 7) -> str |
     dest_dir = Path(backup_dir or os.getenv("BACKUP_DIR", "") or (Path(_db_path).resolve().parent / "backups"))
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"idle_hunter-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.db"
-    await _pool.execute("VACUUM INTO ?", (str(dest),))
+    # Copy from a SEPARATE read-only connection, in a worker thread. Both obvious
+    # options on the shared connection fail: VACUUM INTO errors with "cannot VACUUM
+    # from within a transaction" and the backup API spins forever — the bot's one
+    # connection nearly always has some coroutine's uncommitted write pending. In
+    # WAL mode a second connection just reads the last committed snapshot and never
+    # blocks (or is blocked by) the bot's writers.
+    src_path = str(Path(_db_path).resolve())
+
+    def _copy() -> None:
+        src = sqlite3.connect(f"file:{Path(src_path).as_posix()}?mode=ro", uri=True, timeout=30)
+        try:
+            dst = sqlite3.connect(str(dest))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_copy), timeout=120)
+    except BaseException:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        raise
     old = sorted(dest_dir.glob("idle_hunter-*.db"))
     for f in old[:-keep] if keep > 0 else []:
         try:

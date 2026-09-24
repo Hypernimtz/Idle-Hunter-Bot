@@ -727,6 +727,28 @@ def test_atomic_write_leaves_no_temp_file():
     os.remove(path)
 
 
+def test_db_backup_works_with_open_transaction_and_is_readable():
+    """Regression: VACUUM INTO failed with 'cannot VACUUM from within a transaction'
+    whenever any coroutine had an uncommitted write on the shared connection."""
+    run(_ensure_db())
+    async def leave_txn_open():
+        await backend._pool.execute(
+            "INSERT OR REPLACE INTO users (user_id, data, username, level, money, prestige) "
+            "VALUES ('bk1', '{}', 'bk', 1, 5, 0)")          # implicit txn, deliberately not committed
+        assert backend._pool.in_transaction
+    run(leave_txn_open())
+    d = tempfile.mkdtemp()
+    p = run(backend.backup_database(d, keep=3))
+    import sqlite3
+    con = sqlite3.connect(p)
+    try:
+        assert con.execute("SELECT COUNT(*) FROM users").fetchone()[0] >= 0
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        con.close()
+    run(backend._pool.commit())
+
+
 def test_db_backup_roundtrip():
     run(_ensure_db())
     d = tempfile.mkdtemp()
