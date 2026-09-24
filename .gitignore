@@ -1,0 +1,24 @@
+# Secrets — never commit
+token.env
+*.env
+.env
+
+# Live data / runtime state (lives in the DB and JSON files, not in source control)
+*.db
+*.db-wal
+*.db-shm
+backups/
+config.json
+lottery.json
+runtime_state.json
+admin_actions.log
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local tooling
+.claude/
