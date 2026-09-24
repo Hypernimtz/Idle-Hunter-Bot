@@ -22,3 +22,6 @@ venv/
 
 # Local tooling
 .claude/
+
+# Deploy bundles
+*.zip
