@@ -617,6 +617,7 @@ EMOJI["world_map"]      = EMOJI["biome"]         # 🗺 the global-map globe (<:
 EMOJI["lottery_ticket"] = EMOJI["season_pass"]   # 🎟 lottery
 EMOJI["coinflip"]       = EMOJI["coin_sample"]   # 🪙 coinflip / "sell all"
 EMOJI["money_bag"]      = EMOJI["coin_sample"]   # 💰 was a bare-unicode placeholder (2026-09-22)
+EMOJI["compass"]        = EMOJI["location_pin"]   # 🧭 "pick a destination" → destination pin
 EMOJI["trophy"]         = EMOJI["leaderboard"]   # 🏆 trophies / records
 EMOJI["book"]           = EMOJI["collection"]    # 📖 help / tutorial / stats
 _EMOJI_ALIASES = {"hp": "heart"}   # alias -> source, re-pointed by adopt_named_emojis()
@@ -3020,6 +3021,8 @@ TIPS = [
     "Gem-bought ammo gives up to 50% boosts on top of your tool!",
     "Running out of ammo? Head to /shop → Ammo tab!",
     "Some ammo types focus on specific stats — pick what you need!",
+    "Use /refer to invite a friend — when they get going, you both earn gems and a title!",
+    "Bring friends along: /invite has the link to add Idle Hunter to your server.",
 ]
 
 
@@ -3431,7 +3434,7 @@ QUEST_TEMPLATES = [
     {
         "id":          "catch_any",
         "description": "Catch **{count}** animals (any kind).",
-        "icon":        "🐾",
+        "icon":        emoji('collection'),
         "stat":        "animals_caught",
         "base_count":  15,
         "base_xp":     500,
@@ -3441,7 +3444,7 @@ QUEST_TEMPLATES = [
     {
         "id":          "catch_specific",
         "description": "Catch **{count}** **{animal}**.",
-        "icon":        "🦌",
+        "icon":        emoji('target'),
         "stat":        "animal_caught_specific",
         "base_count":  5,
         "base_xp":     700,
@@ -3452,7 +3455,7 @@ QUEST_TEMPLATES = [
     {
         "id":          "catch_rarity",
         "description": "Catch **{count}** animals of **{rarity}** rarity or higher.",
-        "icon":        "⭐",
+        "icon":        emoji('luck'),
         "stat":        "rarity_caught",
         "base_count":  8,
         "base_xp":     800,
@@ -3464,7 +3467,7 @@ QUEST_TEMPLATES = [
     {
         "id":          "perfect_catch",
         "description": "Land **{count}** Perfect Catches (rare bonus).",
-        "icon":        "✨",
+        "icon":        emoji('sparkles'),
         "stat":        "perfect_catches",
         "base_count":  3,
         "base_xp":     900,
@@ -3542,7 +3545,7 @@ QUEST_TEMPLATES = [
     {
         "id":          "sell_animals",
         "description": "Sell **{count}** animals from your inventory.",
-        "icon":        "🏪",
+        "icon":        emoji('shop'),
         "stat":        "animals_sold_quest",
         "base_count":  30,
         "base_xp":     450,
@@ -3629,7 +3632,12 @@ DAILY_QUEST_MILESTONES = [
     (150, 1000),
     (300, 2000),
     (500, 4000),
-]
+]   # legacy lifetime track — no longer paid out (replaced by the weekly goal below)
+
+# Weekly daily-quest goal: claim DAILY_QUEST_WEEKLY_TARGET daily quests inside a
+# rolling 7-day window and get DAILY_QUEST_WEEKLY_GEMS gems, once per window.
+DAILY_QUEST_WEEKLY_TARGET = 20
+DAILY_QUEST_WEEKLY_GEMS   = 50
 WEEKLY_QUEST_TEMPLATES = [
     {
         "id":          "maintain_streak",

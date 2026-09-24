@@ -86,6 +86,7 @@ from game_data import (
     # Quests
     QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
     WEEKLY_QUEST_TEMPLATES, QUESTS_PER_WEEK, WEEKLY_QUESTS_MAX, DAILY_QUEST_MILESTONES,
+    DAILY_QUEST_WEEKLY_TARGET, DAILY_QUEST_WEEKLY_GEMS,
     generate_quest, roll_daily_quests, roll_weekly_quests, get_quest_tier,
     # Tribe progression
     TRIBE_XP_HUNT, TRIBE_XP_HUNT_CAP_DAY, TRIBE_XP_DAILY, TRIBE_XP_TASK,
@@ -331,7 +332,7 @@ ADMIN_BUFF_EVENT = {
     "perks": [
         f"{emoji('clock')} Hunt cooldown **halved**",
         f"{emoji('plane')} Travel is **instant**",
-        f"{ph('🔨')} Crystal crafting is **instant**",
+        f"{emoji('crystal_rare')} Crystal crafting is **instant**",
         f"{ph('🔫')} Ammo is **not consumed** while hunting",
         f"{ph('💲')} Sell price **×2**",
         f"{ph(emoji('sparkles'))} XP **×2**",
@@ -3788,6 +3789,50 @@ def gemstone_line(user_id: str) -> str:
     parts = [f"{GEMSTONE_ICONS[r]} {int(g[r])}" for r in RARITY_KEYS if g.get(r, 0) > 0]
     return (f"{emoji('gem')} Gemstones: " + " · ".join(parts)) if parts else ""
 
+# ── Forge-finished reminder ─────────────────────────────────────────────
+# A crystal takes CRYSTAL_CRAFT_SECONDS to fuse. When the player queues one we
+# leave a timer running that drops a fresh *ephemeral* follow-up the moment the
+# forge finishes. Ephemeral messages can only be sent through a live interaction
+# token (valid 15 min), so a craft finishing later than that just doesn't get a
+# ping — the panel itself still shows it.
+FORGE_REMIND_WINDOW_S = 14 * 60
+_forge_reminders: dict[str, "asyncio.Task"] = {}
+
+def _schedule_forge_reminder(interaction, user_id: str) -> None:
+    q = data.get(user_id, {}).get("craft_queue") or []
+    horizon = time.time() + FORGE_REMIND_WINDOW_S
+    in_window = [e for e in q if e.get("done_ts", 0) <= horizon]
+    if not in_window:
+        return
+    fire_ts = max(e["done_ts"] for e in in_window)
+    old = _forge_reminders.pop(user_id, None)
+    if old and not old.done():
+        old.cancel()     # the new timer covers everything the old one did
+    _forge_reminders[user_id] = asyncio.ensure_future(
+        _forge_reminder_task(interaction, user_id, fire_ts, len(in_window)))
+
+async def _forge_reminder_task(interaction, user_id: str, fire_ts: float, n: int) -> None:
+    try:
+        await asyncio.sleep(max(0.0, fire_ts - time.time()) + 1.0)
+        craft_tick(user_id)
+        body = (f"### {emoji('crystal_rare')} Forge finished!\n"
+                f"**{n}** crystal{'s' if n != 1 else ''} finished fusing — "
+                f"spend {'them' if n != 1 else 'it'} on crates in the Crate Shop.")
+        await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False,
+            "components": [
+                {"type": 10, "content": body},
+                {"type": 1, "components": [
+                    {"type": 2, "style": 3, "label": "Open Craft", "emoji": emoji_partial("crystal_rare"),
+                     "custom_id": f"craft:open:{user_id}"}]},
+            ]}], ephemeral=True)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        pass     # token expired / message deleted — nothing to recover
+    finally:
+        if _forge_reminders.get(user_id) is asyncio.current_task():
+            _forge_reminders.pop(user_id, None)
+
 def craft_queue_summary(user_id: str) -> str:
     q = sorted(data.get(user_id, {}).get("craft_queue", []), key=lambda e: e.get("done_ts", 0))
     if not q:
@@ -4658,8 +4703,10 @@ def build_refer_components(user_id: str, code: str,
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 5, "label": "Invite Idle Hunter", "url": invite_url()},
-            {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"},
+            {"type": 2, "style": 5, "label": "Invite Idle Hunter", "emoji": emoji_partial("link"),
+             "url": invite_url()},
+            {"type": 2, "style": 2, "label": "Menu", "emoji": emoji_partial("home"),
+             "custom_id": f"nav:menu:{user_id}"},
         ]},
     ]}]
 
@@ -5679,7 +5726,13 @@ def ui_money(n: int) -> str:
     return f"◈ {n:,}"
 
 def ui_status(on: bool) -> str:
-    return f"{emoji('check_mark')} ON" if on else "`⬜` OFF"
+    return f"{emoji('check_mark')} ON" if on else f"{emoji('cross_mark')} OFF"
+
+def ui_status_btn(on: bool) -> tuple[str, dict]:
+    """(label, emoji) for an ON/OFF toggle *button* — a custom emoji's <:name:id>
+    markup shows as literal text inside a button label, so the icon goes in the
+    button's separate `emoji` field."""
+    return ("ON", emoji_partial("check_mark")) if on else ("OFF", emoji_partial("cross_mark"))
 
 # ─────────────────────────────────────────────
 # BADGE HELPERS
@@ -5741,6 +5794,17 @@ def featured_badge_suffix(user_id: str) -> str:
 # ACHIEVEMENTS PAGE BUILDER
 # ─────────────────────────────────────────────
 
+# Icon (EMOJI key) that best matches each achievement track.
+ACH_ICONS = {
+    "daily_streak":     "daily",
+    "animals_caught":   "bow",
+    "ammo_used":        "ammo_wooden_arrow",
+    "tools_bought_all": "shop",
+    "tools_used_all":   "equipment",
+    "gamble":           "dice",
+    "crates_opened":    "crate_sample",
+}
+
 ACH_LABELS = {
     "daily_streak":    "Daily Streak",
     "animals_caught":  "Animals Caught",
@@ -5790,7 +5854,8 @@ def build_achievements_pages(user_id: str) -> list[str]:
         if cur_lines > 0:
             flush()
 
-        cur_page.append(f"### {emoji('achievements')} {label}")
+        ach_icon = emoji(ACH_ICONS.get(ach_key, "achievements"))
+        cur_page.append(f"### {ach_icon} {label}")
         cur_lines += 2
 
         if not tiers:
@@ -5813,10 +5878,13 @@ def build_achievements_pages(user_id: str) -> list[str]:
                 continue
 
             done  = claimed_up_to >= i
-            check = f"{emoji('check_mark')}" if done else "`⬜`"
+            check = emoji('check_mark') if done else emoji('lock')
             bar   = _progress_bar(min(current_val, threshold), threshold) + f"\n`{current_val}/{threshold}`\n"
-            reward_parts = [_reward_str(rtype, amount) for rtype, amount in rewards]
-            reward = " + ".join(reward_parts)
+            reward_parts = [_reward_str(rtype, amount) for rtype, amount in rewards if amount]
+            title_txt = ACHIEVEMENT_TITLES.get(ach_key, {}).get(str(threshold))
+            if title_txt:
+                reward_parts.append(f'{emoji("label")} Title: "{title_txt}"')
+            reward = " + ".join(reward_parts) or "—"
             line1  = f"{check} **{_fmt(threshold)}** — {reward}"
             line2  = f"-# {bar}"
             cur_page.append(line1)
@@ -5826,7 +5894,7 @@ def build_achievements_pages(user_id: str) -> list[str]:
             if cur_lines >= _ACH_LINES_PER_PAGE:
                 flush()
                 # Re-add the header for continuation pages within same achievement
-                cur_page.append(f"### {emoji('achievements')} {label}")
+                cur_page.append(f"### {ach_icon} {label}")
                 cur_lines += 2
 
     flush()
@@ -5978,7 +6046,7 @@ def build_progression_hub(user_id: str) -> list:
                   f"Level {d['level']} · Prestige {d.get('prestige', 0)}\n"
                   f"{ph(emoji('book'))} World Completion **{gc['world_pct']:.0f}%**"),
         "",
-        f"{ph(emoji('sports_medal'))} **ACHIEVEMENTS**",
+        f"{ph(emoji('first_place_medal'))} **ACHIEVEMENTS**",
         f"{total_ach}/{total_possible}" + (f" · {close_count} reward{'s' if close_count != 1 else ''} close" if close_count else ""),
         "",
         f"{ph(emoji('military_medal'))} **BADGES**",
@@ -6002,14 +6070,14 @@ def build_progression_hub(user_id: str) -> list:
         {"type": 10, "content": content},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Achievements", "emoji": emoji_partial('sports_medal'),
+            {"type": 2, "style": 1, "label": "Achievements", "emoji": emoji_partial('first_place_medal'),
              "custom_id": f"ach:achievements:{user_id}"},
             {"type": 2, "style": 1, "label": "Badges", "emoji": emoji_partial('military_medal'),
              "custom_id": f"ach:badges:{user_id}"},
-        ]},
-        {"type": 1, "components": [
             {"type": 2, "style": 1, "label": "Titles", "emoji": emoji_partial('label'),
              "custom_id": f"ach:titles:{user_id}"},
+        ]},
+        {"type": 1, "components": [
             {"type": 2, "style": 2, "label": "Collection", "emoji": emoji_partial('book'),
              "custom_id": f"guide:open:{user_id}"},
         ]},
@@ -6021,19 +6089,18 @@ def build_achievements_components(user_id: str) -> list:
     page  = _ach_page.get(user_id, 0)
     page  = max(0, min(page, len(pages) - 1))
     total = len(pages)
-    content = f"### {emoji('achievements')} Achievements — Page {page+1}/{total}\n\n{pages[page]}"
+    content = f"### {emoji('first_place_medal')} Achievements — Page {page+1}/{total}\n\n{pages[page]}"
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 2, "label": "◀ Prev",
          "custom_id": f"ach:prev:{user_id}", "disabled": page == 0},
         {"type": 2, "style": 2, "label": "Next ▶",
          "custom_id": f"ach:next:{user_id}", "disabled": page >= total - 1},
-        {"type": 2, "style": 2, "label": "◀ Back",
-         "custom_id": f"ach:back:{user_id}"},
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
         {"type": 14, "divider": True, "spacing": 1},
         btn_row,
+        _ach_back_row(user_id),
     ]}]
 
 def build_badges_components(user_id: str) -> list:
@@ -6078,9 +6145,8 @@ def build_badges_components(user_id: str) -> list:
          "custom_id": f"badge:prev:{user_id}", "disabled": page == 0},
         {"type": 2, "style": 2, "label": "Next ▶",
          "custom_id": f"badge:next:{user_id}", "disabled": page >= total - 1},
-        {"type": 2, "style": 2, "label": "◀ Back",
-         "custom_id": f"ach:back:{user_id}"},
     ]})
+    comps.append(_ach_back_row(user_id))
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
 
 # ─────────────────────────────────────────────
@@ -6106,7 +6172,7 @@ def build_title_components(user_id: str) -> list:
 
     equipped_line = f'Equipped: **"{equipped}"**' if equipped else "Equipped: *None*"
     lines = "\n".join(
-        f"{emoji('check_mark') if t == equipped else '`⬜`'} {t}" for t in earned
+        f"{emoji('check_mark') if t == equipped else emoji('label')} {t}" for t in earned
     )
     content = (
         f"### {emoji('label')} Titles\n"
@@ -6187,7 +6253,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     if stacks:
         idle_haul = idle_pending_preview(user_id)
         idle_cap  = idle_capacity(user_id)
-        now_bits.append(f"{ph(emoji('package'))} Camp haul: **{idle_haul}/{idle_cap}**")
+        now_bits.append(f"{emoji('idle_camp')} Camp haul: **{idle_haul}/{idle_cap}**")
     now_block = ("\n\n" + "\n".join(f"-# {b}" for b in now_bits)) if now_bits else ""
 
     content = f"{header}\n\n{wallet_block}{equip_block}{goal_block}{now_block}"
@@ -6216,7 +6282,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Daily",          "emoji": emoji_partial("daily"),          "value": "daily",       "description": "Claim your daily reward"},
             {"label": "Camp",           "emoji": emoji_partial("idle_camp"),      "value": "idle",        "description": "Manage your Hunting Camp"},
             {"label": "Tribe",          "emoji": emoji_partial("tribe"),          "value": "tribe",       "description": "View your tribe"},
-            {"label": "Crafting",       "emoji": {"name": "🔨"},                  "value": "craft",       "description": "Fuse shards into crystals & buy crates"},
+            {"label": "Crafting",       "emoji": emoji_partial("crystal_rare"),  "value": "craft",       "description": "Fuse shards into crystals & buy crates"},
             {"label": "Leaderboard",    "emoji": emoji_partial("leaderboard"),    "value": "leaderboard", "description": "View global leaderboards"},
             {"label": "Events",         "emoji": emoji_partial('earth'),                  "value": "events",      "description": "View ongoing global events"},
             {"label": "Gamble",         "emoji": emoji_partial("dice"),           "value": "gamble",      "description": "Try your luck at mini-games"},
@@ -6565,19 +6631,20 @@ def build_hunt_components(user_id: str, result: dict) -> list:
                             f"Level up{'×' + str(ups) if ups > 1 else ''}! Now level **{result['level']}**")
 
     extra_bits = []
+    drop_bits  = []   # shard / crate drops — their own block, apart from the animal catches
     shard_drops = result.get("shard_drops") or {}
     crate_drops = result.get("crate_drops") or {}
     if shard_drops:
         got = " · ".join(f"{SHARD_ICONS.get(r,'')} {n}× {_rarity_label(r)} Shard"
                          for r, n in shard_drops.items())
-        extra_bits.append(f"-# {emoji('gem')} Shard drop: {got}")
+        drop_bits.append(f"{emoji('gem')} **Shard drop:** {got}")
     if crate_drops:
         got = " · ".join(f"{CRATE_TIERS[n]['emoji']} {cnt}× **{n}**"
                          for n, cnt in crate_drops.items())
-        extra_bits.append(f"-# {emoji('crate_sample')} Crate drop: {got}")
+        drop_bits.append(f"{emoji('crate_sample')} **Crate drop:** {got}")
     auto_opened = result.get("auto_opened") or []
     if auto_opened:
-        extra_bits.append(f"-# {emoji('crate_sample')} Auto-opened: " + " · ".join(auto_opened))
+        drop_bits.append(f"{emoji('crate_sample')} **Auto-opened:** " + " · ".join(auto_opened))
     _ae = result.get("animal_encounter")
     if _ae and _ae.get("kind") == "fled":
         extra_bits.append(f"-# `💨` A **{_ae['animal']}** caught your scent and bolted before you got close.")
@@ -6585,8 +6652,8 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         return build_animal_fight_components(user_id, intro=True, extra_catches=result["catches"])
     extra_block = ("\n" + "\n".join(extra_bits)) if extra_bits else ""
 
-    footer_bits = [f"{ph(emoji('inventory'))} {inv_count} animal{'s' if inv_count != 1 else ''} · worth {ui_money(sell_val)} "
-                   f"· balance {ui_money(d['money'])}"]
+    footer_bits = [f"{ph(emoji('inventory'))} {inv_count} animal{'s' if inv_count != 1 else ''} · worth {ui_money(sell_val)}",
+                   f"Balance {ui_money(d['money'])}"]
     _sess_line = session_hunt_line(user_id)
     if _sess_line:
         footer_bits.append(_sess_line)
@@ -6597,6 +6664,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         + "\n\n".join(catch_parts) + ("\n\n" if catch_parts else "")
         + progress_block + extra_block + "\n\n" + footer_block
     )
+    drops_block = "\n".join(drop_bits)
 
     btn_row1 = {"type": 1, "components": [
         {"type": 2, "style": 3, "label": "Hunt Again", "custom_id": f"hunt:again:{user_id}"},
@@ -6607,10 +6675,17 @@ def build_hunt_components(user_id: str, result: dict) -> list:
          "custom_id": f"nav:inv:{user_id}"},
         {"type": 2, "style": 2, "label": "World", "emoji": emoji_partial('earth'),
          "custom_id": f"nav:world:{user_id}"},
+        {"type": 2, "style": 2, "label": "Menu", "emoji": emoji_partial('home'),
+         "custom_id": f"nav:menu:{user_id}"},
     ]}
 
-    comps = [
-        {"type": 10, "content": content},
+    comps = [{"type": 10, "content": content}]
+    if drops_block:
+        # Crate / shard drops sit in their own block under a divider so they read
+        # as a separate event from the animal that was just caught.
+        comps += [{"type": 14, "divider": True, "spacing": 1},
+                  {"type": 10, "content": drops_block}]
+    comps += [
         {"type": 14, "divider": False, "spacing": 1},
         btn_row1, btn_row2,
     ]
@@ -7084,7 +7159,10 @@ def build_onboarding_components(user_id: str) -> list:
             f"{emoji('earth')} Investigate your first World Condition\n"
             f"`👹` Find your first Mythical Creature\n"
             f"{emoji('tribe')} Join or create a Tribe\n\n"
-            f"{rookie_goals_block(user_id)}"
+            f"{rookie_goals_block(user_id)}\n\n"
+            f"{emoji('handshake')} **Hunting is better with friends** — </refer:{COMMAND_ID.get('refer','0')}> "
+            f"gives you both {emoji('gem')} gems + a title when they get going, and "
+            f"</invite:{COMMAND_ID.get('invite','0')}> adds the bot to your own server."
         )
         rows = [{"type": 1, "components": [
             {"type": 2, "style": 3, "label": "Hunt Again", "emoji": emoji_partial('bow'),
@@ -7093,6 +7171,12 @@ def build_onboarding_components(user_id: str) -> list:
              "custom_id": f"nav:world:{user_id}"},
             {"type": 2, "style": 2, "label": "Find a Tribe", "emoji": emoji_partial('tribe'),
              "custom_id": f"nav:tribe:{user_id}"},
+        ]},
+        {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "Refer a Friend", "emoji": emoji_partial('handshake'),
+             "custom_id": f"nav:refer:{user_id}"},
+            {"type": 2, "style": 5, "label": "Add Bot to Server", "emoji": emoji_partial('link'),
+             "url": invite_url()},
         ]}]
 
     if step not in ("done", "danger"):
@@ -7194,13 +7278,14 @@ def _biome_select_row(user_id: str) -> dict:
         locked     = user_level < lvl_req
         needs_tool = tool_tier < BIOME_TOOL_TIER.get(biome_key, 1)
         mins       = travel_time_min(current_biome, biome_key)
+        # Option descriptions are plain text — no custom-emoji markup here.
         if locked:
-            desc = f"{emoji('lock')} Unlocks at Level {lvl_req}"
+            desc = f"Unlocks at Level {lvl_req}"
         elif biome_key == current_biome:
-            desc = f"`📍` You are here · {r['region']}"
+            desc = f"You are here · {r['region']}"
         else:
             trip = "already here" if mins <= 0 else f"~{mins} min away"
-            warn = f" · {emoji('warning')} needs a better tool" if needs_tool else ""
+            warn = " · needs a better tool" if needs_tool else ""
             desc = f"{r['region']} · {trip}{warn}"
         opt = {
             "label": f"{BIOME_NAMES[biome_key]}", "value": biome_key,
@@ -7213,6 +7298,8 @@ def _biome_select_row(user_id: str) -> dict:
         # dedicated `emoji` field.
         if locked:
             opt["emoji"] = emoji_partial("lock")
+        elif biome_key == current_biome and not traveling:
+            opt["emoji"] = emoji_partial("location_pin")   # destination pin = you are here
         else:
             em = emoji_partial(BIOME_EMOJIS.get(biome_key, ""))
             if em:
@@ -7241,7 +7328,7 @@ def _world_region_rows(user_id: str) -> list[str]:
     for biome_key, lvl_req in BIOME_LEVELS:
         r = biome_region(biome_key)
         em = BIOME_EMOJIS.get(biome_key, "")
-        here = " ← you are here" if biome_key == cur else ""
+        here = f" {emoji('location_pin')}" if biome_key == cur else ""
         if lvl < lvl_req:
             rows.append(f"{em} **{BIOME_NAMES[biome_key]}** — {emoji('lock')} Level {lvl_req}")
             continue
@@ -7267,7 +7354,7 @@ def build_world_components(user_id: str, goal_line: str = "") -> list:
     _rookie_goal_progress(user_id, "view_world")
 
     where = f"{BIOME_EMOJIS.get(cur,'')} **{BIOME_NAMES.get(cur, cur)}** — {biome_region(cur)['region']}"
-    header = ui_header(emoji('earth'), "WORLD", where)
+    header = ui_header(emoji('earth'), "WORLD") + "\n" + where
 
     now_bits = []
     if is_traveling(user_id):
@@ -7284,7 +7371,7 @@ def build_world_components(user_id: str, goal_line: str = "") -> list:
     body = header + now_block
     if goal_line:
         body += f"\n\n{goal_line}"
-    body += f"\n\n-# {ph('🧭')} Pick a destination below to travel — you leave at once and can't hunt until you arrive."
+    body += f"\n\n{emoji('compass')} Pick a destination below to travel — you leave at once and can't hunt until you arrive."
 
     comps = []
     _map = world_map_url()
@@ -7646,7 +7733,7 @@ def build_equip_components(user_id: str) -> list:
     comps.append({"type": 10, "content": "**Vehicle**"})
     if owned_vehicles:
         vehicle_opts = [
-            {"label": f"{VEHICLES[n]['emoji']} {n}", "value": n,
+            {"label": n, "value": n, "emoji": emoji_partial(VEHICLES[n]['emoji']),
              "description": f"-{VEHICLES[n]['boost_cd']}s cooldown · T{VEHICLES[n]['tier']}",
              "default": n == equipped_vehicle}
             for n in owned_vehicles
@@ -7683,10 +7770,10 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                 if admin_buff_active() else
                 "\n-# `🦆` The ducks have taken the shop. They're letting you browse. For now."
                 if active_event_key() == "duck" else "")
-    shop_header = ui_header("🛒", "SHOP", f"{ui_money(d['money'])} · {emoji('gem')} {d['gems']}") + _ev_note
+    shop_header = ui_header(emoji('shop'), "SHOP", f"{ui_money(d['money'])} · {emoji('gem')} {d['gems']}") + _ev_note
 
     tab_options = [
-        {"label": "Boosts",   "emoji": emoji_partial('test_tube'), "value": "boosts",   "default": tab == "boosts"},
+        {"label": "Boosts",   "emoji": emoji_partial('potion_bottle'), "value": "boosts",   "default": tab == "boosts"},
         {"label": "Tools",    "emoji": emoji_partial('wrench'), "value": "tools",    "default": tab == "tools"},
         {"label": "Ammo",     "emoji": emoji_partial('diamond_small'), "value": "ammo",     "default": tab == "ammo"},
         {"label": "Healing",  "emoji": emoji_partial('adhesive_bandage'), "value": "healing",  "default": tab == "healing"},
@@ -7703,7 +7790,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         item_sections = []
         for name, item in SHOP_BOOST_ITEMS.items():
             boost_key = item.get("boost_key")
-            icon      = emoji(_SHOP_BOOST_ICONS.get(boost_key, "")) or "🧪"
+            icon      = emoji(_SHOP_BOOST_ICONS.get(boost_key, "")) or emoji('potion_bottle')
             bought    = shop_bought_count(d, name) if boost_key else 0
             maxed     = bought >= item["max_qty"]
             _pr       = ev_price(shop_boost_price(name, bought))
@@ -8048,7 +8135,8 @@ def build_settings_components(user_id: str) -> list:
 
     def _setting_section(key: str, icon: str, label: str, blurb: str, on: bool):
         content = f"{icon} **{label}**\n-# {blurb}"
-        accessory = {"type": 2, "style": 3 if on else 2, "label": ui_status(on),
+        _lbl, _em = ui_status_btn(on)
+        accessory = {"type": 2, "style": 3 if on else 2, "label": _lbl, "emoji": _em,
                      "custom_id": f"settings:toggle:{key}:{user_id}"}
         return ui_section(content, accessory)
 
@@ -8326,6 +8414,15 @@ _quest_page: dict[str, int] = {}
  
 QUESTS_PER_PAGE = 3   # how many quests shown per page
  
+def _quest_icon(q: dict) -> str:
+    """Icon for a quest, taken from its template *now* — quests already sitting in
+    a player's queue carry whatever icon was current when they rolled."""
+    tid = q.get("template")
+    for t in (*QUEST_TEMPLATES, *WEEKLY_QUEST_TEMPLATES):
+        if t["id"] == tid:
+            return t["icon"]
+    return q.get("icon", "")
+
 def _quest_section(q: dict, claim_prefix: str, user_id: str) -> dict:
     """One Discord section for a quest — a Claim accessory when it's ready,
     otherwise just its own compact progress block. Shared by the daily and
@@ -8340,7 +8437,7 @@ def _quest_section(q: dict, claim_prefix: str, user_id: str) -> dict:
     if q.get("crate_reward"):
         reward_bits.append(f"1× {q['crate_reward']}")
     content = (
-        f"{done_tag}{q['icon']} {q['description']}\n"
+        f"{done_tag}{_quest_icon(q)} {q['description']}\n"
         f"{bar} {q['progress']:,}/{q['target']:,} ({pct_label})\n"
         f"-# Reward: {' · '.join(reward_bits)}"
     )
@@ -8420,19 +8517,19 @@ def build_quests_components(user_id: str, page: int = 0) -> list:
     components.append({"type": 14, "divider": True, "spacing": 1})
     components.append({"type": 1, "components": nav_buttons})
 
-    # ── Lifetime milestone track ───────────────
-    total_claimed = d["stats"].get("daily_quests_completed_total", 0)
-    next_ms = next(((th, g) for th, g in DAILY_QUEST_MILESTONES if th > total_claimed), None)
+    # ── Weekly goal track ──────────────────────
+    wk = dq_week_state(user_id)
+    goal_n, goal_gems = DAILY_QUEST_WEEKLY_TARGET, DAILY_QUEST_WEEKLY_GEMS
     components.append({"type": 14, "divider": True, "spacing": 1})
-    if next_ms:
-        th, g = next_ms
-        bar, pct_label = ui_progress(total_claimed, th)
-        ms_body = (f"{emoji('gem')} **Milestone:** {total_claimed:,}/{th:,} daily quests completed (lifetime)\n"
-                   f"{bar} {pct_label} — next reward: **+{g} gems**")
+    if wk["paid"]:
+        ms_body = (f"{emoji('gem')} **Weekly goal complete!** {goal_n}/{goal_n} daily quests — "
+                   f"**+{goal_gems}** {emoji('gem')} paid out.\n"
+                   f"-# A new goal starts <t:{int(wk['start'] + WEEK_SECONDS)}:R>")
     else:
-        th_last, g_last = DAILY_QUEST_MILESTONES[-1]
-        ms_body = (f"{emoji('gem')} **Milestone:** {total_claimed:,} daily quests completed lifetime — "
-                   f"every milestone claimed! (last: +{g_last} gems at {th_last:,})")
+        bar, pct_label = ui_progress(wk["n"], goal_n)
+        reset = (f" · resets <t:{int(wk['start'] + WEEK_SECONDS)}:R>" if wk["start"] else "")
+        ms_body = (f"{emoji('gem')} **Weekly goal:** {wk['n']}/{goal_n} daily quests this week{reset}\n"
+                   f"{bar} {pct_label} — reward: **+{goal_gems}** {emoji('gem')}")
     components.append({"type": 10, "content": ms_body})
 
     components.append({"type": 1, "components": [
@@ -8495,17 +8592,27 @@ def _idle_biome_select(user_id: str) -> dict:
     opts = []
     for biome_key, lvl_req in BIOME_LEVELS:
         tier_req = BIOME_TOOL_TIER.get(biome_key, 1)
+        # Option text is plain — a custom emoji only renders in the `emoji` field.
         if lvl < lvl_req:
-            desc = f"{emoji('lock')} Unlocks at Level {lvl_req:,}"
+            desc = f"Unlocks at Level {lvl_req:,}"
+            em   = emoji_partial("lock")
         elif tier < tier_req:
-            desc = f"{emoji('warning')} Needs a Tier {tier_req}+ tool"
+            desc = f"Needs a Tier {tier_req}+ tool"
+            em   = emoji_partial(BIOME_EMOJIS.get(biome_key, ""))
         else:
             desc = f"Lv {lvl_req:,}+ · tier-{tier_req} game"
-        opts.append({"label": BIOME_NAMES[biome_key], "value": biome_key,
-                     "description": desc, "default": biome_key == camp_b})
+            em   = emoji_partial(BIOME_EMOJIS.get(biome_key, ""))
+        if biome_key == camp_b:
+            desc = f"Camp is here · {desc}"
+            em   = emoji_partial("location_pin")
+        opt = {"label": BIOME_NAMES[biome_key], "value": biome_key,
+               "description": desc[:100], "default": biome_key == camp_b}
+        if em:
+            opt["emoji"] = em
+        opts.append(opt)
     return {"type": 1, "components": [{"type": 3,
         "custom_id": f"idle:biome:{user_id}",
-        "placeholder": "🗺️ Move the camp to another biome...",
+        "placeholder": "Move the camp to another biome...",
         "min_values": 1, "max_values": 1, "flows": {},
         "options": opts}]}
 
@@ -8528,7 +8635,7 @@ def build_idle_components(user_id: str) -> list:
             f"-# Hire a hunter and they'll bring back animals from your camp biome "
             f"while you're away — you collect the haul into your inventory.\n\n"
             f"-# {emoji('world_map')} Camp biome: {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n"
-            f"-# {emoji('package')} Haul storage: **{haul_n}/{cap}**\n"
+            f"-# {emoji('idle_camp')} Haul storage: **{haul_n}/{cap}**\n"
             f"-# Balance: **◈ {d['money']:,}**"
         )
         rows = []
@@ -8564,7 +8671,7 @@ def build_idle_components(user_id: str) -> list:
     body = (
         f"### {emoji('idle_camp')} Hunting Camp\n"
         f"{emoji('green_ball')} **{hunters}** hunter(s) camping in {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n\n"
-        f"{emoji('package')} **Haul: {haul_n}/{cap}**\n"
+        f"{emoji('idle_camp')} **Haul: {haul_n}/{cap}**\n"
         f"-# {_progress_bar(haul_n, cap, width=14)}\n"
         f"{fill_line}\n\n"
         f"-# `📈` Rate: **~{rate:.1f} catches/hr**\n"
@@ -8579,7 +8686,7 @@ def build_idle_components(user_id: str) -> list:
          "custom_id": f"idle:hire:{user_id}", "disabled": hunters_maxed},
         {"type": 2, "style": 1,
          "label": "Storage maxed" if up_maxed else f"+Storage (◈ {_short_num(up_cost)})",
-         "emoji": emoji_partial('package'),
+         "emoji": emoji_partial('idle_camp'),
          "custom_id": f"idle:upgrade:{user_id}", "disabled": up_maxed},
     ]
     return [{"type": 17, "accent_color": accent, "spoiler": False, "components": [
@@ -8934,7 +9041,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
         ]}]
 
     options = [
-        {"label": f"{CRATE_TIERS[n]['emoji']} {n} (×{v})", "value": n,
+        {"label": f"{n} (×{v})", "value": n, "emoji": emoji_partial(CRATE_TIERS[n]['emoji']),
          "description": CRATE_TIERS[n]["description"]}
         for n, v in owned.items()
     ]
@@ -9008,7 +9115,7 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
     mats = "\n".join(shard_lines) if shard_lines else "-# No shards or crystals yet — catch animals to find shards."
 
     header = (
-        f"### {ph('🔨')} Craft\n"
+        f"### {emoji('crystal_rare')} Craft\n"
         f"Fuse **{CRYSTAL_SHARD_COST}** shards into **1** crystal "
         f"(~{CRYSTAL_CRAFT_SECONDS // 60} min each, queued), then spend crystals on "
         f"crates below. Open crates with </use:{COMMAND_ID.get('use','0')}>.\n"
@@ -9040,7 +9147,7 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
                 o.pop("emoji", None)
         rows.append({"type": 1, "components": [{"type": 3,
             "custom_id": f"craft:queue:{user_id}",
-            "placeholder": "🔨 Fuse shards into a crystal…",
+            "placeholder": "Fuse shards into a crystal…",
             "min_values": 1, "max_values": 1, "flows": {}, "options": opts}]})
     else:
         rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
@@ -9112,6 +9219,18 @@ def quest_daily_roll_if_needed(user_id: str):
 
 
 WEEK_SECONDS = 7 * 86400
+
+def dq_week_state(user_id: str) -> dict:
+    """The player's weekly daily-quest goal window: {"start", "n", "paid"}.
+    Rolls to a fresh window once 7 days have passed since it opened (the window
+    opens on the first daily-quest claim after the previous one lapsed)."""
+    st = data[user_id]["stats"]
+    w  = st.get("dq_week")
+    now = time.time()
+    if not isinstance(w, dict) or now - w.get("start", 0) >= WEEK_SECONDS:
+        w = {"start": 0, "n": 0, "paid": False}
+        st["dq_week"] = w
+    return w
 
 def quest_weekly_roll_if_needed(user_id: str):
     """Same shape as quest_daily_roll_if_needed, but on a rolling 7-day
@@ -9250,18 +9369,18 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
         if list_key == "quests":
             quest_progress(user_id, "quests_completed_today", 1)
 
-            # Lifetime daily-quest milestone track — a cumulative counter
-            # that never resets, alongside the daily/weekly queues.
-            total = d["stats"].get("daily_quests_completed_total", 0) + 1
-            d["stats"]["daily_quests_completed_total"] = total
-            claimed_ms = d.setdefault("daily_quest_milestones_claimed", [])
-            for threshold, gem_reward in DAILY_QUEST_MILESTONES:
-                if total >= threshold and threshold not in claimed_ms:
-                    claimed_ms.append(threshold)
-                    add_gems(user_id, gem_reward, "quest_milestone")
-                    milestone_gems += gem_reward
-                    milestone_hit = threshold
-                    break   # one milestone per claim — the next one waits for the next quest
+            # Weekly goal: DAILY_QUEST_WEEKLY_TARGET daily quests inside one
+            # 7-day window → DAILY_QUEST_WEEKLY_GEMS gems, once per window.
+            d["stats"]["daily_quests_completed_total"] = d["stats"].get("daily_quests_completed_total", 0) + 1
+            wk = dq_week_state(user_id)
+            if not wk["start"]:
+                wk["start"] = time.time()
+            wk["n"] += 1
+            if wk["n"] >= DAILY_QUEST_WEEKLY_TARGET and not wk["paid"]:
+                wk["paid"] = True
+                add_gems(user_id, DAILY_QUEST_WEEKLY_GEMS, "quest_milestone")
+                milestone_gems = DAILY_QUEST_WEEKLY_GEMS
+                milestone_hit  = DAILY_QUEST_WEEKLY_TARGET
 
         level_ups = 0
         while d["xp"] >= xp_for_level(d["level"]):
@@ -9472,8 +9591,9 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
             head, money = f"{emoji('cross_mark')} You lost!", f"**-◈ {bet:,}**"
         content = (
             f"### `🔼` High-Low — {head}\n"
-            f"Card was {_hl_card(n, result.get('s', '♠'))}, you guessed **{guess_lbl}** "
-            f"→ next card {_hl_card(m, result.get('ms', '♠'))}\n\n"
+            f"You guessed **{guess_lbl}**\n"
+            f"**Card → next card**\n"
+            f"## {_hl_card(n, result.get('s', '♠'))}  ➜  {_hl_card(m, result.get('ms', '♠'))}\n\n"
             f"{money} · Balance: **◈ {d['money']:,}**\n\n{bet_line}"
         )
         row_bets = {"type": 1, "components": [
@@ -9497,7 +9617,7 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
                 "-# Same card = push (bet refunded).")
         content = (
             f"### `🔼` High-Low\n{bet_line}\n\n"
-            f"The card is {_hl_card(n, d.get('_hl_s', '♠'))}.\n"
+            f"**The card is**\n## {_hl_card(n, d.get('_hl_s', '♠'))}\n"
             f"Will the next card be higher or lower?\n{note}"
         )
         row = {"type": 1, "components": [
@@ -9594,6 +9714,23 @@ def _slots_biome(user_id: str) -> str:
     if data.get(user_id, {}).get("level", 1) < biome_level(b):
         return "village"
     return b
+
+def gamble_max_bet(user_id: str) -> int:
+    """Highest wager allowed on ANY gamble game (blackjack, coinflip, roulette,
+    RPS, dice, high-low, slots), scaled by player level. It follows the slot
+    tables' ladder: each biome you've unlocked raises the cap to that table's max
+    (Lv 1 → ◈10K … Lv 1000 → ◈250M), so a fresh account can't stake a fortune."""
+    lvl  = data.get(user_id, {}).get("level", 1)
+    best = 0
+    for biome_key, lvl_req in BIOME_LEVELS:
+        cfg = SLOT_BIOME_CONFIG.get(biome_key)
+        if cfg and lvl >= lvl_req:
+            best = max(best, cfg[1])
+    return best or SLOT_BIOME_CONFIG["village"][1]
+
+def _bet_cap_msg(cap: int, level: int) -> str:
+    return (f"{emoji('cross_mark')} Your max bet at **Level {level}** is **◈ {cap:,}** "
+            f"— it rises as you level up.")
 
 def _slots_biome_config(user_id: str) -> tuple:
     return SLOT_BIOME_CONFIG.get(_slots_biome(user_id), SLOT_BIOME_CONFIG["village"])
@@ -9769,8 +9906,8 @@ def build_blackjack_panel(user_id: str) -> list:
     if not done:
         content = (
             f"### `🃏` Blackjack · Bet: **◈ {bet:,}**\n\n"
-            f"**Your hand:** {_bj_hand_str(st['player'])} — **{player_val}**\n"
-            f"**Dealer:** {_bj_hand_str(st['dealer'], hide_second=True)}\n\n"
+            f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
+            f"**Dealer**\n## {_bj_hand_str(st['dealer'], hide_second=True)}\n"
             f"-# Balance: **◈ {d['money']:,}**"
         )
         _hid = st.get("hid", "")
@@ -9784,8 +9921,8 @@ def build_blackjack_panel(user_id: str) -> list:
         sign    = "+" if net >= 0 else ""
         content = (
             f"### `🃏` Blackjack · {outcome}\n\n"
-            f"**Your hand:** {_bj_hand_str(st['player'])} — **{player_val}**\n"
-            f"**Dealer:** {_bj_hand_str(st['dealer'])} — **{dealer_val}**\n\n"
+            f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
+            f"**Dealer** — **{dealer_val}**\n## {_bj_hand_str(st['dealer'])}\n\n"
             f"**{sign}◈ {net:,}** · Balance: **◈ {d['money']:,}**"
         )
         action_row = {"type": 1, "components": [
@@ -10590,7 +10727,14 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
             + f"\n\n{footer} · Page **{page+1}/{max(1,(total+PS-1)//PS)}**"
         )
 
-    components = []
+    # Page arrows sit right under the list (not buried at the bottom) and are grey.
+    total_pages = max(1, (total + PS - 1) // PS)   # `total` = size of the ranking just shown
+    components = [{"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Prev",
+         "custom_id": f"lb:prev:{user_id}", "disabled": (page == 0)},
+        {"type": 2, "style": 2, "label": "Next ▶",
+         "custom_id": f"lb:next:{user_id}", "disabled": (page >= total_pages - 1)},
+    ]}]
     if mode == "hunter":
         stat_options = [{"label": s, "value": s, "default": (s == stat)}
                        for s in HUNTER_LB_STATS.keys()]
@@ -10607,9 +10751,9 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
         ]})
 
     components.append({"type": 1, "components": [
-        {"type": 2, "style": 3 if mode == "hunter" else 1, "label": "👤 Hunters",
+        {"type": 2, "style": 3 if mode == "hunter" else 1, "label": "Hunters", "emoji": emoji_partial("profile"),
          "custom_id": f"lb:mode:hunter:{user_id}"},
-        {"type": 2, "style": 3 if mode == "tribe" else 1, "label": "Tribes",
+        {"type": 2, "style": 3 if mode == "tribe" else 1, "label": "Tribes", "emoji": emoji_partial("tribe"),
          "custom_id": f"lb:mode:tribe:{user_id}"},
     ]})
     scope_label_btn = "Global" if scope == "server" else "Server"
@@ -10618,13 +10762,7 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
         {"type": 2, "style": 1, "label": scope_label_btn, "emoji": emoji_partial(scope_key_btn),
          "custom_id": f"lb:scope:{user_id}"},
     ]})
-    total_pages = max(1, (total + PS - 1) // PS)   # `total` = size of the ranking just shown
-    components.append({"type": 1, "components": [
-        {"type": 2, "style": 1, "label": "◀ Prev",
-         "custom_id": f"lb:prev:{user_id}", "disabled": (page == 0)},
-        {"type": 2, "style": 1, "label": "Next ▶",
-         "custom_id": f"lb:next:{user_id}", "disabled": (page >= total_pages - 1)},
-    ]})
+    components.append(ui_footer(user_id))
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": content},
         {"type": 14, "divider": True, "spacing": 1},
@@ -11120,7 +11258,7 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         if tribe_nm and tribe_nm in tribe_data:
             await smart_update_v2(interaction, build_tribe_components(user_id, tribe_nm, "main"))
         else:
-            await smart_update_v2(interaction, build_menu_components(user_id, dn))
+            await smart_update_v2(interaction, build_no_tribe_components(user_id))
     elif panel == "profile":
         await smart_update_v2(interaction, build_profile_components(user_id, dn, active_panel="main"))
     elif panel == "progression":
@@ -11156,16 +11294,12 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
     # instead of their real save. Refuse everything (type-4, no defer needed)
     # until the load has actually finished.
     if not _data_loaded_ok:
-        await _raw(interaction, {"type": 4, "data": {
-            "flags": V2_FLAGS | 64,
-            "components": [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
-                "components": [{"type": 10, "content":
-                    "### `⏳` Still Starting Up\n"
-                    "Idle Hunter just restarted and is loading player data. "
-                    "Try again in a few seconds."
-                }]}],
-            "allowed_mentions": {"parse": []},
-        }})
+        await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
+            "components": [{"type": 10, "content":
+                "### `⏳` Still Starting Up\n"
+                "Idle Hunter just restarted and is loading player data. "
+                "Try again in a few seconds."
+            }]}], ephemeral=True)
         return None
 
     user_id = str(interaction.user.id)
@@ -11198,17 +11332,13 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
 
     # Maintenance — type 4 immediate response, no defer
     if maintenance_mode:
-        await _raw(interaction, {"type": 4, "data": {
-            "flags": V2_FLAGS | 64,
-            "components": [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
-                "components": [{"type": 10, "content":
-                    f"### {emoji('wrench')} Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
-                    f"Reason: {maintenance_message}\n"
-                    "Please be patient — we'll be back shortly!\n\n"
-                    f"-# All your data is safe. See you soon, hunter. {emoji('idle_camp')}"
-                }]}],
-            "allowed_mentions": {"parse": []},
-        }})
+        await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
+            "components": [{"type": 10, "content":
+                f"### {emoji('wrench')} Bot Maintenance\n**Idle Hunter is currently under maintenance.**\n\n"
+                f"Reason: {maintenance_message}\n"
+                "Please be patient — we'll be back shortly!\n\n"
+                f"-# All your data is safe. See you soon, hunter. {emoji('idle_camp')}"
+            }]}], ephemeral=True)
         return None
 
     init_user(user_id)
@@ -11220,11 +11350,7 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
 
     # Ban — type 4 immediate (skipped for the appeal button so its modal can open)
     if is_banned(user_id) and not is_appeal:
-        await _raw(interaction, {"type": 4, "data": {
-            "flags": V2_FLAGS | 64,
-            "components": build_ban_components(user_id),
-            "allowed_mentions": {"parse": []},
-        }})
+        await send_v2_followup(interaction, build_ban_components(user_id), ephemeral=True)
         return None
 
     if is_appeal:
@@ -11676,16 +11802,19 @@ async def _dispatch_component(interaction: discord.Interaction):
     values = raw.get("values", [])
     parts  = cid.split(":")
 
-    valid = await _common_init(interaction, auto_defer=False)
-    if not valid: return
-
-    # Defer here (not in _common_init) so modal-opening handlers keep the
-    # unacknowledged interaction they need for send_modal().
+    # ACK FIRST. Discord gives 3 seconds from the click; the gate work in
+    # _common_init (and any loop stall ahead of it) used to eat into that window
+    # and the click died with "interaction failed". Everything after this point
+    # answers through the ack-aware followup/edit helpers. Modal-opening buttons
+    # must stay unacknowledged for send_modal(), so they are the one exception.
     if not _cid_opens_modal(parts, values) and not interaction.response.is_done():
         try:
             await interaction.response.defer()
         except Exception:
             pass
+
+    valid = await _common_init(interaction, auto_defer=False)
+    if not valid: return
 
     # ── Cross-user panel redirect ─────────────
     # Clicking someone else's panel button opens the clicker's OWN version of
@@ -12060,10 +12189,9 @@ async def _dispatch_component(interaction: discord.Interaction):
 
             await send_ephemeral_v2(interaction, f"{emoji('check_mark')} Quest complete! {xp_msg}", 0x2ECC71)
             if result.get("milestone_hit"):
-                total_now = data[owner_id]["stats"].get("daily_quests_completed_total", 0)
                 await send_ephemeral_v2(interaction,
-                    f"{emoji('gem')} **Milestone reached!** {total_now:,} daily quests completed "
-                    f"lifetime — **+{result['milestone_gems']} gems**.", 0x9B59B6)
+                    f"{emoji('gem')} **Weekly goal reached!** {result['milestone_hit']} daily quests "
+                    f"completed this week — **+{result['milestone_gems']}** {emoji('gem')}.", 0x9B59B6)
             await _hunters_path_notify(interaction, owner_id, result.get("hunters_path_result"))
             page = _quest_page.get(owner_id, 0)
             await smart_update_v2(interaction, build_quests_components(owner_id, page))
@@ -12176,6 +12304,7 @@ async def _dispatch_component(interaction: discord.Interaction):
             elif res.get("ok"):
                 notice = (f"{emoji('check_mark')} Fusing a {CRYSTAL_ICONS[rarity]} **{_rarity_label(rarity)} Crystal** — "
                           f"ready <t:{int(res['done_ts'])}:R>.")
+                _schedule_forge_reminder(interaction, owner_id)
             else:
                 notice = {
                     "not_enough_shards": f"{emoji('cross_mark')} Need {CRYSTAL_SHARD_COST} {_rarity_label(rarity)} shards.",
@@ -13215,7 +13344,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                 cur  = idle.get("capacity_upgrades", 0)
                 cost = idle_capacity_upgrade_cost(cur)
                 if cur >= IDLE_MAX_CAPACITY_UPGRADES:
-                    _err = f"{emoji('package')} Storage is already fully upgraded."
+                    _err = f"{emoji('idle_camp')} Storage is already fully upgraded."
                 elif data[owner_id]["money"] < cost:
                     _err = (f"{emoji('cross_mark')} You need **◈ {cost:,}** to expand storage "
                             f"(+{IDLE_CAPACITY_PER_UPGRADE} slots).")
@@ -14086,6 +14215,16 @@ async def _dispatch_component(interaction: discord.Interaction):
                     f"{emoji('cooldown')} Wait **{remaining:.1f}s** before gambling again.", 0xE67E22)
                 return
 
+        # A bet stored before a level reset (or a cap change) must not slip past the cap.
+        _bet_keys = {"cf": "_cf_bet", "rl": "_roulette_bet", "rps": "_rps_bet",
+                     "dice": "_dice_bet", "hl": "_hl_bet", "slots": "_slots_bet"}
+        if _is_wager and parts[1] in _bet_keys:
+            _cap = gamble_max_bet(owner_id)
+            if data[owner_id].get(_bet_keys[parts[1]], 0) > _cap:
+                await send_ephemeral_v2(interaction,
+                    _bet_cap_msg(_cap, data[owner_id].get("level", 1)) + " Lower your bet first.", 0xE74C3C)
+                return
+
         if parts[1] == "back":
             await smart_update_v2(interaction, build_gamble_menu(owner_id))
             return
@@ -14861,6 +15000,9 @@ class SetBetModal(_V2Modal, title="Set Your Bet"):
         self.user_id = str(user_id)
         self.game    = game
         self.min_bet = min_bet
+        # Every table is capped by the player's level (slots tables can be lower).
+        _cap = gamble_max_bet(self.user_id)
+        max_bet = min(max_bet, _cap) if max_bet else _cap
         self.max_bet = max_bet
         if min_bet or max_bet:
             self.bet_input.placeholder = (
@@ -14882,7 +15024,7 @@ class SetBetModal(_V2Modal, title="Set Your Bet"):
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Minimum bet is ◈ {self.min_bet:,}.", 0xE74C3C)
             return
         if self.max_bet and parsed > self.max_bet:
-            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Maximum bet is ◈ {self.max_bet:,}.", 0xE74C3C)
+            await send_ephemeral_v2(interaction, _bet_cap_msg(self.max_bet, data[self.user_id].get("level", 1)), 0xE74C3C)
             return
         key_map = {"cf": "_cf_bet", "slots": "_slots_bet", "rl": "_roulette_bet",
                    "rps": "_rps_bet", "dice": "_dice_bet", "hl": "_hl_bet"}
@@ -15272,6 +15414,7 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
     def __init__(self, user_id: str):
         super().__init__()
         self.user_id = str(user_id)
+        self.bet_input.placeholder = f"Max: ◈{gamble_max_bet(self.user_id):,}  (e.g. 1000, 50K)"
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _modal_gate(interaction, self.user_id):
@@ -15279,6 +15422,10 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
         parsed = parse_amount(self.bet_input.value)
         if not parsed or parsed <= 0:
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Invalid amount.", 0xE74C3C)
+            return
+        _cap = gamble_max_bet(self.user_id)
+        if parsed > _cap:
+            await send_ephemeral_v2(interaction, _bet_cap_msg(_cap, data[self.user_id].get("level", 1)), 0xE74C3C)
             return
 
         cur = _bj_state.get(self.user_id)
@@ -15779,26 +15926,41 @@ bot.tree.add_command(quests_group)
 # /tribe  — command group
 # ─────────────────────────────────────────────
 
+def build_no_tribe_components(user_id: str) -> list:
+    """What a tribeless player sees when they open Tribe — what a tribe is, and
+    the ways in (accept an invite from Mail, or found one)."""
+    tribe_inv = data[user_id].get("tribe_inv")
+    invite_line = ""
+    if tribe_inv and tribe_inv in tribe_data:
+        invite_line = (f"\n\n{emoji('mail')} **You have a pending invite to {tribe_inv}!** "
+                       f"Open **Mail** to accept it.")
+    body = (
+        f"### {TRIBE_EMOJIS['tribe']} You're not in a tribe yet\n"
+        "Tribes are hunting crews: shared **XP / sell / luck boosts**, weekly contracts, "
+        "expeditions and a tribe leaderboard.\n\n"
+        "**How to join one**\n"
+        f"{emoji('mail')} Get **invited** by a tribe leader or officer — the invite lands in your **Mail**.\n"
+        f"{TRIBE_EMOJIS['tribe']} Or **create your own** with the button below "
+        f"(or </tribe create:{COMMAND_ID.get('tribe','0')}>) and invite friends."
+        f"{invite_line}"
+    )
+    row = [{"type": 2, "style": 3, "label": "Create Tribe", "emoji": emoji_partial('tribe'),
+            "custom_id": f"tribe_create:{user_id}"}]
+    if invite_line:
+        row.append({"type": 2, "style": 1, "label": "Open Mail", "emoji": emoji_partial('mail'),
+                    "custom_id": f"nav:mail:{user_id}"})
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": body},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": row},
+        ui_footer(user_id),
+    ]}]
+
 async def _tribe_menu_send(interaction: discord.Interaction, user_id: str):
     """Render the tribe panel (or the 'no tribe' prompt) on a deferred interaction."""
     tribe_nm  = data[user_id].get("tribe")
-    tribe_inv = data[user_id].get("tribe_inv")
-    if not tribe_nm and tribe_inv and tribe_inv in tribe_data:
-        await send_ephemeral_v2(interaction,
-            f"You have a pending invite to **{tribe_inv}**! "
-            f"Use </mail:{COMMAND_ID.get('mail','0')}> to accept.", 0xF1C40F)
-        return
     if not tribe_nm or tribe_nm not in tribe_data:
-        await send_v2_followup(interaction, [{"type": 17, "accent_color": _accent(user_id),
-            "spoiler": False, "components": [
-                {"type": 10, "content":
-                    f"### {TRIBE_EMOJIS['tribe']} No Tribe\n"
-                    "You are not in a tribe! Create one with `/tribe create` or wait for an invite."},
-                {"type": 1, "components": [
-                    {"type": 2, "style": 1, "label": "Create Tribe", "emoji": emoji_partial('tribe'),
-                     "custom_id": f"tribe_create:{user_id}"},
-                ]},
-            ]}])
+        await send_v2_followup(interaction, build_no_tribe_components(user_id))
         return
     await send_v2_followup(interaction, build_tribe_components(user_id, tribe_nm, "main"))
 
@@ -16119,18 +16281,30 @@ async def invite_cmd(interaction: discord.Interaction):
     init_user(user_id)
     url1 = invite_url()
     url2 = "https://discord.gg/X9JzdxeS8p"
-    await interaction.response.defer(ephemeral=True)
+    # Public on purpose (not ephemeral): the invite is meant to be seen and shared.
+    await interaction.response.defer()
     route = Route("POST", "/webhooks/{application_id}/{token}",
                   application_id=interaction.application_id,
                   token=interaction.token)
+    comps = [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content":
+            f"## {emoji('link')} Invite Idle Hunter\n"
+            f"{emoji('bow')} Hunt, craft, gamble and rule the leaderboards — bring **Idle Hunter** to your server!\n\n"
+            f"{emoji('sparkles')} **Add the bot** to your own server with the first button.\n"
+            f"{emoji('tribe')} **Join the support server** for updates, events and help.\n"
+            f"{emoji('handshake')} **Refer a friend** with </refer:{COMMAND_ID.get('refer','0')}> — "
+            f"when they get going you **both** earn {emoji('gem')} gems and a title.\n"
+            f"-# Invited by {interaction.user.display_name}"},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [
+            {"type": 2, "style": 5, "label": "Add to Server", "emoji": emoji_partial("link"), "url": url1},
+            {"type": 2, "style": 5, "label": "Support Server", "emoji": emoji_partial("tribe"), "url": url2},
+        ]},
+    ]}]
+    _clean_components(comps)
     await bot.http.request(route, json={
         "flags": V2_FLAGS,
-        "components": [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
-            "components": [{"type": 10, "content":
-                f"### {emoji('link')} Invite Idle Hunter\n"
-                f"[Click here to invite the bot!]({url1})\n"
-                f"[Join the support server]({url2})"
-            }]}],
+        "components": comps,
         "allowed_mentions": {"parse": []},
     })
 
@@ -18687,9 +18861,33 @@ async def autosave_users():
     except Exception as e:
         print("analytics flush error:", e)
 
+async def prune_empty_tribes() -> list[str]:
+    """Delete tribes nobody belongs to any more — from memory AND the database.
+    A tribe is empty when its roster is empty, or when every rostered player is
+    loaded and no longer points at it. (A missing player record is treated as
+    'unknown', so a half-loaded cache can never wipe a real tribe.)"""
+    gone = []
+    for name in list(tribe_data):
+        roster = [uid for uid, _ in tribe_roster(name)]
+        if roster and any(uid not in data or data[uid].get("tribe") == name for uid in roster):
+            continue
+        gone.append(name)
+    for name in gone:
+        tribe_data.pop(name, None)
+        try:
+            await backend.delete_tribe(name)
+        except Exception as e:
+            print(f"prune_empty_tribes: couldn't delete {name!r}: {e}")
+    if gone:
+        print(f"🧹 Removed {len(gone)} empty tribe(s): {', '.join(gone)}")
+    return gone
+
 @tasks.loop(seconds=120)
 async def autosave_tribes():
     """Save tribes to SQLite"""
+    if not _data_loaded_ok:
+        return
+    await prune_empty_tribes()
     if tribe_data:
         await bulk_save_tribes(tribe_data)
 
@@ -19283,6 +19481,10 @@ async def on_ready():
         await load_all_data()
         _data_loaded_ok = True
         print("✅ Data loaded")
+        try:
+            await prune_empty_tribes()
+        except Exception as e:
+            print(f"empty-tribe cleanup failed: {e}")
     except Exception as e:
         print(f"❌ Data load failed: {e}")
         # We already hold the instance lock and an open DB connection at this

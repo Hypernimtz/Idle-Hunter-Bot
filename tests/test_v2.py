@@ -714,6 +714,83 @@ def test_hp_regen_lazy_and_capped():
 
 
 # ─────────────────────────────────────────────────────────────
+# 2026-09-24 UI/economy pass: weekly quest goal, bet cap, empty tribes, no-tribe panel
+# ─────────────────────────────────────────────────────────────
+def _claim_fake_daily(uid, n):
+    app.data[uid]["quests"] = [{"id": f"q{n}", "completed": True, "claimed": False, "xp_reward": 1,
+                                "money_reward": 0, "gems_reward": 0, "template": "catch_any",
+                                "progress": 1, "target": 1, "icon": "x", "description": "d"}]
+    return app.quest_claim(uid, f"q{n}")
+
+
+def test_weekly_daily_quest_goal_pays_once_and_rolls():
+    _reset()
+    uid = "5001"
+    d = _mk_user(uid)
+    g0 = d["gems"]
+    hits = [n for n in range(1, 26) if _claim_fake_daily(uid, n).get("milestone_hit")]
+    assert hits == [app.DAILY_QUEST_WEEKLY_TARGET]                 # only the 20th claim pays
+    assert d["gems"] - g0 == app.DAILY_QUEST_WEEKLY_GEMS
+    d["stats"]["dq_week"]["start"] -= app.WEEK_SECONDS + 5         # window lapses
+    assert app.dq_week_state(uid) == {"start": 0, "n": 0, "paid": False}
+
+
+def test_gamble_max_bet_scales_with_level():
+    _reset()
+    uid = "5002"
+    d = _mk_user(uid)
+    d["level"] = 1
+    lo = app.gamble_max_bet(uid)
+    d["level"] = 150
+    mid = app.gamble_max_bet(uid)
+    d["level"] = 1000
+    hi = app.gamble_max_bet(uid)
+    assert 0 < lo < mid < hi
+    async def _modal():                    # discord modals need a running loop
+        return app.SetBetModal(uid, "cf")
+    assert run(_modal()).max_bet == hi
+
+
+def test_empty_tribes_are_pruned_but_real_ones_kept():
+    _reset()
+    uid = "5003"
+    d = _mk_user(uid)
+    d["tribe"] = "Real"
+    app.tribe_data["Real"] = {"roles": {"leader": uid, "officer": [], "members": [], "recruits": []}}
+    app.tribe_data["Ghost"] = {"roles": {"leader": "5999", "officer": [], "members": [], "recruits": []}}
+    _mk_user("5999")                       # loaded, but not pointing at Ghost
+    app.tribe_data["Empty"] = {"roles": {"leader": "", "officer": [], "members": [], "recruits": []}}
+    gone = run(app.prune_empty_tribes())
+    assert sorted(gone) == ["Empty", "Ghost"]
+    assert list(app.tribe_data) == ["Real"]
+
+
+def test_no_tribe_panel_explains_how_to_join():
+    _reset()
+    uid = "5004"
+    _mk_user(uid)
+    comps = app.build_no_tribe_components(uid)
+    text = comps[0]["components"][0]["content"]
+    assert "invite" in text.lower() and "create" in text.lower()
+
+
+def test_hunt_drops_block_is_separate_from_catches():
+    _reset()
+    uid = "5005"
+    _mk_user(uid, money=10_000)
+    res = app.run_hunt(uid)
+    assert res.get("ok")
+    res["crate_drops"] = {"Common Crate": 1}
+    comps = app.build_hunt_components(uid, res)[0]["components"]
+    texts = [c["content"] for c in comps if c["type"] == 10]
+    assert len(texts) == 2 and "Crate drop" in texts[1] and "Crate drop" not in texts[0]
+    assert not texts[1].startswith("-#")
+    assert "Balance" in texts[0] and "worth" in texts[0]
+    assert any(b.get("custom_id", "").startswith("nav:menu:")
+               for r in comps if r["type"] == 1 for b in r["components"])
+
+
+# ─────────────────────────────────────────────────────────────
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
