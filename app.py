@@ -118,6 +118,8 @@ from backend import (
 )
 from dotenv import load_dotenv
 import os
+import functools
+import heapq
 load_dotenv("token.env")
 
 def ph(e: str) -> str:
@@ -10507,6 +10509,24 @@ def _lb_eligible(uid: str) -> bool:
     on any leaderboard (global, server, personal ranks, rank-loss DMs, website)."""
     return not data.get(uid, {}).get("is_tester", False)
 
+# Sorting every player on EVERY leaderboard click (and page turn) blocked the event
+# loop, so rankings are cached briefly. Only the ORDER is cached — the values shown
+# are read live — so a page turn costs O(page) and a rank can lag by at most the TTL.
+_LB_CACHE_TTL = 30.0
+_LB_CACHE: dict[tuple, tuple[float, list]] = {}
+
+def _lb_cached(key: tuple, build):
+    now = time.monotonic()
+    hit = _LB_CACHE.get(key)
+    if hit and now - hit[0] < _LB_CACHE_TTL:
+        return hit[1]
+    ranked = build()
+    if len(_LB_CACHE) > 96:                      # bound: server scope keys per guild
+        for k in [k for k, (t, _) in _LB_CACHE.items() if now - t >= _LB_CACHE_TTL] or list(_LB_CACHE)[:32]:
+            _LB_CACHE.pop(k, None)
+    _LB_CACHE[key] = (now, ranked)
+    return ranked
+
 def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
                                      scope: str = "global", stat: str = "Level",
                                      page: int = 0, period: str = "all") -> list:
@@ -10514,9 +10534,11 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
     medals = {0: f"{emoji('first_place_medal')}", 1: f"{emoji('second_place_medal')}", 2: f"{emoji('third_place_medal')}"}
     if mode == "hunter":
         val_fn = lambda u: _lb_period_value(u, stat, period)
-        cands  = get_server_user_ids(guild) if scope == "server" else list(data.keys())
-        cands  = [u for u in cands if _lb_eligible(u)]
-        ranked = sorted(cands, key=val_fn, reverse=True)
+        def _rank_hunters():
+            cands = get_server_user_ids(guild) if scope == "server" else list(data.keys())
+            return sorted((u for u in cands if _lb_eligible(u)), key=val_fn, reverse=True)
+        ranked = _lb_cached(("h", scope, getattr(guild, "id", None) if scope == "server" else None,
+                             stat, period, _lb_period_tag(period)), _rank_hunters)
         total  = len(ranked)
         items  = ranked[page * PS:(page + 1) * PS]
         lines  = []
@@ -10537,15 +10559,18 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
             + f"\n\n{footer} · Page **{page+1}/{max(1,(total+PS-1)//PS)}**"
         )
     else:
-        if scope == "server" and guild:
-            mids = {str(m.id) for m in guild.members}
-            vt   = [t for t, td in tribe_data.items()
-                    if td["roles"]["leader"] in mids or
-                    any(u in mids for u in td["roles"]["officer"] + td["roles"]["members"]
-                        + td["roles"].get("recruits", []))]
-        else:
-            vt = list(tribe_data.keys())
-        ranked  = sorted(vt, key=lambda t: tribe_data[t].get("level", 1), reverse=True)
+        def _rank_tribes():
+            if scope == "server" and guild:
+                mids = {str(m.id) for m in guild.members}
+                vt   = [t for t, td in tribe_data.items()
+                        if td["roles"]["leader"] in mids or
+                        any(u in mids for u in td["roles"]["officer"] + td["roles"]["members"]
+                            + td["roles"].get("recruits", []))]
+            else:
+                vt = list(tribe_data.keys())
+            return sorted(vt, key=lambda t: tribe_data[t].get("level", 1), reverse=True)
+        ranked  = [t for t in _lb_cached(("t", scope, getattr(guild, "id", None) if scope == "server" else None),
+                                         _rank_tribes) if t in tribe_data]   # drop tribes disbanded since caching
         total   = len(ranked)
         items   = ranked[page * PS:(page + 1) * PS]
         vtribe  = data.get(user_id, {}).get("tribe")
@@ -10593,12 +10618,7 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
         {"type": 2, "style": 1, "label": scope_label_btn, "emoji": emoji_partial(scope_key_btn),
          "custom_id": f"lb:scope:{user_id}"},
     ]})
-    if mode == "hunter":
-        cands_len = len([u for u in (get_server_user_ids(guild) if scope == "server"
-                                     else list(data.keys())) if _lb_eligible(u)])
-    else:
-        cands_len = len(list(tribe_data.keys()))
-    total_pages = max(1, (cands_len + PS - 1) // PS)
+    total_pages = max(1, (total + PS - 1) // PS)   # `total` = size of the ranking just shown
     components.append({"type": 1, "components": [
         {"type": 2, "style": 1, "label": "◀ Prev",
          "custom_id": f"lb:prev:{user_id}", "disabled": (page == 0)},
@@ -14775,6 +14795,16 @@ async def _dispatch_component(interaction: discord.Interaction):
 # MODALS
 # ─────────────────────────────────────────────
 
+MODAL_ACK_DEADLINE = 2.0
+
+async def _modal_ack_watchdog(interaction, delay: float = None) -> None:
+    await asyncio.sleep(MODAL_ACK_DEADLINE if delay is None else delay)
+    if not interaction.response.is_done():
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass   # the handler answered in the same instant — nothing to do
+
 class _V2Modal(discord.ui.Modal):
     """Base for every modal in this bot.
 
@@ -14784,6 +14814,25 @@ class _V2Modal(discord.ui.Modal):
     acknowledged". That's noise, not a bug in the handler, so log one line and
     don't push an error at the user (the winning instance already replied).
     """
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        orig = cls.__dict__.get("on_submit")
+        if orig is None:
+            return
+
+        @functools.wraps(orig)
+        async def on_submit(self, interaction, _orig=orig):
+            # Discord gives 3s to acknowledge. A form that saves before replying can
+            # blow that when the loop or DB is busy, so if we haven't answered by
+            # ~2s, defer — the handler's later reply then goes out as a follow-up
+            # instead of dying with "Unknown interaction".
+            dog = asyncio.ensure_future(_modal_ack_watchdog(interaction))
+            try:
+                return await _orig(self, interaction)
+            finally:
+                dog.cancel()
+        cls.on_submit = on_submit
+
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         if isinstance(error, discord.HTTPException):
             logger.warning("modal response failed (%s): %s", type(self).__name__, error)
@@ -18621,7 +18670,7 @@ bot.tree.add_command(bot_group)
 # AUTOSAVE & TASKS
 # ─────────────────────────────────────────────
 
-@tasks.loop(seconds=20)
+@tasks.loop(seconds=120)
 async def autosave_users():
     """Full safety-net save. Per-transaction flushes only write changed rows
     (see _flush_dirty_users); this catches any mutation made outside a
@@ -18638,7 +18687,7 @@ async def autosave_users():
     except Exception as e:
         print("analytics flush error:", e)
 
-@tasks.loop(seconds=20)
+@tasks.loop(seconds=120)
 async def autosave_tribes():
     """Save tribes to SQLite"""
     if tribe_data:
@@ -18676,6 +18725,24 @@ async def lottery_tick():
 async def _lte(error): print("Lottery tick error:", error)
 
 _lock_lost = False
+
+LOOP_STALL_WARN_S = 0.75
+_lag_last = 0.0
+
+@tasks.loop(seconds=1)
+async def loop_lag_monitor():
+    """Tell us when the event loop was blocked. A stall > ~3s makes every click in
+    that window expire ("Unknown interaction") and, if long enough, misses Discord's
+    heartbeat (a RESUMED reconnect). Shows up in the console with a timestamp, so it
+    can be lined up against autosave / leaderboard-push / host CPU spikes."""
+    global _lag_last
+    now = time.monotonic()
+    if _lag_last:
+        stall = now - _lag_last - 1.0
+        if stall > LOOP_STALL_WARN_S:
+            print(f"⏱️ Event loop stalled ~{stall:.1f}s at {datetime.now(timezone.utc):%H:%M:%S}Z "
+                  f"({len(data)} users cached)")
+    _lag_last = now
 
 @tasks.loop(hours=24)
 async def db_backup_task():
@@ -18760,13 +18827,14 @@ async def leaderboard_rank_watch_task():
     Top 3 on any hunter leaderboard stat."""
     global _lb_top3_cache
     for stat, fn in HUNTER_LB_STATS.items():
+        await asyncio.sleep(0)   # let queued clicks run between the per-stat passes
         try:
-            ranked = sorted((u for u in data.keys() if _lb_eligible(u)),
-                            key=lambda u: fn(u), reverse=True)
+            # only the top 3 matter: O(N) instead of a full O(N log N) sort per stat
+            top3 = heapq.nlargest(3, (u for u in list(data.keys()) if _lb_eligible(u)), key=fn)
         except Exception as e:
             print(f"Leaderboard rank watch ({stat}) sort error:", e)
             continue
-        top3_now  = set(ranked[:3])
+        top3_now  = set(top3)
         prev_top3 = _lb_top3_cache.get(stat, set())
         for uid in (prev_top3 - top3_now):
             d = data.get(uid)
@@ -19271,7 +19339,27 @@ async def on_ready():
             print(f"incremental user save failed, re-queued {len(batch_ids)}: {e}")
 
     async def _flush_tribes_cb():
-        await bulk_save_tribes(tribe_data)
+        # Write only the tribes a transaction actually touched (and drop rows of
+        # disbanded ones). This used to rewrite EVERY tribe on every hunt by any
+        # tribe member.
+        names, all_dirty = backend.take_dirty_tribes()
+        if not names and not all_dirty:
+            return
+        try:
+            if all_dirty:
+                await bulk_save_tribes(tribe_data)
+            else:
+                batch = {n: tribe_data[n] for n in names if n in tribe_data}
+                if batch:
+                    await bulk_save_tribes(batch)
+            for n in names:
+                if n not in tribe_data:
+                    await backend.delete_tribe(n)
+        except Exception as e:
+            backend.mark_tribes_dirty(*names)
+            if all_dirty:
+                backend.mark_tribes_dirty()
+            print(f"incremental tribe save failed, re-queued: {e}")
 
     register_save_callbacks(_flush_dirty_users, _flush_tribes_cb)
 
@@ -19328,6 +19416,7 @@ async def on_ready():
     if not tribe_maintenance_task.is_running(): tribe_maintenance_task.start()
     if not analytics_prune_task.is_running():   analytics_prune_task.start()
     if not db_backup_task.is_running():         db_backup_task.start()
+    if not loop_lag_monitor.is_running():       loop_lag_monitor.start()
     if FEATURE_WORLD_CONDITIONS and not world_condition_task.is_running():
         world_condition_task.start()
     for _v2task in _V2_BACKGROUND_TASKS:

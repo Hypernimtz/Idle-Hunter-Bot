@@ -215,16 +215,29 @@ _USER_UPSERT = """
         money=excluded.money, prestige=excluded.prestige, updated_at=excluded.updated_at
 """
 
+# Rows serialised + written per step. json.dumps of every player used to run in one
+# uninterrupted burst on the event loop (and one giant commit on the single DB
+# connection), stalling every click behind it. Chunking bounds each stall to a few
+# ms and lets small saves (a form submit, a purchase) interleave with a full save.
+_SAVE_CHUNK = 40
+
 async def bulk_save_users(users: dict[str, dict]):
-    """Bulk save multiple users"""
+    """Save many users, a chunk at a time, yielding to the event loop between
+    chunks. Each user is serialised atomically within one loop step, so every row
+    is a consistent snapshot even though the whole save spans several steps."""
     if SAVES_DISABLED:
         return
-    await _pool.executemany(_USER_UPSERT, [
-        (uid, json.dumps(data), data.get("username", ""),
-         data.get("level", 1), data.get("money", 0), data.get("prestige", 0))
-        for uid, data in users.items()
-    ])
-    await _pool.commit()
+    items = list(users.items())          # snapshot of membership; values read per chunk
+    for start in range(0, len(items), _SAVE_CHUNK):
+        rows = [
+            (uid, json.dumps(data), data.get("username", ""),
+             data.get("level", 1), data.get("money", 0), data.get("prestige", 0))
+            for uid, data in items[start:start + _SAVE_CHUNK]
+        ]
+        await _pool.executemany(_USER_UPSERT, rows)
+        await _pool.commit()
+        if start + _SAVE_CHUNK < len(items):
+            await asyncio.sleep(0)
 
 async def delete_user(user_id: str) -> None:
     """Permanently remove a user row from SQLite."""
@@ -244,6 +257,34 @@ def _tribe_row(name: str, data: dict) -> tuple:
     member_count = (1 + len(_r.get("officer", [])) + len(_r.get("members", []))
                     + len(_r.get("recruits", [])))
     return (name, json.dumps(data), data.get("level", 1), member_count)
+
+_dirty_tribes: set[str] = set()
+_dirty_all_tribes = False
+
+def mark_tribes_dirty(*names: str) -> None:
+    """Record which tribes a transaction touched so the flush rewrites only those.
+    No names = "could have been any" -> the next flush writes every tribe."""
+    global _dirty_all_tribes
+    if names:
+        _dirty_tribes.update(names)
+    else:
+        _dirty_all_tribes = True
+
+def take_dirty_tribes() -> tuple[set[str], bool]:
+    """Pop and return (dirty tribe names, all_dirty)."""
+    global _dirty_all_tribes
+    names, all_dirty = set(_dirty_tribes), _dirty_all_tribes
+    _dirty_tribes.clear()
+    _dirty_all_tribes = False
+    return names, all_dirty
+
+async def delete_tribe(name: str) -> None:
+    """Remove a disbanded tribe's row — without this it reloaded from SQLite on the
+    next restart, resurrecting a tribe whose leader had already left."""
+    if SAVES_DISABLED:
+        return
+    await _pool.execute("DELETE FROM tribes WHERE name = ?", (name,))
+    await _pool.commit()
 
 async def bulk_save_tribes(tribes_dict: dict):
     """Bulk save multiple tribes — one executemany + one commit, mirroring
@@ -1068,6 +1109,7 @@ async def user_tribe_transaction(user_id: str, *tribe_names: str):
                     _restore_tribes(full_snap)
                 raise
             finally:
+                mark_tribes_dirty(*tribe_names)
                 await _flush_users()
                 await _flush_tribes()
 
@@ -1100,6 +1142,7 @@ async def tribe_only_transaction(*tribe_names: str):
                 _restore_tribes(full_snap)
             raise
         finally:
+            mark_tribes_dirty(*tribe_names)
             await _flush_tribes()
 
 
@@ -1116,6 +1159,7 @@ async def mutate_users_state(mutator: Callable) -> None:
 async def mutate_users_and_tribes_state(mutator: Callable) -> None:
     async with state_lock:
         mutator()
+        mark_tribes_dirty()
         await _flush_users()
         await _flush_tribes()
 

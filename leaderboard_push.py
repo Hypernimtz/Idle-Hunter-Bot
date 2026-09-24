@@ -57,25 +57,42 @@ def featured_badge(record):
     return {'icon': BADGES[key].get('icon', key), 'tier': 'platinum' if tier >= 2 else 'gold'}
 
 
-def build_payload(users, tribes, excluded=(), world=None):
-    # Called on the Discord event loop without awaits, so no cross-thread access
-    # to mutable bot state. Only this detached minimal payload goes to a thread.
+_FIELDS = [
+    ('level', 'level'), ('money', 'money'), ('prestige', 'prestige'),
+    ('caught', 'total_caught'),
+    # Idle Hunter V2 — exploration-flavoured boards
+    ('myths', 'stats.myths_killed'),
+    ('tracking', 'stats.tracks_completed'),
+    ('regions', 'regions'),
+]
+_YIELD_EVERY = 200   # players scored between event-loop yields
+
+
+async def build_payload(users, tribes, excluded=(), world=None):
+    """Top-100 boards in ONE pass over the players (it used to scan everyone once
+    per board — 7 full scans plus a separate tester scan — in a single blocking
+    burst). Runs on the Discord event loop, so it yields every _YIELD_EVERY
+    players instead of freezing every click for the duration; each player is read
+    in a single loop step, so no cross-thread access to mutable bot state either.
+    Only the finished, detached payload goes to a worker thread."""
+    heaps = {key: [] for key, _ in _FIELDS}
+    for n, (uid, record) in enumerate(list(users.items())):
+        if str(uid) not in excluded and not record.get('is_tester'):
+            for key, field in _FIELDS:
+                # (score, -position) so ties keep original order, like nlargest(key=score)
+                item = (score(_stat(record, field)), -n, record)
+                heap = heaps[key]
+                if len(heap) < 100:
+                    heapq.heappush(heap, item)
+                elif item[:2] > heap[0][:2]:
+                    heapq.heapreplace(heap, item)
+        if n % _YIELD_EVERY == _YIELD_EVERY - 1:
+            await asyncio.sleep(0)
     rankings = {}
-    fields = [
-        ('level', 'level'), ('money', 'money'), ('prestige', 'prestige'),
-        ('caught', 'total_caught'),
-        # Idle Hunter V2 — exploration-flavoured boards
-        ('myths', 'stats.myths_killed'),
-        ('tracking', 'stats.tracks_completed'),
-        ('regions', 'regions'),
-    ]
-    for key, field in fields:
-        candidates = ((uid, record) for uid, record in users.items() if str(uid) not in excluded)
-        top = heapq.nlargest(100, candidates, key=lambda pair: score(_stat(pair[1], field)))
+    for key, _ in _FIELDS:
         entries = []
-        for _, d in top:
-            entry = {'name': public_name(d.get('username'), 'Unnamed hunter'),
-                     'score': str(score(_stat(d, field)))}
+        for sc, _n, d in sorted(heaps[key], key=lambda t: t[:2], reverse=True):
+            entry = {'name': public_name(d.get('username'), 'Unnamed hunter'), 'score': str(sc)}
             badge = featured_badge(d)
             if badge:
                 entry['badge'] = badge
@@ -145,17 +162,16 @@ class LeaderboardPublisher:
         while True:
             try:
                 users = self.users()
-                # TESTER accounts are maxed for testing — never publish them.
-                excluded = self.excluded | {
-                    str(uid) for uid, d in users.items() if d.get('is_tester')
-                }
+                # TESTER accounts are maxed for testing — build_payload skips them
+                # (is_tester) alongside the operator's LEADERBOARD_EXCLUDE_IDS.
+                excluded = self.excluded
                 world = None
                 if self.world and self.send_world:
                     try:
                         world = self.world()
                     except Exception:
                         world = None
-                payload = build_payload(users, self.tribes(), excluded, world)
+                payload = await build_payload(users, self.tribes(), excluded, world)
                 result, detail = await asyncio.to_thread(self._send, payload)
                 if result == 200:
                     if not announced:

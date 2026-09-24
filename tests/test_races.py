@@ -513,6 +513,151 @@ def test_crate_money_ladder_monotonic():
     assert vals[-1] < 100_000_000, "Mythic average money must stay bounded"
 
 
+# ── performance / responsiveness ──────────────────────────────
+def test_leaderboard_payload_matches_old_algorithm_and_yields():
+    import heapq, random
+    import leaderboard_push as lp
+    rnd = random.Random(7)
+    users = {}
+    for i in range(650):
+        users[str(i)] = {"username": f"u{i}", "level": rnd.randint(1, 30),   # many ties on purpose
+                         "money": rnd.randint(0, 50), "prestige": rnd.randint(0, 3),
+                         "total_caught": rnd.randint(0, 40),
+                         "stats": {"myths_killed": rnd.randint(0, 5), "tracks_completed": rnd.randint(0, 5)},
+                         "guide_seen": list(range(rnd.randint(0, 4))),
+                         "is_tester": i % 97 == 0}
+    excluded = {"5", "6"}
+    tribes = {f"t{i}": {"level": rnd.randint(1, 9)} for i in range(20)}
+
+    def old(users, tribes, excluded):
+        out = {}
+        for key, field in lp._FIELDS:
+            cands = ((u, r) for u, r in users.items() if str(u) not in excluded and not r.get("is_tester"))
+            top = heapq.nlargest(100, cands, key=lambda pair: lp.score(lp._stat(pair[1], field)))
+            out[key] = [(d["username"], str(lp.score(lp._stat(d, field)))) for _, d in top]
+        return out
+
+    yields = []
+    real_sleep = asyncio.sleep
+    async def counting_sleep(t, *a, **k):
+        yields.append(t)
+        await real_sleep(0)
+    lp.asyncio.sleep = counting_sleep
+    try:
+        new = run(lp.build_payload(users, tribes, excluded))["rankings"]
+    finally:
+        lp.asyncio.sleep = real_sleep
+    exp = old(users, tribes, excluded)
+    for key in exp:
+        assert [(e["name"], e["score"]) for e in new[key]] == exp[key], key
+    assert len(yields) >= 3, "must yield to the loop while scanning"
+
+
+def test_bulk_save_users_is_chunked_and_complete():
+    _reset()
+    run(_ensure_db())
+    users = {f"c{i}": {"username": f"n{i}", "level": i, "money": i} for i in range(130)}
+    steps = []
+    real_sleep = asyncio.sleep
+    async def counting_sleep(t, *a, **k):
+        steps.append(1)
+        await real_sleep(0)
+    backend.asyncio.sleep = counting_sleep
+    try:
+        run(backend.bulk_save_users(users))
+    finally:
+        backend.asyncio.sleep = real_sleep
+    async def count():
+        async with backend._pool.execute("SELECT COUNT(*) FROM users WHERE user_id LIKE 'c%'") as c:
+            return (await c.fetchone())[0]
+    assert run(count()) == 130
+    assert len(steps) >= 3, "130 users / 40 per chunk must yield between chunks"
+
+
+def test_tribe_flush_writes_only_dirty_tribes_and_deletes_disbanded():
+    _reset()
+    run(_ensure_db())
+    for n in ("Alpha", "Beta", "Gamma"):
+        _mk_tribe(n, f"L{n}")
+    run(backend.bulk_save_tribes(app.tribe_data))
+    backend.take_dirty_tribes()                       # clear
+    backend.mark_tribes_dirty("Beta")
+    names, all_dirty = backend.take_dirty_tribes()
+    assert names == {"Beta"} and not all_dirty
+    assert backend.take_dirty_tribes() == (set(), False)
+    backend.mark_tribes_dirty()                       # unknown scope -> everything
+    assert backend.take_dirty_tribes()[1] is True
+    # a disbanded tribe's row must go, not resurrect on restart
+    run(backend.delete_tribe("Gamma"))
+    async def names_in_db():
+        async with backend._pool.execute("SELECT name FROM tribes") as c:
+            return {r[0] for r in await c.fetchall()}
+    got = run(names_in_db())
+    assert "Gamma" not in got and {"Alpha", "Beta"} <= got
+
+
+def test_user_tribe_transaction_marks_its_tribe_dirty():
+    _reset()
+    run(_ensure_db())
+    _mk_tribe("Delta", "D1")
+    backend.take_dirty_tribes()
+    async def go():
+        async with backend.user_tribe_transaction("D1", "Delta"):
+            pass
+    run(go())
+    assert backend.take_dirty_tribes() == ({"Delta"}, False)
+
+
+def test_leaderboard_ranking_cached_and_disbanded_tribes_dropped():
+    _reset()
+    for i in range(12):
+        _mk_user(f"lb{i}", level=i + 1)
+    app._LB_CACHE.clear()
+    calls = []
+    real = app._lb_period_value
+    def counting(uid, stat, period):
+        calls.append(uid)
+        return real(uid, stat, period)
+    app._lb_period_value = counting
+    try:
+        app.build_leaderboard_v2_components("lb0", None, "hunter", "global", "Level", 0, "all")
+        first = len(calls)
+        app.build_leaderboard_v2_components("lb0", None, "hunter", "global", "Level", 1, "all")   # page turn
+        second = len(calls) - first
+    finally:
+        app._lb_period_value = real
+    assert first > 12 and second < first, (first, second)     # full sort once, then O(page)
+    _mk_tribe("Eps", "E1")
+    app.build_leaderboard_v2_components("E1", None, "tribe", "global")
+    app.tribe_data.pop("Eps")
+    app.build_leaderboard_v2_components("E1", None, "tribe", "global")   # cached ranking, tribe gone: must not KeyError
+
+
+def test_modal_watchdog_defers_slow_submit():
+    _reset()
+    uid = "1601"
+    _mk_user(uid)
+    class SlowModal(app._V2Modal, title="Slow"):
+        async def on_submit(self, interaction):
+            await asyncio.sleep(0.3)                    # slow save before any reply
+            assert interaction.response.is_done()       # watchdog must have acked already
+    old = app.MODAL_ACK_DEADLINE
+    app.MODAL_ACK_DEADLINE = 0.05
+    try:
+        class FastModal(app._V2Modal, title="Fast"):
+            async def on_submit(self, interaction):
+                interaction.response.done = True
+        async def go():                                  # Modals need a running loop
+            i = FakeInteraction(uid, "x")
+            await SlowModal().on_submit(i)
+            assert i.response.done
+            fast = FakeInteraction(uid, "x")
+            await FastModal().on_submit(fast)
+        run(go())
+    finally:
+        app.MODAL_ACK_DEADLINE = old
+
+
 # ── emoji ─────────────────────────────────────────────────────
 def test_menu_uses_registry_icons_not_literals():
     _reset()
