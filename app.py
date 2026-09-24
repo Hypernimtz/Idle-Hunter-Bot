@@ -56,7 +56,7 @@ from game_data import (
     # Onboarding (Idle Hunter V2)
     STARTER_PACKS,
     # Colors
-    COLORS, COLOR_LABELS, COLOR_EMOJIS, COLOR_DESCRIPTIONS, color_display_name,
+    COLORS, COLOR_LABELS, COLOR_DESCRIPTIONS, color_display_name,
     # XP
     xp_for_level, total_xp_to_level,
     # Gamble
@@ -3644,7 +3644,7 @@ async def maybe_grant_event_gift(interaction: discord.Interaction, user_id: str)
         await send_ephemeral_v2(interaction,
             f"### {g['emoji']} Welcome Bonus Check\n"
             f"The admin left this on your desk on the way out:\n"
-            f"-# **◈ {g['gift_money']:,}** · {emoji('gem')} **{g['gift_gems']}** · {emoji('package')} **1× {g['gift_crate']}**\n"
+            f"-# **◈ {g['gift_money']:,}** · {emoji('gem')} **{g['gift_gems']}** · {emoji('crate_sample')} **1× {g['gift_crate']}**\n"
             f"-# {event_banner_line()}", 0x2ECC71)
     except Exception:
         pass
@@ -5114,7 +5114,7 @@ def _grant_hunters_path_reward(user_id: str, step: dict) -> str:
     if "crate" in r:
         ci = data[user_id].setdefault("crate_inv", {})
         ci[r["crate"]] = ci.get(r["crate"], 0) + 1
-        parts.append(f"{CRATE_TIERS.get(r['crate'], {}).get('emoji', emoji('package'))} {r['crate']}")
+        parts.append(f"{CRATE_TIERS.get(r['crate'], {}).get('emoji', emoji('crate_sample'))} {r['crate']}")
     return " · ".join(parts)
 
 def hunters_path_maybe_complete(user_id: str) -> dict:
@@ -6377,7 +6377,7 @@ def build_statistics_components(user_id: str, display_name: str, viewer_id: str 
         f"{emoji('fire')} Current daily streak: **{streak}**\n"
         f"{emoji('trophy')} Best daily streak: **{best_streak}**\n\n"
         f"{emoji('money_bag')} Net worth: **◈ {nw:,}**\n"
-        f"{emoji('package')} Total ◈ earned: **◈ {total_earned:,}**\n"
+        f"{emoji('money_bag')} Total ◈ earned: **◈ {total_earned:,}**\n"
         f"{emoji('target')} Total animals caught: **{total_caught:,}**\n"
         f"{emoji('diamond_small')} Ammo used: **{s.get('ammo_used', 0):,}**\n"
         f"{emoji('dice')} Gamble wins — BJ: **{s.get('bj_wins',0):,}** · CF: **{s.get('cf_wins',0):,}** · "
@@ -6574,7 +6574,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     if crate_drops:
         got = " · ".join(f"{CRATE_TIERS[n]['emoji']} {cnt}× **{n}**"
                          for n, cnt in crate_drops.items())
-        extra_bits.append(f"-# {emoji('package')} Crate drop: {got}")
+        extra_bits.append(f"-# {emoji('crate_sample')} Crate drop: {got}")
     auto_opened = result.get("auto_opened") or []
     if auto_opened:
         extra_bits.append(f"-# {emoji('crate_sample')} Auto-opened: " + " · ".join(auto_opened))
@@ -8925,7 +8925,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
 
     if not owned:
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": f"### {emoji('package')} Open Crates\n\n-# You don't own any crates.\n-# Buy some in `/craft`."},
+            {"type": 10, "content": f"### {emoji('crate_sample')} Open Crates\n\n-# You don't own any crates.\n-# Buy some in `/craft`."},
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
                 {"type": 2, "style": 2, "label": "◀ Craft",
@@ -8944,7 +8944,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
     )
 
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": f"### {emoji('package')} Open a Crate\n{inv_lines}"},
+        {"type": 10, "content": f"### {emoji('crate_sample')} Open a Crate\n{inv_lines}"},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [{"type": 3,
             "custom_id": f"crate:open_select:{user_id}",
@@ -9046,7 +9046,7 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
         rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
 
     rows.append({"type": 14, "divider": True, "spacing": 1})
-    rows.append({"type": 10, "content": f"### {emoji('package')} Crate Shop\n{_crystals_owned_line(user_id)}"})
+    rows.append({"type": 10, "content": f"### {emoji('crate_sample')} Crate Shop\n{_crystals_owned_line(user_id)}"})
     rows.extend(_crate_shop_sections(user_id))
 
     rows.append({"type": 1, "components": [

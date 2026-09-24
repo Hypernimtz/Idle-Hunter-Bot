@@ -19,7 +19,7 @@ def today_utc() -> str:
 # Every custom emoji the bot uses is defined ONCE here. To change an emoji
 # (new id, point it elsewhere, or swap to a plain-unicode fallback), edit its
 # value in this dict and nowhere else — BIOME_EMOJIS, RARITY_ICONS,
-# TRIBE_EMOJIS, USER_EMOJIS, COLOR_EMOJIS, UPGRADE_EMOJI and the /menu options
+# TRIBE_EMOJIS, USER_EMOJIS, UPGRADE_EMOJI and the /menu options
 # are all built from it further down.
 #
 # Format: "<:name:id>" for a custom emoji, or just "🐾" for plain unicode.
@@ -159,21 +159,6 @@ EMOJI = {
     "tribe_promote":      "<:tribe_promote:1545569002372202587>",
     "tribe_transfer":     "<:tribe_transfer:1545569005874708500>",
 
-    # ── Container colours ─────────────────────────────────────
-    "color_green":        "<:Village_Green:1499985282785743041>",
-    "color_dark_green":   "<:Forest_Dark_Green:1499985281410138204>",
-    "color_brown":        "<:Woods_Brown:1499985653847425074>",
-    "color_yellow":       "<:Desert_Yellow:1499985279103008838>",
-    "color_dark_yellow":  "<:Desert_Dark_Yellow:1499985277727408169>",
-    "color_light_blue":   "<:Tundra_Light_Blue:1499985276989341777>",
-    "color_lime_green":   "<:Jungle_Lime_Green:1499985275835908106>",
-    "color_dark_brown":   "<:Swamp_Dark_Brown:1499985272690053191>",
-    "color_orange":       "<:Volcanic_Highlands_Orange:1499985274413776946>",
-    "color_purple":       "<:Cursed_Ruins_Purple:1499985271637147678>",
-    "color_dark_blue":    "<:Abyssal_Depths_Blue:1499985270471397518>",
-    "color_rainbow":      "<:Rainbow_Pink:1499985269313634387>",
-    "color_platinum":     "<:Celestial_Peaks_Platinum:1499985268114198618>",
-    "color_colorless":    "<:None_Colorless:1499985266889330708>",
 
     # ── Animals ───────────────────────────────────────────────
     "animal_fallback":    "🐾",   # used for any animal with no emoji of its own
@@ -608,7 +593,27 @@ EMOJI = {
     "green_bar_half_whole": "<:green_bar_half_whole:1548101786127306914>",
 }
 
+# Uploaded 2026-09-23 (application emoji, named exactly like the key).
+EMOJI.update({
+    "wrench":            "<:wrench:1552532678497275994>",
+    "sparkles":          "<:sparkles:1552532677297705092>",
+    "slot_machine":      "<:slot_machine:1552532676169441450>",
+    "siren":             "<:siren:1552532674474942474>",
+    "shield":            "<:shield:1552532672923046010>",
+    "party_popper":      "<:party_popper:1552532671849177148>",
+    "package":           "<:package:1552532670658121808>",
+    "military_medal":    "<:military_medal:1552532668825079908>",
+    "label":             "<:label:1552532667314995210>",
+    "impact":            "<:impact:1552532665486540861>",
+    "heart":             "<:heart:1552532664072802354>",
+    "handshake":         "<:handshake:1552532662764314724>",
+    "first_place_medal": "<:first_place_medal:1552532661409677342>",
+    "eyes":              "<:eyes:1552532660331749376>",
+    "diamond_small":     "<:diamond_small:1552532659203481751>",
+})
+
 # Aliases — reuse existing art for icons without dedicated emoji yet.
+EMOJI["world_map"]      = EMOJI["biome"]         # 🗺 the global-map globe (<:Biome:…>)
 EMOJI["lottery_ticket"] = EMOJI["season_pass"]   # 🎟 lottery
 EMOJI["coinflip"]       = EMOJI["coin_sample"]   # 🪙 coinflip / "sell all"
 EMOJI["money_bag"]      = EMOJI["coin_sample"]   # 💰 was a bare-unicode placeholder (2026-09-22)
@@ -2917,13 +2922,6 @@ COLORS = {
     "platinum":    discord.Color(0xE5E4E2),
     "colorless":   discord.Color(0x000000),
 }
-
-# Built from the EMOJI registry at the top of this file — edit ids there.
-COLOR_EMOJIS = {c: EMOJI[f"color_{c.replace(' ', '_')}"] for c in (
-    "green", "dark green", "brown", "yellow", "dark yellow", "light blue",
-    "lime green", "dark brown", "orange", "purple", "dark blue", "rainbow",
-    "platinum", "colorless",
-)}
 
 COLOR_LABELS = {
     "green":       "Green",

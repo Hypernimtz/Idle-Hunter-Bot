@@ -672,13 +672,14 @@ def test_menu_uses_registry_icons_not_literals():
 
 
 def test_text_default_glyphs_get_emoji_presentation():
-    assert game_data.EMOJI["hp"].endswith("️")        # ❤ renders as an emoji, not a text glyph
-    assert game_data.EMOJI["gear"].endswith("️")
+    assert game_data.EMOJI["gear"].endswith("️")      # ⚙ renders as an emoji, not a text glyph
+    assert game_data.EMOJI["shield"].startswith("<:")       # uploaded art wins over the placeholder
 
 
 def test_adopt_named_emojis_switches_placeholders():
     saved = dict(game_data.EMOJI)
     try:
+        game_data.EMOJI["heart"] = game_data.EMOJI["hp"] = "❤️"   # back to the placeholder state
         got = game_data.adopt_named_emojis({"heart": "<:heart:123456789012345678>",
                                             "bow": "<:bow:1>",             # already custom: untouched
                                             "wolf": "garbage"})            # invalid: ignored
@@ -689,6 +690,13 @@ def test_adopt_named_emojis_switches_placeholders():
     finally:
         game_data.EMOJI.clear()
         game_data.EMOJI.update(saved)
+
+
+def test_deleted_color_emoji_gone_and_world_map_is_biome_globe():
+    assert not [k for k in game_data.EMOJI if k.startswith("color_")]
+    assert not hasattr(game_data, "COLOR_EMOJIS")
+    assert game_data.EMOJI["world_map"] == game_data.EMOJI["biome"]
+    assert game_data.EMOJI["package"].startswith("<:package:")
 
 
 # ── data safety ───────────────────────────────────────────────
