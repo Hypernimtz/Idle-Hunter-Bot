@@ -612,6 +612,168 @@ EMOJI.update({
     "diamond_small":     "<:diamond_small:1552532659203481751>",
 })
 
+# Animal + mythic-creature art uploaded 2026-09-25 (application emoji, named = slug of the
+# animal's name; mythics are `myth_<slug>`). Wired via animal_emoji()/creature_emoji().
+EMOJI.update({
+# real animals
+    "desert_jerboa": "<:desert_jerboa:1552881490059075584>",
+    "willow_ptarmigan": "<:willow_ptarmigan:1552880548286828554>",
+    "western_coyote": "<:western_coyote:1552880546743324702>",
+    "virginia_opossum": "<:virginia_opossum:1552880545292099704>",
+    "ural_owl": "<:ural_owl:1552880544046518303>",
+    "tawny_owl": "<:tawny_owl:1552880542599356477>",
+    "sun_bear": "<:sun_bear:1552880541173420042>",
+    "striped_skunk": "<:striped_skunk:1552880539223068693>",
+    "striped_hyena": "<:striped_hyena:1552880538338205726>",
+    "striped_bass": "<:striped_bass:1552880536966533121>",
+    "sand_cat": "<:sand_cat:1552880535557242961>",
+    "saharan_horned_viper": "<:saharan_horned_viper:1552880534424916039>",
+    "roe_deer": "<:roe_deer:1552880533107773560>",
+    "ring_necked_pheasant": "<:ring_necked_pheasant:1552880531484450846>",
+    "reticulated_python": "<:reticulated_python:1552880528477261854>",
+    "red_kite": "<:red_kite:1552880526811996160>",
+    "red_fox": "<:red_fox:1552880525411360839>",
+    "red_deer": "<:red_deer:1552880524190810223>",
+    "r_ppell_s_fox": "<:r_ppell_s_fox:1552880522487791709>",
+    "pine_marten": "<:pine_marten:1552880520956878849>",
+    "north_atlantic_humpback": "<:north_atlantic_humpback:1552880519228694558>",
+    "nordic_wolverine": "<:nordic_wolverine:1552880517718999060>",
+    "nordic_red_squirrel": "<:nordic_red_squirrel:1552880516120977488>",
+    "mountain_reindeer": "<:mountain_reindeer:1552880514267086928>",
+    "malayan_tapir": "<:malayan_tapir:1552880512945750016>",
+    "brown_bear": "<:brown_bear:1552880474697900052>",
+    "capercaillie": "<:capercaillie:1552880475490623639>",
+    "clouded_leopard": "<:clouded_leopard:1552880477634035782>",
+    "common_raccoon": "<:common_raccoon:1552880478904651886>",
+    "cottontail_rabbit": "<:cottontail_rabbit:1552880480158879795>",
+    "crab_eating_macaque": "<:crab_eating_macaque:1552880481731747850>",
+    "deathstalker_scorpion": "<:deathstalker_scorpion:1552880483090825286>",
+    "desert_monitor": "<:desert_monitor:1552880484323688458>",
+    "dorcas_gazelle": "<:dorcas_gazelle:1552880485544361984>",
+    "douglas_squirrel": "<:douglas_squirrel:1552880487268098068>",
+    "egyptian_vulture": "<:egyptian_vulture:1552880488740552714>",
+    "eurasian_badger": "<:eurasian_badger:1552880490116022362>",
+    "eurasian_boar": "<:eurasian_boar:1552880491391356988>",
+    "eurasian_elk": "<:eurasian_elk:1552880492737601647>",
+    "eurasian_lynx": "<:eurasian_lynx:1552880494318854144>",
+    "european_bison": "<:european_bison:1552880496470523985>",
+    "european_hare": "<:european_hare:1552880497795932235>",
+    "golden_jackal": "<:golden_jackal:1552880499641286806>",
+    "grey_wolf": "<:grey_wolf:1552880503311433800>",
+    "harbor_porpoise": "<:harbor_porpoise:1552880504536301699>",
+    "harbor_seal": "<:harbor_seal:1552880505836273755>",
+    "house_sparrow": "<:house_sparrow:1552880507182649354>",
+    "japanese_serow": "<:japanese_serow:1552880508508049418>",
+    "king_cobra": "<:king_cobra:1552880509808541867>",
+    "leatherback_turtle": "<:leatherback_turtle:1552880511305646110>",
+    "perentie": "<:perentie:1552880430544322560>",
+    "pindos_bear": "<:pindos_bear:1552880431752417310>",
+    "queen_conch": "<:queen_conch:1552880434092712008>",
+    "red_kangaroo": "<:red_kangaroo:1552880436424867840>",
+    "red_panda": "<:red_panda:1552880437532164187>",
+    "saltwater_crocodile": "<:saltwater_crocodile:1552880439683977236>",
+    "scarlet_ibis": "<:scarlet_ibis:1552880440879095808>",
+    "southern_cassowary": "<:southern_cassowary:1552880442191913061>",
+    "sunda_pangolin": "<:sunda_pangolin:1552880443567640586>",
+    "syrian_brown_bear": "<:syrian_brown_bear:1552880445279047760>",
+    "tibetan_brown_bear": "<:tibetan_brown_bear:1552880447288250438>",
+    "wedge_tailed_eagle": "<:wedge_tailed_eagle:1552880448592543826>",
+    "west_indian_manatee": "<:west_indian_manatee:1552880450328985700>",
+    "wild_yak": "<:wild_yak:1552880453252288542>",
+    "addax_antelope": "<:addax_antelope:1552880455320342559>",
+    "alpine_marmot": "<:alpine_marmot:1552880456607731824>",
+    "american_crow": "<:american_crow:1552880457891323954>",
+    "atlantic_bluefin_tuna": "<:atlantic_bluefin_tuna:1552880459652931664>",
+    "atlantic_cod": "<:atlantic_cod:1552880460982648882>",
+    "atlantic_herring": "<:atlantic_herring:1552880462505054248>",
+    "black_grouse": "<:black_grouse:1552880464857931816>",
+    "black_tailed_deer": "<:black_tailed_deer:1552880467177373756>",
+    "blue_lobster": "<:blue_lobster:1552880471053176832>",
+    "blue_shark": "<:blue_shark:1552880472323792947>",
+    "bornean_orangutan": "<:bornean_orangutan:1552880473523625994>",
+    "emu": "<:emu:1552880378992394240>",
+    "frilled_lizard": "<:frilled_lizard:1552880380036522025>",
+    "giant_red_shrimp": "<:giant_red_shrimp:1552880381261250580>",
+    "giant_squid": "<:giant_squid:1552880383736021102>",
+    "grecian_boar": "<:grecian_boar:1552880385686511747>",
+    "grecian_jackal": "<:grecian_jackal:1552880386894209085>",
+    "grecian_wolf": "<:grecian_wolf:1553221534317805679>",
+    "green_iguana": "<:green_iguana:1552880389083897877>",
+    "griffon_vulture": "<:griffon_vulture:1552880390262493235>",
+    "gulper_eel": "<:gulper_eel:1552880391658938398>",
+    "hawksbill_turtle": "<:hawksbill_turtle:1552880392934137979>",
+    "hermann_s_tortoise": "<:hermann_s_tortoise:1552880396058759219>",
+    "himalayan_griffon": "<:himalayan_griffon:1552880399011545098>",
+    "himalayan_marmot": "<:himalayan_marmot:1552880400643137667>",
+    "himalayan_monal": "<:himalayan_monal:1552880402668986438>",
+    "himalayan_snow_leopard": "<:himalayan_snow_leopard:1552880403893985330>",
+    "himalayan_tahr": "<:himalayan_tahr:1552880405135499274>",
+    "indochinese_tiger": "<:indochinese_tiger:1552880406599045130>",
+    "inland_taipan": "<:inland_taipan:1552880407756800050>",
+    "jamaican_boa": "<:jamaican_boa:1552880409052979301>",
+    "kri_kri_goat": "<:kri_kri_goat:1552880410269323284>",
+    "lanternfish": "<:lanternfish:1552880421954658364>",
+    "mediterranean_monk_seal": "<:mediterranean_monk_seal:1552880425645641739>",
+    "mediterranean_sperm_whale": "<:mediterranean_sperm_whale:1552880427423760466>",
+    "olympian_eagle": "<:olympian_eagle:1552880428904611961>",
+    "dingo": "<:dingo:1552880377507356732>",
+    "aegean_vulture": "<:aegean_vulture:1552880339360153641>",
+    "anatolian_golden_eagle": "<:anatolian_golden_eagle:1552880341046526135>",
+    "anatolian_ground_squirrel": "<:anatolian_ground_squirrel:1552880342933835777>",
+    "anatolian_leopard": "<:anatolian_leopard:1552880344758222979>",
+    "balkan_lynx": "<:balkan_lynx:1552880346268434542>",
+    "bearded_vulture": "<:bearded_vulture:1552880347954417724>",
+    "bezoar_ibex": "<:bezoar_ibex:1552880349501980673>",
+    "bharal": "<:bharal:1552880355890036837>",
+    "blackmouth_catshark": "<:blackmouth_catshark:1552880357282414724>",
+    "blue_marlin": "<:blue_marlin:1552880358679388190>",
+    "bluntnose_sixgill_shark": "<:bluntnose_sixgill_shark:1552880361241976892>",
+    "caracal": "<:caracal:1552880362844196885>",
+    "caribbean_flamingo": "<:caribbean_flamingo:1552880364337234041>",
+    "caribbean_reef_shark": "<:caribbean_reef_shark:1552880365926879383>",
+    "chukar_partridge": "<:chukar_partridge:1552880367122518076>",
+    "colossal_squid": "<:colossal_squid:1552880368519086141>",
+    "common_fangtooth": "<:common_fangtooth:1552880370721235034>",
+    "common_wombat": "<:common_wombat:1552880372037980280>",
+    "cuban_crocodile": "<:cuban_crocodile:1552880373979947078>",
+    "deep_sea_anglerfish": "<:deep_sea_anglerfish:1552880375863189554>",
+# mythic creatures
+    "myth_zombie": "<:myth_zombie:1553221180239118437>",
+    "myth_yowie": "<:myth_yowie:1553221177428676679>",
+    "myth_yeti": "<:myth_yeti:1553221174589132931>",
+    "myth_werewolf": "<:myth_werewolf:1553221171976077372>",
+    "myth_vampires": "<:myth_vampires:1553221168855777311>",
+    "myth_troll": "<:myth_troll:1553221165915443211>",
+    "myth_sirens": "<:myth_sirens:1553221161578668132>",
+    "myth_sea_serpent_of_cape_ann": "<:myth_sea_serpent_of_cape_ann:1553221158621552801>",
+    "myth_scylla": "<:myth_scylla:1553221155702312960>",
+    "myth_roc": "<:myth_roc:1553221150002126888>",
+    "myth_phoenix": "<:myth_phoenix:1553221147305447534>",
+    "myth_nue": "<:myth_nue:1553221144314912780>",
+    "myth_minotaur": "<:myth_minotaur:1553221142049718352>",
+    "myth_manticore": "<:myth_manticore:1553221139080290364>",
+    "myth_loch_ness_monster": "<:myth_loch_ness_monster:1553221135603073086>",
+    "myth_kraken": "<:myth_kraken:1553221132851871774>",
+    "myth_kelpie": "<:myth_kelpie:1553221128921817208>",
+    "myth_hydra": "<:myth_hydra:1553221125797052456>",
+    "myth_hippogriff": "<:myth_hippogriff:1553221121963462697>",
+    "myth_harpies": "<:myth_harpies:1553221118817476618>",
+    "myth_grindylow": "<:myth_grindylow:1553221115281932329>",
+    "myth_griffin": "<:myth_griffin:1553221112802844752>",
+    "myth_gorgon": "<:myth_gorgon:1553221110089392158>",
+    "myth_garm": "<:myth_garm:1553221106817831024>",
+    "myth_ammut": "<:myth_ammut:1553221076643745922>",
+    "myth_bigfoot": "<:myth_bigfoot:1553221079969960016>",
+    "myth_black_dog": "<:myth_black_dog:1553221082658504784>",
+    "myth_bogeyman": "<:myth_bogeyman:1553221085611171891>",
+    "myth_bunyip": "<:myth_bunyip:1553221087750524949>",
+    "myth_cerberus": "<:myth_cerberus:1553221090468171807>",
+    "myth_chimera": "<:myth_chimera:1553221093354111046>",
+    "myth_chupacabra": "<:myth_chupacabra:1553221095950262364>",
+    "myth_cockatrice": "<:myth_cockatrice:1553221098785603644>",
+    "myth_dragon": "<:myth_dragon:1553221101553844234>",
+})
+
 # Aliases — reuse existing art for icons without dedicated emoji yet.
 EMOJI["world_map"]      = EMOJI["biome"]         # 🗺 the global-map globe (<:Biome:…>)
 EMOJI["lottery_ticket"] = EMOJI["season_pass"]   # 🎟 lottery
@@ -2174,7 +2336,8 @@ def _slug(s: str) -> str:
 
 def creature_emoji(name: str) -> str:
     c = MYTHIC_CREATURES.get(name, {})
-    return EMOJI.get(f"creature_{_slug(name)}") or c.get("fallback_emoji", "🔮")
+    slug = _slug(name)
+    return EMOJI.get(f"creature_{slug}") or EMOJI.get(f"myth_{slug}") or c.get("fallback_emoji", "🔮")
 
 def trophy_emoji(name: str) -> str:
     """Custom emoji for a trophy/drop item name (see TROPHY_EFFECTS), falling
@@ -3308,9 +3471,21 @@ ACHIEVEMENT_TITLES: dict[str, dict[str, str]] = {
 # ANIMALS
 # ─────────────────────────────────────────────
 
+# Live animals whose art is a shared regional lookalike (no dedicated upload).
+ANIMAL_EMOJI_ALIAS = {
+    "British Grey Wolf": "grey_wolf", "Scandinavian Wolf": "grey_wolf", "Carpathian Wolf": "grey_wolf",
+    "Anatolian Wolf": "grecian_wolf", "Anatolian Hyena": "striped_hyena",
+    "Nordic Brown Bear": "brown_bear", "Carpathian Bear": "brown_bear",
+    "Boreal Lynx": "eurasian_lynx", "Carpathian Lynx": "eurasian_lynx",
+    "Carpathian Red Deer": "red_deer", "Carpathian Boar": "eurasian_boar",
+}
+
 def animal_emoji(animal: str) -> str:
-    e = ANIMAL_DATA.get(animal, {}).get("emoji", "")
-    return e if e else ANIMAL_EMOJI
+    # custom art (by slug/alias) wins; the row's unicode "emoji" is the fallback
+    art = EMOJI.get(ANIMAL_EMOJI_ALIAS.get(animal) or _slug(animal), "")
+    if art.startswith("<"):
+        return art
+    return ANIMAL_DATA.get(animal, {}).get("emoji", "") or ANIMAL_EMOJI
 
 # ─────────────────────────────────────────────
 # COLORS
