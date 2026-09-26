@@ -19183,6 +19183,12 @@ def _sighting_progress_body(sg: dict) -> str:
         extra=extra,
     )
 
+def _sighting_travel_buttons(sg: dict) -> list[dict]:
+    """'Travel Now' button for a sighting card (progress + reveal share it)."""
+    where = BIOME_NAMES.get(sg["biome"], sg["biome"])
+    return [{"type": 2, "style": 3, "label": f"Travel to {where}",
+             "emoji": emoji_partial("plane"), "custom_id": f"announce:travel:{sg['biome']}"}]
+
 def _sighting_reveal_body(sg: dict) -> str:
     """The one dramatic beat in the whole announcement system — a real story
     moment, not a stat update. Deliberately its own layout rather than the
@@ -19225,6 +19231,7 @@ async def world_sighting_task():
                     resp = await _announce(
                         _sighting_progress_body(sg),
                         channel_id=ALERTS_CHANNEL_ID, role_id=SIGHTING_ROLE_ID, color=0xE74C3C,
+                        buttons=_sighting_travel_buttons(sg),
                         thumb_url=_emoji_cdn_url(BIOME_EMOJIS.get(sg["biome"])))
                     if resp:
                         sg["channel_id"] = ALERTS_CHANNEL_ID
@@ -19238,6 +19245,7 @@ async def world_sighting_task():
                 sg["_clue_flavor"] = random.choice(SIGHTING_CLUE_FLAVORS)
                 ok = await _announce_edit(sg["channel_id"], sg["msg_id"],
                                            _sighting_progress_body(sg), 0xE74C3C,
+                                           _sighting_travel_buttons(sg),
                                            thumb_url=_emoji_cdn_url(BIOME_EMOJIS.get(sg["biome"])))
                 if ok:
                     sg["last_clues_announced"] = sg.get("clues", 0)
@@ -19247,8 +19255,7 @@ async def world_sighting_task():
             _sighting_announced[sg["id"]] = "revealed"
             analytics(None, "sighting_revealed", biome=sg["biome"], creature=sg["creature"])
             body = _sighting_reveal_body(sg)
-            buttons = [{"type": 2, "style": 3, "label": f"Travel to {BIOME_NAMES.get(sg['biome'], sg['biome'])}",
-                        "emoji": emoji_partial("plane"), "custom_id": f"announce:travel:{sg['biome']}"}]
+            buttons = _sighting_travel_buttons(sg)
             edited = False
             if sg.get("msg_id"):
                 edited = await _announce_edit(sg["channel_id"], sg["msg_id"], body, 0x9B59B6, buttons)
