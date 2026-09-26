@@ -4922,7 +4922,7 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
     body = (
         f"## {emoji('warning')} WILD {name.upper()}\n"
         f"{extra_line}"
-        f"{ico} **{name.upper()}**\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
+        f"### {ico} {name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
         f"{hp_ico} **YOU**\n{hp}/{mx}\n{_hp_bar(hp, mx)}\n\n"
         f"{log_txt}"
     )
@@ -6587,7 +6587,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     hp, mx = player_hp(user_id)
     hp_ico = emoji("hp") or "❤️"
     header = ui_header(tool_emoji(tool_name), f"{result['biome_name'].upper()} HUNT",
-                        f"{tool_name} · {ammo_line} · {hp_ico} {hp}/{mx}")
+                        f"{get_username(user_id)} · {tool_name} · {ammo_line} · {hp_ico} {hp}/{mx}")
 
     total_xp_earned = 0
     total_sell_val  = 0
@@ -6737,7 +6737,7 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
         f"**MYTHICAL ENCOUNTER** · Round {b.get('turn', 1)}\n"
         f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
         f"-# {c.get('aka', '')} · {c.get('behavior', '')}\n\n"
-        f"{ico} **{name.upper()}**\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
+        f"### {ico} {name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
         f"{hp_ico} **YOU**\n{php}/{pmax}\n{_hp_bar(php, pmax)}\n\n"
         f"{log_txt}"
     )
@@ -7087,7 +7087,7 @@ def build_onboarding_components(user_id: str) -> list:
         lvl_line = (f"\n\n`⬆️` **LEVEL {d['level']}!**" if d.get("level", 1) > 1 else "")
         body = (
             f"### {emoji('target')} CLEAN HIT!\n"
-            f"{a_em} **{animal}**\n\n"
+            f"### {a_em} {animal}\n\n"
             f"**+ {xp} XP** · **+ ◈ {val:,}**"
             f"{lvl_line}\n\n"
             f"{emoji('book')} **New Field Guide entry** — 1/{len(BIOME_ANIMALS.get('village', []))} "
@@ -10793,11 +10793,11 @@ def build_record_v2_components(user_id: str, biome_idx: int = 0) -> list:
             if entry:
                 top_tool = max(entry.get("tools", {"?": 0}), key=entry.get("tools", {"?": 0}).get)
                 lines.append(
-                    f"{animal_emoji(animal)} {rarity_ico} **{animal}**\n"
-                    f"-# ×{entry['count']} caught · ◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
+                    f"### {animal_emoji(animal)} {animal}\n"
+                    f"-# {rarity_ico} ×{entry['count']} caught · ◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
                 )
             else:
-                lines.append(f"{ANIMAL_EMOJI} {rarity_ico} **{animal}**\n-# Not caught yet")
+                lines.append(f"### {ANIMAL_EMOJI} {animal}\n-# {rarity_ico} Not caught yet")
         content = (f"### {BIOME_EMOJIS[biome_key]} {BIOME_NAMES[biome_key]} — Record Book\n\n"
                    + "\n\n".join(lines))
     btn_row = {"type": 1, "components": [
@@ -10835,11 +10835,11 @@ def build_record_standalone_v2_components(viewer_id: str, target_id: str, biome_
             if entry:
                 top_tool = max(entry.get("tools", {"?": 0}), key=entry.get("tools", {"?": 0}).get)
                 lines.append(
-                    f"{animal_emoji(animal)} {rarity_ico} **{animal}**\n"
-                    f"-# ×{entry['count']} · ◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
+                    f"### {animal_emoji(animal)} {animal}\n"
+                    f"-# {rarity_ico} ×{entry['count']} ·◈ {entry['total_earned']:,} · {emoji('wrench')} {top_tool}"
                 )
             else:
-                lines.append(f"{ANIMAL_EMOJI} {rarity_ico} **{animal}**\n-# Not caught yet")
+                lines.append(f"### {ANIMAL_EMOJI} {animal}\n-# {rarity_ico} Not caught yet")
         content = (f"### {BIOME_EMOJIS[biome_key]} {BIOME_NAMES[biome_key]} — {target_name}'s Record\n\n"
                    + "\n\n".join(lines))
     btn_row = {"type": 1, "components": [
@@ -10895,7 +10895,7 @@ def build_log_v2_components(user_id: str, page: int = 0,
         rarity_ico = RARITY_ICONS.get(rarity, "")
         rare_tag   = f" · {emoji('sparkles')} **Rare!**" if c.get("is_rare") else ""
         catch_lines.append(
-            f"{animal_emoji(animal)} **{animal}**{rare_tag}\n"
+            f"### {animal_emoji(animal)} {animal}{rare_tag}\n"
             f"-# {rarity_ico} {rarity.title()} · +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
         )
     footer    = f"\n\n-# Total XP: **+{total_xp:,}**"
@@ -10947,7 +10947,7 @@ def build_log_standalone_v2_components(user_id: str, page: int = 0) -> list:
         rarity_ico = RARITY_ICONS.get(rarity, "")
         rare_tag   = f" · {emoji('sparkles')} **Perfect Catch!**" if c.get("is_rare") else ""
         catch_lines.append(
-            f"{animal_emoji(animal)} **{animal}**{rare_tag}\n"
+            f"### {animal_emoji(animal)} {animal}{rare_tag}\n"
             f"-# {rarity_ico} {rarity.title()} · +{c['xp_earned']:,} XP · ◈ {c['sell_value']:,}"
         )
     footer    = f"\n\n-# Total XP: **+{total_xp:,}**"
