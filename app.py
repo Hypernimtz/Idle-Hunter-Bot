@@ -6610,7 +6610,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         if c["is_rare"]:
             tag += f"\n{emoji('sparkles')} **Perfect Catch!**"
         catch_parts.append(
-            f"{a_em} **{animal}**\n"
+            f"### {a_em} {animal}\n"
             f"-# {rarity_icon} {rarity.title()} · {ui_money(c['sell_value'])} · +{c['xp_earned']} XP"
             f"{tag}"
         )
