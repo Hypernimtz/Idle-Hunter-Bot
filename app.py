@@ -528,6 +528,7 @@ _world_conditions: dict[str, dict] = {}
 # World Sightings (Phase 16) and Automatic Events (Phase 25) sprints.
 _active_sighting: dict | None = None
 _last_sighting_end: float = 0.0
+_last_condition_announce_ts: float = 0.0
 _event_scheduler: dict = {"last_event_ts": 0.0, "next_event_ts": 0.0, "recent_keys": []}
 
 def _prune_world_conditions() -> None:
@@ -587,7 +588,9 @@ def world_condition_line(biome: str) -> str:
 SIGHTING_CLUE_GOAL      = 50
 SIGHTING_MIN_MIN        = 45     # discovery-phase length: 45-90 min
 SIGHTING_MAX_MIN        = 90
-SIGHTING_GAP_MIN_H      = 3      # min hours between sightings
+SIGHTING_GAP_MIN_H      = 12     # min hours between sightings (was 3 — pinged the alerts role so often it stopped feeling rare)
+SIGHTING_SPAWN_CHANCE   = 0.20   # per 8-min tick once the gap has passed
+WORLD_CONDITION_ANNOUNCE_GAP_H = 8   # min hours between condition announcements (conditions still rotate silently)
 
 # Post-reveal: the sighted creature becomes the ONLY thing that can appear in
 # its biome, for a fixed window, at a flat pity-protected chance — replacing
@@ -11604,6 +11607,7 @@ def _encode_runtime_state() -> dict:
         "world_conditions": dict(_world_conditions),
         "world_sighting":   (dict(_active_sighting) if _active_sighting else None),
         "last_sighting_end": _last_sighting_end,
+        "last_condition_announce_ts": _last_condition_announce_ts,
         "event_scheduler":  dict(_event_scheduler),
         "last_weekly_lb_tag": _last_weekly_lb_tag,
     }
@@ -11623,7 +11627,7 @@ def load_runtime_state() -> None:
     _appeal_store.update(raw.get("appeals", {}))
     _bj_state.update(raw.get("blackjack", {}))
     global _world_map_url, _active_event, _world_conditions, _active_sighting, _event_scheduler, _last_sighting_end
-    global _last_weekly_lb_tag
+    global _last_weekly_lb_tag, _last_condition_announce_ts
     _saved_map = (raw.get("world_map") or {}).get("url", "")
     if _saved_map and not _cdn_url_expiring(_saved_map, skew_seconds=0):
         _world_map_url = _saved_map
@@ -11641,6 +11645,10 @@ def load_runtime_state() -> None:
         _last_sighting_end = float(raw.get("last_sighting_end", 0) or 0)
     except (TypeError, ValueError):
         _last_sighting_end = 0.0
+    try:
+        _last_condition_announce_ts = float(raw.get("last_condition_announce_ts", 0) or 0)
+    except (TypeError, ValueError):
+        _last_condition_announce_ts = 0.0
     _es = raw.get("event_scheduler")
     if isinstance(_es, dict):
         _event_scheduler.update(_es)
@@ -19124,7 +19132,13 @@ async def world_condition_task():
         return
     try:
         changed = rotate_world_conditions()
+        global _last_condition_announce_ts
+        if changed and time.time() - _last_condition_announce_ts < WORLD_CONDITION_ANNOUNCE_GAP_H * 3600:
+            # Conditions still rotate (they're live in /biomes), but each one
+            # used to ping the events role — too often to stay special.
+            changed = []
         if changed:
+            _last_condition_announce_ts = time.time()
             names = ", ".join(BIOME_NAMES.get(b, b) for b in changed)
             print(f"🌦️  New world condition(s): {names}")
             if len(changed) == 1:
@@ -19222,8 +19236,8 @@ async def world_sighting_task():
     try:
         sg = get_active_sighting()
         if not sg:
-            # ~35% chance each tick once the cooldown has passed
-            if random.random() < 0.35:
+            # SIGHTING_SPAWN_CHANCE each tick once the cooldown has passed
+            if random.random() < SIGHTING_SPAWN_CHANCE:
                 sg = spawn_world_sighting()
                 if sg:
                     _sighting_announced[sg["id"]] = "spawned"
