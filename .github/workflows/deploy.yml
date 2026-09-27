@@ -1,0 +1,93 @@
+name: Deploy bot
+
+# On every push to main that touches the bot's source: run the test suites, upload the
+# source files to the Hydrodactyl server over the panel API, then restart it.
+# Never uploaded: token.env, *.db, config.json, lottery.json, runtime_state.json (live data).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "requirements.txt"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PANEL_HOST: https://panel.xsystemshosting.com
+  SERVER_ID: 994c56ab
+  # Folder on the server that holds app.py. Override with a repo variable BOT_DIR if the
+  # bot isn't in the server's root.
+  BOT_DIR: ${{ vars.BOT_DIR || '/' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python tests/test_v2.py
+      - run: python tests/test_races.py
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      PANEL_API_KEY: ${{ secrets.PANEL_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the API key secret is set
+        run: |
+          if [ -z "$PANEL_API_KEY" ]; then
+            echo "::error::Add the PANEL_API_KEY repository secret (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - name: Upload source files
+        run: |
+          api="$PANEL_HOST/api/client/servers/$SERVER_ID"
+          for f in app.py backend.py game_data.py leaderboard_push.py requirements.txt; do
+            path="${BOT_DIR%/}/$f"
+            echo "Uploading $f -> $path"
+            curl -sS --fail-with-body -X POST \
+              -H "Authorization: Bearer $PANEL_API_KEY" \
+              -H "Accept: application/vnd.pterodactyl.v1+json" \
+              -H "Content-Type: text/plain" \
+              --data-binary "@$f" \
+              "$api/files/write?file=$(printf '%s' "$path" | jq -sRr @uri)"
+          done
+
+      - name: Restart the server
+        run: |
+          curl -sS --fail-with-body -X POST \
+            -H "Authorization: Bearer $PANEL_API_KEY" \
+            -H "Accept: application/vnd.pterodactyl.v1+json" \
+            -H "Content-Type: application/json" \
+            -d '{"signal":"restart"}' \
+            "$PANEL_HOST/api/client/servers/$SERVER_ID/power"
+
+      - name: Wait for the bot to come back up
+        run: |
+          for i in $(seq 1 24); do
+            sleep 5
+            state=$(curl -sS \
+              -H "Authorization: Bearer $PANEL_API_KEY" \
+              -H "Accept: application/vnd.pterodactyl.v1+json" \
+              "$PANEL_HOST/api/client/servers/$SERVER_ID/resources" | jq -r '.attributes.current_state // "unknown"')
+            echo "state: $state"
+            if [ "$state" = "running" ]; then exit 0; fi
+          done
+          echo "::error::Server did not reach 'running' within 2 minutes."
+          exit 1
