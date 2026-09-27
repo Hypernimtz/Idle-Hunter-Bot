@@ -55,37 +55,39 @@ jobs:
             exit 1
           fi
 
+      - name: Find the server's API prefix
+        # Hydrodactyl serves each server under /servers/wings/<id> or /servers/elytra/<id>
+        # depending on its daemon type — probe both and keep the one that answers.
+        run: |
+          for kind in wings elytra; do
+            api="$PANEL_HOST/api/client/servers/$kind/$SERVER_ID"
+            code=$(curl -s -o /dev/null -w '%{http_code}'               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json" "$api/resources")
+            echo "$kind -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "API=$api" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "::error::Neither daemon prefix answered 200 — check the API key's access to server $SERVER_ID."
+          exit 1
+
       - name: Upload source files
         run: |
-          api="$PANEL_HOST/api/client/servers/$SERVER_ID"
           for f in app.py backend.py game_data.py leaderboard_push.py requirements.txt; do
             path="${BOT_DIR%/}/$f"
             echo "Uploading $f -> $path"
-            curl -sS --fail-with-body -X POST \
-              -H "Authorization: Bearer $PANEL_API_KEY" \
-              -H "Accept: application/vnd.pterodactyl.v1+json" \
-              -H "Content-Type: text/plain" \
-              --data-binary "@$f" \
-              "$api/files/write?file=$(printf '%s' "$path" | jq -sRr @uri)"
+            curl -sS --fail-with-body -X POST               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json"               -H "Content-Type: text/plain"               --data-binary "@$f"               "$API/files/write?file=$(printf '%s' "$path" | jq -sRr @uri)"
           done
 
       - name: Restart the server
         run: |
-          curl -sS --fail-with-body -X POST \
-            -H "Authorization: Bearer $PANEL_API_KEY" \
-            -H "Accept: application/vnd.pterodactyl.v1+json" \
-            -H "Content-Type: application/json" \
-            -d '{"signal":"restart"}' \
-            "$PANEL_HOST/api/client/servers/$SERVER_ID/power"
+          curl -sS --fail-with-body -X POST             -H "Authorization: Bearer $PANEL_API_KEY"             -H "Accept: application/json"             -H "Content-Type: application/json"             -d '{"signal":"restart"}'             "$API/power"
 
       - name: Wait for the bot to come back up
         run: |
           for i in $(seq 1 24); do
             sleep 5
-            state=$(curl -sS \
-              -H "Authorization: Bearer $PANEL_API_KEY" \
-              -H "Accept: application/vnd.pterodactyl.v1+json" \
-              "$PANEL_HOST/api/client/servers/$SERVER_ID/resources" | jq -r '.attributes.current_state // "unknown"')
+            state=$(curl -sS               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json"               "$API/resources" | jq -r '.attributes.current_state // "unknown"')
             echo "state: $state"
             if [ "$state" = "running" ]; then exit 0; fi
           done
