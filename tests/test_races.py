@@ -7,6 +7,7 @@ Runs without pytest:  python tests/test_races.py
 import asyncio
 import itertools
 import os
+import random
 import sys
 import tempfile
 import time
@@ -502,15 +503,53 @@ def test_new_user_logs_starting_balance():
     assert any(c[1] == "starting balance" and c[4] == "money" for c in calls)
 
 
+def _crate_ev(name, scale):
+    """(avg money, avg gems) per opened crate at a given value scale."""
+    pool = game_data.CRATE_REWARDS[name]
+    t = sum(w for w, *_ in pool)
+    money = sum(w * (d["min_x"] + d["max_x"]) / 2 * scale for w, k, d in pool if k == "money") / t
+    gems = sum(w * (d["min"] + d["max"]) / 2 for w, k, d in pool if k == "gems") / t
+    return money, gems
+
+
 def test_crate_money_ladder_monotonic():
-    def avg(c):
-        pool = game_data.CRATE_REWARDS[c]
-        t = sum(w for w, *_ in pool)
-        return sum(w * (d["min"] + d["max"]) / 2 for w, k, d in pool if k == "money") / t
+    top = game_data.crate_value_scale(10**9)
     names = ["Rare Crate", "Epic Crate", "Legendary Crate", "Mythic Crate"]
-    vals = [avg(n) for n in names]
+    vals = [_crate_ev(n, top)[0] for n in names]
     assert vals == sorted(vals), dict(zip(names, vals))
     assert vals[-1] < 100_000_000, "Mythic average money must stay bounded"
+
+
+def test_crate_money_scales_with_level_and_stays_a_bonus():
+    """A crate drop must be worth about a catch or two per catch — never the
+    100×+ it was when crate money was a flat ◈ amount."""
+    lo, hi = game_data.crate_value_scale(1), game_data.crate_value_scale(10**9)
+    assert lo < hi and lo < 1_000, (lo, hi)
+    for biome, req in game_data.BIOME_LEVELS:
+        scale = game_data.crate_value_scale(req)
+        w = game_data.CRATE_TIER_WEIGHTS[game_data._crate_tier_for_biome(biome)]
+        wt = sum(w.values())
+        per_crate = sum(wr / wt * _crate_ev(game_data.RARITY_CRATE[r], scale)[0] for r, wr in w.items())
+        per_catch = per_crate * game_data.CRATE_DROP_CHANCE
+        assert per_catch <= 3 * scale, (biome, per_catch, scale)
+        gems_per_1k = 1000 * game_data.CRATE_DROP_CHANCE * sum(
+            wr / wt * _crate_ev(game_data.RARITY_CRATE[r], 1)[1] for r, wr in w.items())
+        assert gems_per_1k <= 120, (biome, gems_per_1k)
+    # the roll itself honours the scale
+    random.seed(1)
+    amounts = [game_data.open_crate("Common Crate", 100) for _ in range(400)]
+    money = [a["amount"] for a in amounts if a["type"] == "money"]
+    assert money and 500 <= min(money) and max(money) <= 4_000, (min(money), max(money))
+
+
+def test_myth_bounty_scales_with_creature_value():
+    cheap = min(game_data.MYTHIC_CREATURES, key=lambda n: game_data.MYTHIC_CREATURES[n]["value"])
+    rich = max(game_data.MYTHIC_CREATURES, key=lambda n: game_data.MYTHIC_CREATURES[n]["value"])
+    lo_c, hi_c = app.myth_repeat_bounty_range(cheap)
+    lo_r, hi_r = app.myth_repeat_bounty_range(rich)
+    assert hi_c < 100_000 and lo_r > 1_000_000, (lo_c, hi_c, lo_r, hi_r)
+    assert app.myth_first_kill_bounty(cheap) < 1_000_000
+    assert app.MYTH_FIRST_KILL_GEMS <= 100 and app.MYTH_REPEAT_GEMS_RANGE[1] <= 10
 
 
 # ── performance / responsiveness ──────────────────────────────

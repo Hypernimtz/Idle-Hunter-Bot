@@ -78,7 +78,7 @@ from game_data import (
     # Rules
     RULES,
     # Hunting Crates + crafting economy
-    CRATE_TIERS, CRATE_REWARDS, open_crate, roll_catch_drops,
+    CRATE_TIERS, CRATE_REWARDS, open_crate, crate_value_scale, roll_catch_drops,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
@@ -227,14 +227,22 @@ FIGHT_MONSTER_HP_BASE  = 74      # + biome tool-tier * FIGHT_MONSTER_HP_TIER
 FIGHT_MONSTER_HP_TIER  = 4
 FIGHT_SHOOT_AMMO       = 100     # rounds burned per Shoot (needs this many to fire)
 
-# A player's FIRST mythic kill ever is a career-defining moment and pays out
-# like one; every kill after that is real money but nowhere near repeatable-
-# forever money — a flat 100M/1000 gems per kill would let anyone who farms
-# a handful of mythics eclipse the entire rest of the economy.
-MYTH_FIRST_KILL_BOUNTY   = 100_000_000
-MYTH_FIRST_KILL_GEMS     = 1_000
-MYTH_REPEAT_BOUNTY_RANGE = (15_000_000, 25_000_000)
-MYTH_REPEAT_GEMS_RANGE   = (100, 250)
+# Bounties scale with the creature's own `value` (village ~22.5K … celestial
+# 10M), so a kill is worth a few minutes of hunting in THAT biome. 2026-09-27:
+# the old flat 100M/1000-gem first kill and 15–25M/100–250-gem repeats made
+# myth kills the #1 gem source and ~1,000× a village cryptid's worth.
+MYTH_FIRST_KILL_VALUE_MULT = 5          # first mythic kill ever: 5× the creature's value
+MYTH_FIRST_KILL_GEMS       = 100
+MYTH_REPEAT_VALUE_RANGE    = (0.8, 1.2) # every later kill: 0.8–1.2× its value
+MYTH_REPEAT_GEMS_RANGE     = (3, 10)
+
+def myth_first_kill_bounty(creature: str) -> int:
+    return int(MYTHIC_CREATURES.get(creature, {}).get("value", 0) * MYTH_FIRST_KILL_VALUE_MULT)
+
+def myth_repeat_bounty_range(creature: str) -> tuple[int, int]:
+    v = MYTHIC_CREATURES.get(creature, {}).get("value", 0)
+    lo, hi = MYTH_REPEAT_VALUE_RANGE
+    return int(v * lo), int(v * hi)
 MYTH_XP_MULT             = 2.0   # mythic kills should out-XP a lucky danger-encounter roll
 PRESTIGE_MIN_LEVEL    = 1000
 PRESTIGE_MIN_MONEY    = 1_000_000_000
@@ -5359,9 +5367,9 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
     stats   = data[user_id].setdefault("stats", {})
     is_first_kill = stats.get("myths_killed", 0) == 0
     if is_first_kill:
-        bounty, gems_gain = MYTH_FIRST_KILL_BOUNTY, MYTH_FIRST_KILL_GEMS
+        bounty, gems_gain = myth_first_kill_bounty(name), MYTH_FIRST_KILL_GEMS
     else:
-        bounty    = random.randint(*MYTH_REPEAT_BOUNTY_RANGE)
+        bounty    = random.randint(*myth_repeat_bounty_range(name))
         gems_gain = random.randint(*MYTH_REPEAT_GEMS_RANGE)
     xp_gain = int(c.get("xp", 0) * MYTH_XP_MULT)
     add_money(user_id, bounty, "myth kill")
@@ -11509,7 +11517,7 @@ def _resolve_crate_reward(user_id: str, crate_name: str) -> tuple[dict, dict, di
     the bonus-gemstone roll, quest progress and stat bookkeeping. Must be
     called from inside a ``user_transaction``. Shared by the manual /use crate
     flow and auto-open-on-pickup (Settings). Returns (reward, extras, hp_result)."""
-    reward = open_crate(crate_name)
+    reward = open_crate(crate_name, crate_value_scale(data[user_id].get("level", 1)))
 
     if reward["type"] == "money":
         add_money(user_id, reward["amount"], "crate")
@@ -16590,8 +16598,8 @@ def _info_render_myth(key: str):
         f"-# **Encounter:** ~{MYTH_ENCOUNTER_BASE*100:.1f}%–{MYTH_ENCOUNTER_MAX*100:.0f}% per hunt there "
         f"ambiently (scales with luck); a Global Sighting there makes it guaranteed-huntable "
         f"for {SIGHTING_ENCOUNTER_WINDOW_MIN // 60}h · **Rarity:** {RARITY_ICONS.get('mythic','')} Mythic",
-        f"-# **First-kill bounty:** ◈ {MYTH_FIRST_KILL_BOUNTY:,} · {emoji('gem')} {MYTH_FIRST_KILL_GEMS:,} · {int(c['xp']*MYTH_XP_MULT):,} XP\n"
-        f"-# **Repeat-kill bounty:** ◈ {MYTH_REPEAT_BOUNTY_RANGE[0]:,}–{MYTH_REPEAT_BOUNTY_RANGE[1]:,} · "
+        f"-# **First-ever mythic kill:** ◈ {myth_first_kill_bounty(key):,} · {emoji('gem')} {MYTH_FIRST_KILL_GEMS:,} · {int(c['xp']*MYTH_XP_MULT):,} XP\n"
+        f"-# **Bounty:** ◈ {myth_repeat_bounty_range(key)[0]:,}–{myth_repeat_bounty_range(key)[1]:,} · "
         f"{emoji('gem')} {MYTH_REPEAT_GEMS_RANGE[0]}–{MYTH_REPEAT_GEMS_RANGE[1]} · {int(c['xp']*MYTH_XP_MULT):,} XP",
         f"-# **Drops:** {c['drop']} (trophy, worth ◈ {c['drop_value']:,})",
         f"-# **The fight:** turn-based brawl — you at {FIGHT_PLAYER_HP} HP vs it at "
@@ -17722,6 +17730,7 @@ async def _currency_flow_block(currency: str, icon: str) -> str:
         f"{emoji('red_ball')} Spent {icon} {s['burned_all']:,} · Net {icon} {net_all:,}\n"
         f"**Last 24h:** {emoji('green_ball')} Earned {icon} {s['minted_24h']:,} · "
         f"{emoji('red_ball')} Spent {icon} {s['burned_24h']:,} · Net {icon} {net_24h:,}\n\n"
+        f"**Top earn sources (last 7 days):**\n{_src_lines(s.get('top_earn_7d', []))}\n"
         f"**Top earn sources (all-time):**\n{_src_lines(s['top_earn'])}\n"
         f"**Top spend sources (all-time):**\n{_src_lines(s['top_spend'])}"
     )
@@ -19217,9 +19226,10 @@ def _sighting_reveal_body(sg: dict) -> str:
         f"### {ph(emoji('earth'))} {where}\n\n"
         f"The tracks belong to...\n\n"
         f"# {ico} {name.upper()}\n\n"
-        f"**FIRST-KILL BOUNTY**\n"
-        f"◈ {MYTH_FIRST_KILL_BOUNTY:,}\n"
-        f"{emoji('gem')} {MYTH_FIRST_KILL_GEMS:,}\n"
+        f"**BOUNTY**\n"
+        f"◈ {myth_repeat_bounty_range(name)[0]:,}–{myth_repeat_bounty_range(name)[1]:,}\n"
+        f"{emoji('gem')} {MYTH_REPEAT_GEMS_RANGE[0]}–{MYTH_REPEAT_GEMS_RANGE[1]}\n"
+        f"-# Your first-ever mythic kill pays ◈ {myth_first_kill_bounty(name):,} + {emoji('gem')} {MYTH_FIRST_KILL_GEMS}\n"
         f"{emoji('trophy')} {c.get('drop', 'Unique Trophy')}\n\n"
         f"`⚔️` Hunters in **{where}** may now encounter it.\n"
         f"`⏳` Available for the next {window_h}h."

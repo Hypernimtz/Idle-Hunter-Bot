@@ -462,10 +462,20 @@ async def economy_summary(currency: str = "money", top_n: int = 5) -> dict:
         (currency, top_n),
     ) as cur:
         top_spend = await cur.fetchall()
+    # Last-7-days earn sources — all-time totals are dominated by history from
+    # before a rebalance, so this is the view that shows whether a nerf worked.
+    async with _pool.execute(
+        """SELECT source, SUM(delta) FROM economy_log
+           WHERE currency = ? AND delta > 0 AND created_at >= datetime('now', '-7 days')
+           GROUP BY source ORDER BY 2 DESC LIMIT ?""",
+        (currency, top_n),
+    ) as cur:
+        top_earn_7d = await cur.fetchall()
     return {
         "minted_all": minted_all, "burned_all": burned_all,
         "minted_24h": minted_24h, "burned_24h": burned_24h,
         "top_earn": list(top_earn), "top_spend": list(top_spend),
+        "top_earn_7d": list(top_earn_7d),
         "last_event_at": last_event_at,
     }
 

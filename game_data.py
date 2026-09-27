@@ -2781,15 +2781,19 @@ CRATE_RARITY = {k: v["rarity"] for k, v in CRATE_TIERS.items()}
 # Reward pool definitions
 # Each reward: (weight, type, data)
 # types: money, gems, perm_boost, temp_boost, title
+# money data: {"min_x": A, "max_x": B} — multiples of the OPENER's value scale
+#   (crate_value_scale(level): the average animal value of the best biome their
+#   level has unlocked). 2026-09-27: flat ◈ amounts made a village crate worth
+#   ~266 animals per catch and let crates mint most of the money supply.
 # perm_boost data: {"stat": "luck"|"sell"|"xp", "amount": N}
 # temp_boost data: {"stat": "luck"|"sell"|"xp", "amount": N, "minutes": M}
 # title data: {"title": "..."}
 
 CRATE_REWARDS = {
     "Common Crate": [
-        (40, "money",      {"min": 50_000,       "max": 500_000}),
-        (30, "money",      {"min": 100_000,      "max": 1_000_000}),
-        (15, "gems",       {"min": 8,            "max": 20}),
+        (40, "money",      {"min_x": 5,    "max_x": 20}),
+        (30, "money",      {"min_x": 10,   "max_x": 40}),
+        (5,  "gems",       {"min": 3,            "max": 8}),
         (10, "temp_boost", {"stat": "luck",  "amount": 10, "minutes": 15}),
         (10, "temp_boost", {"stat": "sell",  "amount": 10, "minutes": 15}),
         (10, "temp_boost", {"stat": "xp",    "amount": 10, "minutes": 15}),
@@ -2800,9 +2804,9 @@ CRATE_REWARDS = {
         (2,  "perm_boost", {"stat": "xp",    "amount": 1}),
     ],
     "Uncommon Crate": [
-        (38, "money",      {"min": 150_000,      "max": 1_500_000}),
-        (25, "money",      {"min": 300_000,      "max": 3_000_000}),
-        (15, "gems",       {"min": 12,           "max": 30}),
+        (38, "money",      {"min_x": 10,   "max_x": 40}),
+        (25, "money",      {"min_x": 20,   "max_x": 80}),
+        (6,  "gems",       {"min": 5,            "max": 12}),
         (12, "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 30}),
         (12, "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 30}),
         (10, "temp_boost", {"stat": "xp",    "amount": 15, "minutes": 30}),
@@ -2813,8 +2817,8 @@ CRATE_REWARDS = {
         (3,  "perm_boost", {"stat": "xp",    "amount": 1}),
     ],
     "Rare Crate": [
-        (30, "money",      {"min": 500_000,      "max": 5_000_000}),
-        (20, "gems",       {"min": 18,           "max": 45}),
+        (30, "money",      {"min_x": 40,   "max_x": 160}),
+        (8,  "gems",       {"min": 8,            "max": 18}),
         (15, "temp_boost", {"stat": "luck",  "amount": 20, "minutes": 45}),
         (15, "temp_boost", {"stat": "sell",  "amount": 20, "minutes": 45}),
         (10, "temp_boost", {"stat": "luck",  "amount": 30, "minutes": 90}),
@@ -2827,8 +2831,8 @@ CRATE_REWARDS = {
         (2,  "title",      {"title": "The Collector"}),
     ],
     "Epic Crate": [
-        (36, "money",      {"min": 2_000_000,    "max": 20_000_000}),
-        (26, "gems",       {"min": 35,           "max": 80}),
+        (36, "money",      {"min_x": 60,   "max_x": 240}),
+        (10, "gems",       {"min": 12,           "max": 30}),
         (15, "temp_boost", {"stat": "luck",  "amount": 40, "minutes": 90}),
         (15, "temp_boost", {"stat": "sell",  "amount": 40, "minutes": 90}),
         (10, "temp_boost", {"stat": "luck",  "amount": 50, "minutes": 120}),
@@ -2842,8 +2846,8 @@ CRATE_REWARDS = {
         (2,  "title",      {"title": "The Fortunate"}),
     ],
     "Legendary Crate": [
-        (38, "money",      {"min": 10_000_000,   "max": 100_000_000}),
-        (26, "gems",       {"min": 60,           "max": 140}),
+        (38, "money",      {"min_x": 150,  "max_x": 600}),
+        (12, "gems",       {"min": 20,           "max": 45}),
         (10, "temp_boost", {"stat": "luck",  "amount": 60, "minutes": 120}),
         (10, "temp_boost", {"stat": "sell",  "amount": 60, "minutes": 120}),
         (10, "temp_boost", {"stat": "luck",  "amount": 75, "minutes": 180}),
@@ -2858,8 +2862,8 @@ CRATE_REWARDS = {
         (2,  "title",      {"title": "Legendary Opener"}),
     ],
     "Mythic Crate": [
-        (30, "money",      {"min": 50_000_000,   "max": 500_000_000}),
-        (30, "gems",       {"min": 120,          "max": 300}),
+        (30, "money",      {"min_x": 400,  "max_x": 1_600}),
+        (15, "gems",       {"min": 40,           "max": 90}),
         (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
         (10, "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 180}),
         (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
@@ -2877,8 +2881,21 @@ CRATE_REWARDS = {
 }
 
 
-def open_crate(crate_name: str) -> dict:
-    """Roll a reward from the given crate. Returns reward dict."""
+def crate_value_scale(level: int) -> int:
+    """◈ value of one 'x' in a crate money roll: the average animal value of the
+    best biome the player's level has unlocked (village ~174 … celestial ~30,750),
+    so a crate is worth the same number of catches at every stage of the game."""
+    best = BIOME_LEVELS[0][0]
+    for biome, req in BIOME_LEVELS:
+        if level >= req:
+            best = biome
+    vals = [ANIMAL_DATA[a]["value"] for a in BIOME_ANIMALS.get(best, []) if a in ANIMAL_DATA]
+    return max(1, round(sum(vals) / len(vals))) if vals else 1
+
+
+def open_crate(crate_name: str, value_scale: int = 1) -> dict:
+    """Roll a reward from the given crate. Returns reward dict. Money rewards
+    are multiples of ``value_scale`` (see crate_value_scale)."""
     pool = CRATE_REWARDS.get(crate_name, [])
     if not pool:
         return {"type": "money", "amount": 0}
@@ -2888,6 +2905,9 @@ def open_crate(crate_name: str) -> dict:
     _, rtype, rdata = chosen
 
     if rtype == "money":
+        if "min_x" in rdata:
+            mult = _random.uniform(rdata["min_x"], rdata["max_x"])
+            return {"type": "money", "amount": max(1, int(mult * max(1, value_scale)))}
         return {"type": "money", "amount": _random.randint(rdata["min"], rdata["max"])}
     if rtype == "gems":
         return {"type": "gems", "amount": _random.randint(rdata["min"], rdata["max"])}
