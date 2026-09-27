@@ -23,9 +23,9 @@ permissions:
 env:
   PANEL_HOST: https://panel.xsystemshosting.com
   SERVER_ID: 994c56ab
-  # Folder on the server that holds app.py. Override with a repo variable BOT_DIR if the
-  # bot isn't in the server's root.
-  BOT_DIR: ${{ vars.BOT_DIR || '/' }}
+  # Optional repo variable BOT_DIR: the server folder that holds app.py. When unset (or wrong),
+  # the deploy looks for app.py in /, /root and /home/container and uses the first match.
+  BOT_DIR: ${{ vars.BOT_DIR || '' }}
 
 jobs:
   test:
@@ -61,7 +61,9 @@ jobs:
         run: |
           for kind in wings elytra; do
             api="$PANEL_HOST/api/client/servers/$kind/$SERVER_ID"
-            code=$(curl -s -o /dev/null -w '%{http_code}'               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json" "$api/resources")
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $PANEL_API_KEY" \
+              -H "Accept: application/json" "$api/resources")
             echo "$kind -> HTTP $code"
             if [ "$code" = "200" ]; then
               echo "API=$api" >> "$GITHUB_ENV"
@@ -71,23 +73,51 @@ jobs:
           echo "::error::Neither daemon prefix answered 200 — check the API key's access to server $SERVER_ID."
           exit 1
 
+      - name: Locate the bot folder on the server
+        # Only ever overwrites a folder that already contains app.py — never creates a new copy.
+        run: |
+          for dir in "$BOT_DIR" / /root /home/container; do
+            [ -n "$dir" ] || continue
+            if curl -sS -G                 -H "Authorization: Bearer $PANEL_API_KEY"                 -H "Accept: application/json"                 --data-urlencode "directory=$dir"                 "$API/files/list" | jq -e '.data[]?.attributes | select(.name == "app.py")' > /dev/null; then
+              echo "Found app.py in $dir"
+              echo "TARGET_DIR=$dir" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "no app.py in $dir"
+          done
+          echo "::error::Could not find app.py on the server. Set the BOT_DIR repo variable to its folder."
+          exit 1
+
       - name: Upload source files
         run: |
           for f in app.py backend.py game_data.py leaderboard_push.py requirements.txt; do
-            path="${BOT_DIR%/}/$f"
+            path="${TARGET_DIR%/}/$f"
             echo "Uploading $f -> $path"
-            curl -sS --fail-with-body -X POST               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json"               -H "Content-Type: text/plain"               --data-binary "@$f"               "$API/files/write?file=$(printf '%s' "$path" | jq -sRr @uri)"
+            curl -sS --fail-with-body -X POST \
+              -H "Authorization: Bearer $PANEL_API_KEY" \
+              -H "Accept: application/json" \
+              -H "Content-Type: text/plain" \
+              --data-binary "@$f" \
+              "$API/files/write?file=$(printf '%s' "$path" | jq -sRr @uri)"
           done
 
       - name: Restart the server
         run: |
-          curl -sS --fail-with-body -X POST             -H "Authorization: Bearer $PANEL_API_KEY"             -H "Accept: application/json"             -H "Content-Type: application/json"             -d '{"signal":"restart"}'             "$API/power"
+          curl -sS --fail-with-body -X POST \
+            -H "Authorization: Bearer $PANEL_API_KEY" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -d '{"signal":"restart"}' \
+            "$API/power"
 
       - name: Wait for the bot to come back up
         run: |
           for i in $(seq 1 24); do
             sleep 5
-            state=$(curl -sS               -H "Authorization: Bearer $PANEL_API_KEY"               -H "Accept: application/json"               "$API/resources" | jq -r '.attributes.current_state // "unknown"')
+            state=$(curl -sS \
+              -H "Authorization: Bearer $PANEL_API_KEY" \
+              -H "Accept: application/json" \
+              "$API/resources" | jq -r '.attributes.current_state // "unknown"')
             echo "state: $state"
             if [ "$state" = "running" ]; then exit 0; fi
           done
