@@ -4374,6 +4374,10 @@ ITEMS = {
         "emoji": "🎁", "tradable": False,
         "description": "A treat you bought for yourself. Opens into a small random reward.",
     },
+    "Scratch Pad": {
+        "emoji": "🎫", "tradable": False,
+        "description": "A 4x4 scratch card — 5 of the 16 panels hide a prize. Scratch panels one at a time to reveal them all.",
+    },
     "Iron Plating": {
         "emoji": "🛡️", "tradable": True,
         "description": "Strap it on before a fight — cuts incoming damage for a while, in any danger encounter.",
@@ -4454,12 +4458,50 @@ HUNTERS_STIM_WIN_CHANCE     = 0.10   # per won danger encounter
 DANGER_WHISTLE_WIN_CHANCE   = 0.20   # per won danger encounter
 CAMP_RATIONS_COLLECT_CHANCE = 0.08   # per idle-camp haul collect
 
+# ── Scratch Pad — a 4x4 (16-cell) scratch card, 5 cells hide a prize, 11 are
+# blank. Every prize is eventually found (no risk of missing one — the fun is
+# the reveal, not the odds), so the price must sit ABOVE the guaranteed total
+# payout or repeated buy-and-scratch would mint free money. Each cell's prize
+# uses the same (weight, type, data) shape as CRATE_REWARDS so the resolver
+# can be shared; money is a value_scale multiple, same convention as crates.
+SCRATCH_PAD_GRID_SIZE  = 16
+SCRATCH_PAD_PRIZE_COUNT = 5
+SCRATCH_PAD_PRICE_X    = 14   # ~17% house edge over the ~11.6x money EV below
+SCRATCH_PAD_REWARDS = [
+    (60, "money",      {"min_x": 1, "max_x": 3}),
+    (25, "money",      {"min_x": 3, "max_x": 6}),
+    (10, "gems",       {"min": 2, "max": 5}),
+    (5,  "temp_boost", {"stat": "luck", "amount": 15, "minutes": 15}),
+]
+
+def roll_scratch_pad_prize(value_scale: int = 1) -> dict:
+    """Roll one of the Scratch Pad's 5 hidden prizes. Same reward-dict shape
+    as open_crate()'s money/gems/temp_boost branches."""
+    weights = [w for w, *_ in SCRATCH_PAD_REWARDS]
+    _, rtype, rdata = _random.choices(SCRATCH_PAD_REWARDS, weights=weights, k=1)[0]
+    if rtype == "money":
+        mult = _random.uniform(rdata["min_x"], rdata["max_x"])
+        return {"type": "money", "amount": max(1, int(mult * max(1, value_scale)))}
+    if rtype == "gems":
+        return {"type": "gems", "amount": _random.randint(rdata["min"], rdata["max"])}
+    if rtype == "temp_boost":
+        return {"type": "temp_boost", "stat": rdata["stat"],
+                "amount": rdata["amount"], "minutes": rdata["minutes"]}
+    return {"type": "money", "amount": 1}
+
+# ── /vote — discordbotlist.com upvote reward ─────────────────────────────
+VOTE_URL             = "https://discordbotlist.com/bots/idle-hunter/upvote"
+VOTE_COOLDOWN_HOURS  = 12   # matches discordbotlist's real per-vote cooldown
+VOTE_REWARD_CRATE    = "Rare Crate"
+VOTE_REWARD_MONEY_X  = 3    # multiples of crate_value_scale(level)
+
 # Gold-shop items price_x (see healing_item_price()/item_shop_price() in app.py)
 ITEM_GOLD_SHOP = {
     "Smoke Bomb":   {"price_x": 1.5},
     "Ammo Pouch":   {"price_x": 1.0},
     "Camp Rations": {"price_x": 1.5},
     "Gift Box":     {"price_x": 3.0},
+    "Scratch Pad":  {"price_x": SCRATCH_PAD_PRICE_X},
 }
 # Gem-shop items — flat gem price. Time-savers only, never power (see plan rule 5).
 ITEM_GEM_SHOP = {

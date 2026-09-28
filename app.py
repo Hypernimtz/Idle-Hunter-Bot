@@ -94,6 +94,9 @@ from game_data import (
     WEATHER_VANE_XP, WEATHER_VANE_MINUTES, WAR_HORN_LUCK, WAR_HORN_HOURS, HAUL_WAGON_HOURS,
     SIGNAL_FLARE_TRACK_CHANCE, HUNTERS_STIM_WIN_CHANCE, DANGER_WHISTLE_WIN_CHANCE,
     CAMP_RATIONS_COLLECT_CHANCE,
+    SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_PRICE_X,
+    SCRATCH_PAD_REWARDS, roll_scratch_pad_prize,
+    VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X,
     # Quests
     QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
     WEEKLY_QUEST_TEMPLATES, QUESTS_PER_WEEK, WEEKLY_QUESTS_MAX, DAILY_QUEST_MILESTONES,
@@ -1606,7 +1609,7 @@ def init_user(user_id: str):
         # past the 500 Slingshot, so the FIRST tool purchase is actually
         # funded by hunting, not by the login bonus.
         "money": 150, "level": 1, "xp": 0, "inv": [], "_pending_sell": None,
-        "gems": 100, "premium": False, "hunt_cd": 0, "daily_cd": 0,
+        "gems": 100, "premium": False, "hunt_cd": 0, "daily_cd": 0, "vote_cd": 0,
         "color": "green", "biome": "village", "tribe": None, "tribe_inv": None,
         "verify": init_verify(user_id),
         "boosts": {"luck": 0, "sell": 0, "xp": 0, "crate_luck": 0},
@@ -1755,6 +1758,8 @@ def init_user(user_id: str):
     data[user_id].setdefault("craft_queue", [])        # [{rarity, done_ts}] crystal crafts
     data[user_id].setdefault("items", {})              # generic consumables: name -> count
     data[user_id].setdefault("item_buffs", {})         # buff key -> expiry ts (Iron Plating, Hunter's Stim)
+    data[user_id].setdefault("scratch_pad", None)      # active Scratch Pad game state, or None
+    data[user_id].setdefault("vote_cd", 0)             # epoch ts /vote reward is next claimable
 
     for k, v in {
         "ammo_used": 0, "lottery_wins": 0, "tools_used": [], "events_completed": 0,
@@ -6471,6 +6476,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Collection",     "emoji": emoji_partial('book'),                  "value": "guide",       "description": "Species, Mythicals, trophies & world completion"},
             {"label": "Refer a Friend", "emoji": emoji_partial('handshake'),                  "value": "refer",       "description": "Your referral code — you both earn"},
             {"label": "Market",         "emoji": emoji_partial("shop"),           "value": "market",      "description": "Buy & sell crates and Mythical trophies"},
+            {"label": "Vote",           "emoji": emoji_partial("ballot_box"),     "value": "vote",        "description": "Vote for Idle Hunter and claim a reward"},
         ]
     }]}
 
@@ -11518,6 +11524,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         await smart_update_v2(interaction, build_settings_components(user_id))
     elif panel == "market":
         await smart_update_v2(interaction, build_market_components(user_id))
+    elif panel == "vote":
+        await smart_update_v2(interaction, build_vote_components(user_id))
     else:
         await smart_update_v2(interaction, build_menu_components(user_id, dn))
 
@@ -11752,6 +11760,34 @@ async def _tree_gate(interaction: discord.Interaction) -> bool:
 bot.tree.interaction_check = _tree_gate
 
 
+def _apply_reward_simple(user_id: str, reward: dict, source: str = "reward") -> None:
+    """Apply a money/gems/perm_boost/temp_boost/title/item reward dict (the
+    shape open_crate() and roll_scratch_pad_prize() both produce) to a user.
+    Shared so crate opening and the Scratch Pad don't duplicate this branch
+    list. ``source`` is the economy-ledger label (kept distinct per caller so
+    /bot economy's per-source breakdown doesn't blur crates into scratch
+    pads or vice versa)."""
+    if reward["type"] == "money":
+        add_money(user_id, reward["amount"], source)
+        data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + reward["amount"]
+    elif reward["type"] == "gems":
+        add_gems(user_id, reward["amount"], source)
+    elif reward["type"] == "perm_boost":
+        add_personal_boost(user_id, reward["stat"], reward["amount"])
+    elif reward["type"] == "temp_boost":
+        _append_temp_boost(data[user_id], reward["stat"], reward["amount"], reward["minutes"])
+    elif reward["type"] == "title":
+        title = reward["title"]
+        earned = data[user_id].setdefault("earned_titles", [])
+        if title not in earned:
+            earned.append(title)
+    elif reward["type"] == "item":
+        if reward.get("bag") == "heal":
+            hi = data[user_id].setdefault("healing_inv", {})
+            hi[reward["name"]] = hi.get(reward["name"], 0) + reward.get("qty", 1)
+        else:
+            add_item(user_id, reward["name"], reward.get("qty", 1))
+
 def _resolve_crate_reward(user_id: str, crate_name: str) -> tuple[dict, dict, dict]:
     """Apply a single crate's reward to user_id — money/gems/boost/title plus
     the bonus-gemstone roll, quest progress and stat bookkeeping. Must be
@@ -11766,33 +11802,7 @@ def _resolve_crate_reward(user_id: str, crate_name: str) -> tuple[dict, dict, di
         reward["amount"] *= 2
         data[user_id]["_lucky_hammer_active"] = False
 
-    if reward["type"] == "money":
-        add_money(user_id, reward["amount"], "crate")
-        data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + reward["amount"]
-    elif reward["type"] == "gems":
-        add_gems(user_id, reward["amount"], "crate")
-    elif reward["type"] == "perm_boost":
-        add_personal_boost(user_id, reward["stat"], reward["amount"])
-    elif reward["type"] == "temp_boost":
-        tb = data[user_id].setdefault("temp_boosts", [])
-        tb.append({
-            "stat": reward["stat"],
-            "amount": reward["amount"],
-            "expires_at": time.time() + reward["minutes"] * 60,
-        })
-        # Prune expired entries
-        data[user_id]["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
-    elif reward["type"] == "title":
-        title = reward["title"]
-        earned = data[user_id].setdefault("earned_titles", [])
-        if title not in earned:
-            earned.append(title)
-    elif reward["type"] == "item":
-        if reward.get("bag") == "heal":
-            hi = data[user_id].setdefault("healing_inv", {})
-            hi[reward["name"]] = hi.get(reward["name"], 0) + reward.get("qty", 1)
-        else:
-            add_item(user_id, reward["name"], reward.get("qty", 1))
+    _apply_reward_simple(user_id, reward, "crate")
 
     data[user_id]["stats"]["crates_opened"] = data[user_id]["stats"].get("crates_opened", 0) + 1
     _hp_result = hunters_path_maybe_complete(user_id)
@@ -11836,6 +11846,140 @@ async def _open_crate_and_show(interaction, user_id: str, crate_name: str):
     await smart_update_v2(interaction, build_crate_result_components(user_id, crate_name, reward, extras))
     await _hunters_path_notify(interaction, user_id, _hp_result)
     await check_achievements_and_badges(interaction, user_id)
+
+# ─────────────────────────────────────────────
+# SCRATCH PAD  ·  a 4x4 scratch card, 5 of 16 panels hide a prize
+# ─────────────────────────────────────────────
+# data[uid]["scratch_pad"] = {"cells": [reward_dict|None, ...16], "revealed":
+# [bool, ...16], "found": int}. Consumed from `items` the moment it's started
+# (like opening a crate), not when it's finished — a half-scratched pad can't
+# be "returned" by abandoning it.
+
+def start_scratch_pad(user_id: str) -> dict:
+    """Roll a fresh 4x4 board and store it as the user's active game. Mutates
+    — call inside a ``user_transaction``."""
+    level = data[user_id].get("level", 1)
+    scale = crate_value_scale(level)
+    prize_positions = random.sample(range(SCRATCH_PAD_GRID_SIZE), SCRATCH_PAD_PRIZE_COUNT)
+    cells: list = [None] * SCRATCH_PAD_GRID_SIZE
+    for pos in prize_positions:
+        cells[pos] = roll_scratch_pad_prize(scale)
+    board = {"cells": cells, "revealed": [False] * SCRATCH_PAD_GRID_SIZE, "found": 0}
+    data[user_id]["scratch_pad"] = board
+    mark_user_dirty(user_id)
+    return board
+
+def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
+    """Reveal one panel, applying its prize if it has one. Mutates — call
+    inside a ``user_transaction``. Returns {"kind": "revealed"|"done"|"none",
+    "prize": reward_dict|None, "all_prizes": [reward_dict, ...] (only on "done")}."""
+    board = data[user_id].get("scratch_pad")
+    if not board or not (0 <= idx < SCRATCH_PAD_GRID_SIZE) or board["revealed"][idx]:
+        return {"kind": "none", "prize": None}
+    board["revealed"][idx] = True
+    prize = board["cells"][idx]
+    if prize is not None:
+        _apply_reward_simple(user_id, prize, "scratch_pad")
+        board["found"] += 1
+    mark_user_dirty(user_id)
+    done = board["found"] >= SCRATCH_PAD_PRIZE_COUNT
+    if done:
+        # found == PRIZE_COUNT means every prize cell (there are only that
+        # many) has now been revealed — safe to collect them all here.
+        all_prizes = [c for c in board["cells"] if c is not None]
+        data[user_id]["scratch_pad"] = None
+        return {"kind": "done", "prize": prize, "all_prizes": all_prizes}
+    return {"kind": "revealed", "prize": prize}
+
+def build_scratch_pad_components(user_id: str, last: dict | None = None) -> list:
+    board = data[user_id].get("scratch_pad")
+    owned = item_count(user_id, "Scratch Pad")
+
+    if not board and last and last.get("kind") == "done":
+        lines = "\n".join(f"-# {_fmt_reward(p)}" for p in last.get("all_prizes", []))
+        content = (
+            f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad — Complete!\n"
+            f"All **{SCRATCH_PAD_PRIZE_COUNT}** prizes found:\n{lines}"
+        )
+        btns = []
+        if owned > 0:
+            btns.append({"type": 2, "style": 3, "label": "Scratch Another",
+                         "custom_id": f"scratch:again:{user_id}"})
+        btns.append({"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}"})
+        return [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False, "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": btns},
+        ]}]
+
+    if not board:
+        content = (
+            f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad\n"
+            f"-# You don't have one scratching right now.\n"
+            f"-# You own **{owned}** — use one with `/use`."
+        )
+        btns = [{"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}"}]
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+            {"type": 10, "content": content},
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": btns},
+        ]}]
+
+    last_line = ""
+    if last and last.get("kind") != "none":
+        if last["prize"] is not None:
+            last_line = f"\n-# Just revealed: **{_fmt_reward(last['prize'])}**!"
+        else:
+            last_line = "\n-# Just revealed: nothing this time."
+
+    header = (
+        f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad\n"
+        f"5 of these 16 panels hide a prize — scratch them all to find every one.\n"
+        f"-# Prizes found: **{board['found']}/{SCRATCH_PAD_PRIZE_COUNT}**{last_line}"
+    )
+    rows: list = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
+    for r in range(4):
+        row_btns = []
+        for c in range(4):
+            idx = r * 4 + c
+            revealed = board["revealed"][idx]
+            prize = board["cells"][idx]
+            if not revealed:
+                row_btns.append({"type": 2, "style": 1, "label": "?",
+                                  "custom_id": f"scratch:reveal:{idx}:{user_id}"})
+            elif prize is not None:
+                icon = {"money": "◈", "gems": emoji("gem"), "temp_boost": emoji("clock")}.get(prize["type"], "★")
+                row_btns.append({"type": 2, "style": 3, "label": icon, "disabled": True,
+                                  "custom_id": f"scratch:noop:{idx}:{user_id}"})
+            else:
+                row_btns.append({"type": 2, "style": 2, "label": "❌", "disabled": True,
+                                  "custom_id": f"scratch:noop:{idx}:{user_id}"})
+        rows.append({"type": 1, "components": row_btns})
+
+    rows.append({"type": 14, "divider": True, "spacing": 1})
+    rows.append({"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}"},
+    ]})
+    return [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False, "components": rows}]
+
+async def _start_scratch_pad_and_show(interaction, user_id: str):
+    have = True
+    async with user_transaction(user_id):
+        # Check + consume under the lock, same double-click guard as crates.
+        it = data[user_id].get("items", {})
+        if it.get("Scratch Pad", 0) <= 0:
+            have = False
+        elif data[user_id].get("scratch_pad"):
+            pass   # already have one going — just show it, don't consume another
+        else:
+            it["Scratch Pad"] -= 1
+            if it["Scratch Pad"] <= 0:
+                del it["Scratch Pad"]
+            start_scratch_pad(user_id)
+    if not have:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **Scratch Pad**.", 0xE74C3C)
+        return
+    await smart_update_v2(interaction, build_scratch_pad_components(user_id))
 
 # ─────────────────────────────────────────────
 # SUGGESTION / REPORT / APPEAL / BLACKJACK STORES
@@ -12554,6 +12698,27 @@ async def _dispatch_component(interaction: discord.Interaction):
             await _open_crate_and_show(interaction, owner_id, crate_name)
             return
 
+        return
+
+    # ── SCRATCH PAD ────────────────────────────
+    if parts[0] == "scratch":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        if parts[1] == "noop":
+            return
+        if parts[1] == "again":
+            await _start_scratch_pad_and_show(interaction, owner_id)
+            return
+        if parts[1] == "reveal":
+            idx = int(parts[2])
+            async with user_transaction(owner_id):
+                last = reveal_scratch_pad_cell(owner_id, idx)
+            await smart_update_v2(interaction, build_scratch_pad_components(owner_id, last))
+            if last.get("kind") == "done":
+                await check_achievements_and_badges(interaction, owner_id)
+            return
         return
 
     # ── CRAFT (shards → crystals) ─────────────
@@ -13702,6 +13867,30 @@ async def _dispatch_component(interaction: discord.Interaction):
         return
 
     # ── DAILY ─────────────────────────────────
+    if parts[0] == "vote" and parts[1] == "claim":
+        owner_id = parts[2]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        claimed = False
+        money_amt = 0
+        if time.time() >= data[owner_id].get("vote_cd", 0):
+            async with user_transaction(owner_id):
+                # Re-check under the lock so a double-click can't claim twice.
+                if time.time() >= data[owner_id].get("vote_cd", 0):
+                    level = data[owner_id].get("level", 1)
+                    money_amt = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
+                    add_money(owner_id, money_amt, "vote")
+                    data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + money_amt
+                    ci = data[owner_id].setdefault("crate_inv", {})
+                    ci[VOTE_REWARD_CRATE] = ci.get(VOTE_REWARD_CRATE, 0) + 1
+                    data[owner_id]["vote_cd"] = time.time() + VOTE_COOLDOWN_HOURS * 3600
+                    claimed = True
+        await smart_update_v2(interaction, build_vote_components(owner_id, claimed, money_amt))
+        if claimed:
+            await check_achievements_and_badges(interaction, owner_id)
+        return
+
     if parts[0] == "daily" and parts[1] == "claim":
         owner_id = parts[2]
         if str(interaction.user.id) != owner_id:
@@ -16229,6 +16418,52 @@ async def daily_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_daily_components(user_id))
     await check_everything(interaction, user_id)
 
+def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 0) -> list:
+    now = time.time()
+    ready = now >= data[user_id].get("vote_cd", 0)
+    if claimed:
+        body = (
+            f"### {emoji('ballot_box')} Vote Reward Claimed!\n"
+            f"You received **{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE}** "
+            f"and **◈ {money_amt:,}**!\n"
+            f"-# {emoji('star')} Thanks for the support — come back in **{VOTE_COOLDOWN_HOURS}h**."
+        )
+    elif not ready:
+        body = (
+            f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
+            f"You've already claimed your vote reward.\n"
+            f"-# Next reward <t:{int(data[user_id]['vote_cd'])}:R>"
+        )
+    else:
+        level = data[user_id].get("level", 1)
+        preview_money = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
+        body = (
+            f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
+            f"Vote on discordbotlist.com, then come back and claim your reward:\n"
+            f"-# {CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{preview_money:,}\n"
+            f"-# {emoji('clock')} One claim every **{VOTE_COOLDOWN_HOURS}h**."
+        )
+    btns = [{"type": 2, "style": 5, "label": "Vote on discordbotlist.com",
+             "emoji": emoji_partial("ballot_box"), "url": VOTE_URL}]
+    if ready and not claimed:
+        btns.append({"type": 2, "style": 3, "label": "Claim Reward",
+                     "emoji": emoji_partial("star"), "custom_id": f"vote:claim:{user_id}"})
+    btns.append({"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}"})
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": body},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": btns},
+    ]}]
+
+@bot.tree.command(name="vote", description="Vote for Idle Hunter and claim a reward")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def vote_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    await send_v2_followup(interaction, build_vote_components(user_id))
+    await check_everything(interaction, user_id)
+
 @bot.tree.command(name="prestige", description="Reset for a permanent boost multiplier")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -17394,6 +17629,7 @@ _ITEM_SOURCE_LINES = {
     "Ammo Pouch":       "Gold shop · also drops from Common Crates",
     "Camp Rations":     "Gold shop · a small chance per Hunting Camp collect",
     "Gift Box":         "Gold shop",
+    "Scratch Pad":      "Gold shop",
     "Iron Plating":     "Rare+ Crates · craft 3 Rare Crystals in `/craft`",
     "Hunter's Stim":    "Epic+ Crates · winning a danger encounter (~10%)",
     "Signal Flare":     "Locating a mythic while tracking (~15%) · Rare Crates",
@@ -17798,6 +18034,9 @@ async def use_cmd(interaction: discord.Interaction, item: str):
         await _use_healing_item_and_show(interaction, user_id, heal_name)
         return
     item_name = _canon_item_name(item)
+    if item_name == "Scratch Pad":
+        await _start_scratch_pad_and_show(interaction, user_id)
+        return
     if item_name:
         await _use_generic_item_and_show(interaction, user_id, item_name)
         return
