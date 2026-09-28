@@ -591,6 +591,35 @@ EMOJI = {
     "green_bar_half_right": "<:green_bar_half_right:1548101134294581380>",
     "blank_icon":           "<:blank_icon:1549564556555194438>",
     "green_bar_half_whole": "<:green_bar_half_whole:1548101786127306914>",
+
+    # ── Consumable items (2026-09-28) — unicode placeholders. Name an
+    # uploaded emoji exactly like one of these keys and adopt_named_emojis()
+    # picks it up automatically on the next bot restart (see that function's
+    # docstring) — resync_item_emojis() then refreshes ITEMS/HEALING_ITEMS'
+    # cached "emoji" fields from here, since those are built once at import
+    # (before the bot has fetched its emoji list) and won't see this dict's
+    # in-place update on their own.
+    "smoke_bomb":       "💨",
+    "ammo_pouch":       "🎒",
+    "camp_rations":     "🍖",
+    "gift_box":         "🎁",
+    "iron_plating":     "🛡️",
+    "hunters_stim":     "💉",
+    "signal_flare":     "🔦",
+    "bloodhound_scent": "🐾",
+    "scent_lure":       "🧉",
+    "danger_whistle":   "📯",
+    "rare_bait":        "🪱",
+    "trail_map":        "🗺️",
+    "weather_vane":     "🌬️",
+    "forge_coal":       "⚫",
+    "lucky_hammer":     "🔨",
+    "war_horn":         "📣",
+    "haul_wagon":       "🛒",
+    "scratch_pad":      "🎫",
+    "bandage":          "🩹",
+    "first_aid_kit":    "🧰",
+    "regen_tonic":      "🧪",
 }
 
 # Uploaded 2026-09-23 (application emoji, named exactly like the key).
@@ -4523,6 +4552,38 @@ CRAFT_ITEM_RECIPES = {
     "Lucky Hammer":     {"kind": "crystal", "rarity": "legendary", "cost": 1},
     "Bloodhound Scent": {"kind": "shard",   "rarity": "epic",      "cost": 5},
 }
+
+# name -> EMOJI registry key, for every ITEMS/HEALING_ITEMS entry. Field
+# Medkit reuses the pre-existing "potion_bottle" key rather than a new one —
+# it already had its own one-off adopt-by-name line below before this table
+# existed.
+ITEM_EMOJI_KEYS = {
+    "Smoke Bomb": "smoke_bomb", "Ammo Pouch": "ammo_pouch", "Camp Rations": "camp_rations",
+    "Gift Box": "gift_box", "Iron Plating": "iron_plating", "Hunter's Stim": "hunters_stim",
+    "Signal Flare": "signal_flare", "Bloodhound Scent": "bloodhound_scent",
+    "Scent Lure": "scent_lure", "Danger Whistle": "danger_whistle", "Rare Bait": "rare_bait",
+    "Trail Map": "trail_map", "Weather Vane": "weather_vane", "Forge Coal": "forge_coal",
+    "Lucky Hammer": "lucky_hammer", "War Horn": "war_horn", "Haul Wagon": "haul_wagon",
+    "Scratch Pad": "scratch_pad",
+    "Bandage": "bandage", "First Aid Kit": "first_aid_kit", "Field Medkit": "potion_bottle",
+    "Regen Tonic": "regen_tonic",
+}
+
+def resync_item_emojis() -> list[str]:
+    """Refresh ITEMS/HEALING_ITEMS' cached "emoji" fields from the EMOJI
+    registry. Those dicts are built once at import time — before the bot has
+    logged in and fetched its uploaded emoji — so a later adopt_named_emojis()
+    call mutating EMOJI in place doesn't reach them on its own. Call this
+    right after adopt_named_emojis() in on_ready, every restart. Returns the
+    item names whose emoji actually changed."""
+    changed = []
+    for name, key in ITEM_EMOJI_KEYS.items():
+        target = ITEMS.get(name) or HEALING_ITEMS.get(name)
+        new_val = EMOJI.get(key)
+        if target is not None and new_val and target.get("emoji") != new_val:
+            target["emoji"] = new_val
+            changed.append(name)
+    return changed
 
 # ── The trial weapon (first-session onboarding, Plan B) ──
 # Rookie Rush (a separate 15-min auto-granted xp/luck/sell boost) was folded

@@ -287,6 +287,43 @@ def test_info_category_includes_items():
 
 
 # ─────────────────────────────────────────────────────────────
+# Emoji registry / auto-adopt resync (2026-09-28)
+# ─────────────────────────────────────────────────────────────
+def test_every_item_and_healing_item_has_an_emoji_registry_key():
+    for name in list(game_data.ITEMS) + list(game_data.HEALING_ITEMS):
+        assert name in game_data.ITEM_EMOJI_KEYS, name
+        key = game_data.ITEM_EMOJI_KEYS[name]
+        assert key in game_data.EMOJI, (name, key)
+
+
+def test_resync_item_emojis_picks_up_adopted_custom_emoji():
+    orig_smoke = game_data.EMOJI["smoke_bomb"]
+    orig_item_emoji = dict(game_data.ITEMS["Smoke Bomb"])
+    try:
+        game_data.EMOJI["smoke_bomb"] = "<:smoke_bomb:123456789012345678>"
+        changed = game_data.resync_item_emojis()
+        assert "Smoke Bomb" in changed
+        assert app.ITEMS["Smoke Bomb"]["emoji"] == "<:smoke_bomb:123456789012345678>"
+    finally:
+        game_data.EMOJI["smoke_bomb"] = orig_smoke
+        game_data.ITEMS["Smoke Bomb"].update(orig_item_emoji)
+
+
+def test_resync_item_emojis_leaves_scratch_pad_on_unicode_placeholder():
+    """No custom Scratch Pad emoji has been uploaded yet — resync must be a
+    no-op for it until one is adopted under the "scratch_pad" key."""
+    before = app.ITEMS["Scratch Pad"]["emoji"]
+    game_data.resync_item_emojis()
+    assert app.ITEMS["Scratch Pad"]["emoji"] == before == "🎫"
+
+
+def test_field_medkit_maps_to_existing_potion_bottle_key():
+    """Field Medkit had a one-off adopt-by-name line before ITEM_EMOJI_KEYS
+    existed — it must keep using "potion_bottle", not a new "field_medkit" key."""
+    assert game_data.ITEM_EMOJI_KEYS["Field Medkit"] == "potion_bottle"
+
+
+# ─────────────────────────────────────────────────────────────
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

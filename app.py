@@ -68,6 +68,7 @@ from game_data import (
     RARITY_ICONS, RARITY_KEYS, SHARD_ICONS, CRYSTAL_ICONS, GEMSTONE_ICONS,
     # Emojis
     UPGRADE_EMOJI, TRIBE_EMOJIS, USER_EMOJIS, EMOJI, emoji, emoji_partial, adopt_named_emojis,
+    ITEM_EMOJI_KEYS, resync_item_emojis,
     # Tips
     TIPS,
     # Commands
@@ -20927,6 +20928,12 @@ async def on_ready():
         if _adopted:
             print(f"🎨 Adopted {len(_adopted)} uploaded emoji by name: {sorted(_adopted)[:20]}"
                   + (" …" if len(_adopted) > 20 else ""))
+        # ITEMS/HEALING_ITEMS cache their "emoji" field at import time, before
+        # the fetch above ran — refresh them now so a newly-adopted custom
+        # emoji actually shows up this session, not just in the EMOJI dict.
+        _item_resynced = resync_item_emojis()
+        if _item_resynced:
+            print(f"🎨 Resynced {len(_item_resynced)} item emoji from the registry: {sorted(_item_resynced)}")
         _missing = sorted({
             eid for k in EMOJI
             if (eid := emoji_partial(k).get("id")) and eid not in _usable_emoji_ids
