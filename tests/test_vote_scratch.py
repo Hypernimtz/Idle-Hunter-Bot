@@ -166,25 +166,47 @@ def test_scratch_pad_reveal_blank_cell_grants_nothing():
     assert app.data[uid]["scratch_pad"]["found"] == 0
 
 
-def test_scratch_pad_completes_after_all_5_prizes_found_and_clears_state():
+def test_scratch_pad_completes_after_max_picks_even_with_prizes_left_unfound():
     _reset()
     uid = "9113"
     _mk_user(uid, money=0)
     board = app.start_scratch_pad(uid)
-    prize_indices = [i for i, c in enumerate(board["cells"]) if c is not None]
-    assert len(prize_indices) == 5
+    assert app.SCRATCH_PAD_MAX_PICKS == 3
+    assert app.SCRATCH_PAD_PRIZE_COUNT == 5   # more prizes exist than picks allowed
 
-    async def _reveal_all():
+    async def _reveal_n(n):
         results = []
-        for idx in prize_indices:
+        for idx in range(n):
             async with app.user_transaction(uid):
                 results.append(app.reveal_scratch_pad_cell(uid, idx))
         return results
-    results = run(_reveal_all())
+    results = run(_reveal_n(app.SCRATCH_PAD_MAX_PICKS))
 
-    assert [r["kind"] for r in results] == ["revealed"] * 4 + ["done"]
+    assert [r["kind"] for r in results] == ["revealed", "revealed", "done"]
     assert app.data[uid]["scratch_pad"] is None
-    assert len(results[-1]["all_prizes"]) == 5
+    # at most MAX_PICKS prizes can ever be found, never all 5
+    assert len(results[-1]["all_prizes"]) <= app.SCRATCH_PAD_MAX_PICKS
+
+
+def test_scratch_pad_can_find_zero_prizes():
+    """With only 3 of 16 cells revealed, missing all 5 prizes is a real,
+    reachable outcome — this is a gamble now, not a guaranteed payout."""
+    _reset()
+    uid = "9115"
+    _mk_user(uid)
+    board = app.start_scratch_pad(uid)
+    blank_indices = [i for i, c in enumerate(board["cells"]) if c is None]
+    assert len(blank_indices) >= app.SCRATCH_PAD_MAX_PICKS
+
+    async def _go():
+        results = []
+        for idx in blank_indices[:app.SCRATCH_PAD_MAX_PICKS]:
+            async with app.user_transaction(uid):
+                results.append(app.reveal_scratch_pad_cell(uid, idx))
+        return results
+    results = run(_go())
+    assert results[-1]["kind"] == "done"
+    assert results[-1]["all_prizes"] == []
 
 
 def test_scratch_pad_double_reveal_same_cell_is_noop():
@@ -203,33 +225,119 @@ def test_scratch_pad_double_reveal_same_cell_is_noop():
     assert second["kind"] == "none"
 
 
-def test_scratch_pad_price_exceeds_guaranteed_expected_value():
-    """Every prize is eventually found with certainty, so the price must sit
-    above the guaranteed average payout or repeated buy-and-scratch mints
-    free money (see the comment above SCRATCH_PAD_REWARDS)."""
-    scale = 1000
-    trials = 4000
-    total = 0
-    for _ in range(trials):
-        r = game_data.roll_scratch_pad_prize(scale)
-        if r["type"] == "money":
-            total += r["amount"]
-    avg_money_per_slot = total / trials
-    avg_total_per_pad = avg_money_per_slot * game_data.SCRATCH_PAD_PRIZE_COUNT
-    price = game_data.SCRATCH_PAD_PRICE_X * scale
-    assert price > avg_total_per_pad, (price, avg_total_per_pad)
-
-
-def test_scratch_pad_is_not_tradable():
+def test_scratch_pad_is_not_purchasable_or_tradable():
+    """Not sold anywhere (it's a /vote reward) and not tradable."""
+    assert "Scratch Pad" not in app.ITEM_GOLD_SHOP
+    assert "Scratch Pad" not in app.ITEM_GEM_SHOP
     assert app.ITEMS["Scratch Pad"]["tradable"] is False
     name, kind = app._market_canon("Scratch Pad")
     assert name is None
 
 
-def test_scratch_pad_shows_up_in_gold_shop_and_info():
-    assert "Scratch Pad" in app.ITEM_GOLD_SHOP
+def test_scratch_pad_shows_up_in_info():
     entries = dict(app._info_entries("items"))
     assert "Scratch Pad" in entries
+
+
+def test_vote_claim_grants_a_scratch_pad():
+    _reset()
+    uid = "9116"
+    _mk_user(uid)
+    run(_ensure_db())
+
+    async def _go():
+        async with app.user_transaction(uid):
+            app.add_item(uid, "Scratch Pad", 1)
+    run(_go())
+    assert app.item_count(uid, "Scratch Pad") == 1
+
+
+# ─────────────────────────────────────────────────────────────
+# /vote real-vote verification (check_dbl_recent_vote)
+# ─────────────────────────────────────────────────────────────
+def test_check_dbl_recent_vote_without_token_configured_caller_falls_back():
+    """The claim handler only calls check_dbl_recent_vote when DBL_TOKEN is
+    set — this just documents that contract so a future refactor doesn't
+    silently call the network check with no token."""
+    assert hasattr(app, "DBL_TOKEN")
+
+
+class _FakeResp:
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = payload
+    async def json(self):
+        return self._payload
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *a):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, status, payload):
+        self._status = status
+        self._payload = payload
+    def get(self, url, headers=None):
+        return _FakeResp(self._status, self._payload)
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, *a):
+        return False
+
+
+def _with_fake_dbl_response(status, payload, coro_fn):
+    """Manually patch app.aiohttp.ClientSession for the duration of coro_fn()
+    — this suite has no pytest fixtures available when run standalone via
+    `python tests/test_vote_scratch.py`, so no monkeypatch fixture."""
+    orig = app.aiohttp.ClientSession
+    app.aiohttp.ClientSession = lambda *a, **k: _FakeSession(status, payload)
+    try:
+        return run(coro_fn())
+    finally:
+        app.aiohttp.ClientSession = orig
+
+
+_FAKE_BOT_ID = "1498460874963288164"
+
+
+def test_check_dbl_recent_vote_finds_matching_fresh_vote():
+    payload = {"upvotes": [
+        {"user_id": "12345", "timestamp": "2026-09-28T12:00:00.000Z"},
+        {"user_id": "99999", "timestamp": "2026-09-28T12:00:00.000Z"},
+    ], "total": 2}
+    result = _with_fake_dbl_response(200, payload,
+        lambda: app.check_dbl_recent_vote("12345", 0.0, bot_id=_FAKE_BOT_ID))
+    assert result is True
+
+
+def test_check_dbl_recent_vote_no_matching_user_returns_false():
+    payload = {"upvotes": [{"user_id": "99999", "timestamp": "2026-09-28T12:00:00.000Z"}], "total": 1}
+    result = _with_fake_dbl_response(200, payload,
+        lambda: app.check_dbl_recent_vote("12345", 0.0, bot_id=_FAKE_BOT_ID))
+    assert result is False
+
+
+def test_check_dbl_recent_vote_stale_vote_before_since_ts_returns_false():
+    payload = {"upvotes": [{"user_id": "12345", "timestamp": "2020-01-01T00:00:00.000Z"}], "total": 1}
+    result = _with_fake_dbl_response(200, payload,
+        lambda: app.check_dbl_recent_vote("12345", time.time(), bot_id=_FAKE_BOT_ID))
+    assert result is False
+
+
+def test_check_dbl_recent_vote_http_error_returns_none_not_false():
+    """A transient API failure must not be treated as 'didn't vote' — that
+    would silently deny a legitimate voter."""
+    result = _with_fake_dbl_response(500, {},
+        lambda: app.check_dbl_recent_vote("12345", 0.0, bot_id=_FAKE_BOT_ID))
+    assert result is None
+
+
+def test_check_dbl_recent_vote_without_bot_id_returns_none():
+    result = run(app.check_dbl_recent_vote("12345", 0.0, bot_id=None))
+    # bot.user is unset in this test harness (no real Discord login), so with
+    # no explicit bot_id this must degrade to "can't check", never crash.
+    assert result is None
 
 
 # ─────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 app.py
 Powers the bot. [END]
 """
-import asyncio, discord, random, time, json, string, requests, secrets, logging, aiosqlite
+import asyncio, discord, random, time, json, string, requests, secrets, logging, aiosqlite, aiohttp
 from discord.http import Route
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -94,7 +94,7 @@ from game_data import (
     WEATHER_VANE_XP, WEATHER_VANE_MINUTES, WAR_HORN_LUCK, WAR_HORN_HOURS, HAUL_WAGON_HOURS,
     SIGNAL_FLARE_TRACK_CHANCE, HUNTERS_STIM_WIN_CHANCE, DANGER_WHISTLE_WIN_CHANCE,
     CAMP_RATIONS_COLLECT_CHANCE,
-    SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_PRICE_X,
+    SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_MAX_PICKS,
     SCRATCH_PAD_REWARDS, roll_scratch_pad_prize,
     VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X,
     # Quests
@@ -149,6 +149,10 @@ def ph(e: str) -> str:
 
 # BOT_TOKEN in token.env is for the original bot (minimize data loss)!!!
 BOT_TOKEN = os.getenv("TOKEN")
+# discordbotlist.com bot-owner API token (NOT the Discord bot token) — used to
+# verify a /vote claim actually happened before paying it out. Optional: if
+# unset, /vote claims fall back to the honor-system cooldown only.
+DBL_TOKEN = os.getenv("DBL_TOKEN", "").strip()
 
 logger = logging.getLogger(__name__)
 
@@ -11871,8 +11875,10 @@ def start_scratch_pad(user_id: str) -> dict:
 
 def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
     """Reveal one panel, applying its prize if it has one. Mutates — call
-    inside a ``user_transaction``. Returns {"kind": "revealed"|"done"|"none",
-    "prize": reward_dict|None, "all_prizes": [reward_dict, ...] (only on "done")}."""
+    inside a ``user_transaction``. Only SCRATCH_PAD_MAX_PICKS reveals are
+    allowed per pad — a real chance of finding none of the 5 hidden prizes.
+    Returns {"kind": "revealed"|"done"|"none", "prize": reward_dict|None,
+    "all_prizes": [reward_dict, ...] (only on "done")}."""
     board = data[user_id].get("scratch_pad")
     if not board or not (0 <= idx < SCRATCH_PAD_GRID_SIZE) or board["revealed"][idx]:
         return {"kind": "none", "prize": None}
@@ -11882,11 +11888,11 @@ def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
         _apply_reward_simple(user_id, prize, "scratch_pad")
         board["found"] += 1
     mark_user_dirty(user_id)
-    done = board["found"] >= SCRATCH_PAD_PRIZE_COUNT
+    picks_used = sum(board["revealed"])
+    done = picks_used >= SCRATCH_PAD_MAX_PICKS
     if done:
-        # found == PRIZE_COUNT means every prize cell (there are only that
-        # many) has now been revealed — safe to collect them all here.
-        all_prizes = [c for c in board["cells"] if c is not None]
+        all_prizes = [board["cells"][i] for i in range(SCRATCH_PAD_GRID_SIZE)
+                      if board["revealed"][i] and board["cells"][i] is not None]
         data[user_id]["scratch_pad"] = None
         return {"kind": "done", "prize": prize, "all_prizes": all_prizes}
     return {"kind": "revealed", "prize": prize}
@@ -11896,10 +11902,15 @@ def build_scratch_pad_components(user_id: str, last: dict | None = None) -> list
     owned = item_count(user_id, "Scratch Pad")
 
     if not board and last and last.get("kind") == "done":
-        lines = "\n".join(f"-# {_fmt_reward(p)}" for p in last.get("all_prizes", []))
+        all_prizes = last.get("all_prizes", [])
+        if all_prizes:
+            lines = "\n".join(f"-# {_fmt_reward(p)}" for p in all_prizes)
+            found_line = f"You found **{len(all_prizes)}**:\n{lines}"
+        else:
+            found_line = "-# No prizes this time — better luck on your next vote!"
         content = (
             f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad — Complete!\n"
-            f"All **{SCRATCH_PAD_PRIZE_COUNT}** prizes found:\n{lines}"
+            f"All **{SCRATCH_PAD_MAX_PICKS}** scratches used.\n{found_line}"
         )
         btns = []
         if owned > 0:
@@ -11932,10 +11943,12 @@ def build_scratch_pad_components(user_id: str, last: dict | None = None) -> list
         else:
             last_line = "\n-# Just revealed: nothing this time."
 
+    picks_used = sum(board["revealed"])
     header = (
         f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad\n"
-        f"5 of these 16 panels hide a prize — scratch them all to find every one.\n"
-        f"-# Prizes found: **{board['found']}/{SCRATCH_PAD_PRIZE_COUNT}**{last_line}"
+        f"5 of these 16 panels hide a prize — you only get **{SCRATCH_PAD_MAX_PICKS}** scratches, so choose wisely.\n"
+        f"-# Scratches left: **{SCRATCH_PAD_MAX_PICKS - picks_used}/{SCRATCH_PAD_MAX_PICKS}** "
+        f"· Found so far: **{board['found']}**{last_line}"
     )
     rows: list = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
     for r in range(4):
@@ -13872,20 +13885,45 @@ async def _dispatch_component(interaction: discord.Interaction):
         if str(interaction.user.id) != owner_id:
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
+        if time.time() < data[owner_id].get("vote_cd", 0):
+            await smart_update_v2(interaction, build_vote_components(owner_id))
+            return
+
+        # Verify the vote actually happened before touching the lock — this is
+        # a slow external HTTP call, and must never run while holding the user
+        # lock. "since_ts" derives the last successful claim time from vote_cd
+        # (it's always set to last_claim + VOTE_COOLDOWN_HOURS on a claim), so
+        # a brand-new account (vote_cd == 0) accepts any vote on record.
+        if DBL_TOKEN:
+            since_ts = data[owner_id].get("vote_cd", 0) - VOTE_COOLDOWN_HOURS * 3600
+            verified = await check_dbl_recent_vote(owner_id, since_ts)
+        else:
+            verified = True   # no DBL_TOKEN configured — honor-system fallback
+        if verified is None:
+            await send_ephemeral_v2(interaction,
+                f"{emoji('cross_mark')} Couldn't reach discordbotlist.com to check your vote — try again in a minute.",
+                0xE74C3C)
+            return
+        if verified is False:
+            await send_ephemeral_v2(interaction,
+                f"{emoji('cross_mark')} We haven't seen your vote yet — vote on discordbotlist.com, then try again.",
+                0xE74C3C)
+            return
+
         claimed = False
         money_amt = 0
-        if time.time() >= data[owner_id].get("vote_cd", 0):
-            async with user_transaction(owner_id):
-                # Re-check under the lock so a double-click can't claim twice.
-                if time.time() >= data[owner_id].get("vote_cd", 0):
-                    level = data[owner_id].get("level", 1)
-                    money_amt = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
-                    add_money(owner_id, money_amt, "vote")
-                    data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + money_amt
-                    ci = data[owner_id].setdefault("crate_inv", {})
-                    ci[VOTE_REWARD_CRATE] = ci.get(VOTE_REWARD_CRATE, 0) + 1
-                    data[owner_id]["vote_cd"] = time.time() + VOTE_COOLDOWN_HOURS * 3600
-                    claimed = True
+        async with user_transaction(owner_id):
+            # Re-check under the lock so a double-click can't claim twice.
+            if time.time() >= data[owner_id].get("vote_cd", 0):
+                level = data[owner_id].get("level", 1)
+                money_amt = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
+                add_money(owner_id, money_amt, "vote")
+                data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + money_amt
+                ci = data[owner_id].setdefault("crate_inv", {})
+                ci[VOTE_REWARD_CRATE] = ci.get(VOTE_REWARD_CRATE, 0) + 1
+                add_item(owner_id, "Scratch Pad", 1)
+                data[owner_id]["vote_cd"] = time.time() + VOTE_COOLDOWN_HOURS * 3600
+                claimed = True
         await smart_update_v2(interaction, build_vote_components(owner_id, claimed, money_amt))
         if claimed:
             await check_achievements_and_badges(interaction, owner_id)
@@ -16418,14 +16456,53 @@ async def daily_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_daily_components(user_id))
     await check_everything(interaction, user_id)
 
+DBL_UPVOTES_URL = "https://discordbotlist.com/api/v1/bots/{bot_id}/upvotes"
+
+async def check_dbl_recent_vote(user_id: str, since_ts: float, bot_id: int | str | None = None) -> bool | None:
+    """True if discordbotlist.com shows a vote from this user newer than
+    ``since_ts``, False if the API responded but no matching vote was found.
+    Returns None only when the check itself couldn't run (the API errored or
+    timed out, or the bot isn't logged in yet) — callers must treat that as
+    "unknown," not as "didn't vote." Assumes the caller already confirmed
+    DBL_TOKEN is set. ``bot_id`` defaults to the live bot's own id — overridable
+    so this is testable without a real Discord connection. Uses aiohttp, not
+    the blocking ``requests`` — see get_username()'s comment on why a sync
+    call here would stall the loop."""
+    bot_id = bot_id or (bot.user.id if bot.user else None)
+    if not bot_id:
+        return None
+    url = DBL_UPVOTES_URL.format(bot_id=bot_id)
+    headers = {"Authorization": DBL_TOKEN}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6)) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.warning("DBL upvotes check failed: HTTP %s", resp.status)
+                    return None
+                payload = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
+        logger.warning("DBL upvotes check errored: %s", e)
+        return None
+    for entry in payload.get("upvotes", []):
+        if str(entry.get("user_id", "")) != str(user_id):
+            continue
+        try:
+            ts = datetime.fromisoformat(str(entry["timestamp"]).replace("Z", "+00:00")).timestamp()
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ts > since_ts:
+            return True
+    return False
+
 def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 0) -> list:
     now = time.time()
     ready = now >= data[user_id].get("vote_cd", 0)
+    verified = DBL_TOKEN and bot.user
     if claimed:
         body = (
             f"### {emoji('ballot_box')} Vote Reward Claimed!\n"
-            f"You received **{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE}** "
-            f"and **◈ {money_amt:,}**!\n"
+            f"You received **{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE}**, "
+            f"**◈ {money_amt:,}**, and **{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad**!\n"
             f"-# {emoji('star')} Thanks for the support — come back in **{VOTE_COOLDOWN_HOURS}h**."
         )
     elif not ready:
@@ -16437,11 +16514,16 @@ def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 
     else:
         level = data[user_id].get("level", 1)
         preview_money = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
+        check_line = ("-# We check discordbotlist.com for your vote before paying out."
+                       if verified else
+                       "-# `⚠️` Vote checking isn't configured — claims aren't verified right now.")
         body = (
             f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
             f"Vote on discordbotlist.com, then come back and claim your reward:\n"
-            f"-# {CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{preview_money:,}\n"
-            f"-# {emoji('clock')} One claim every **{VOTE_COOLDOWN_HOURS}h**."
+            f"-# {CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{preview_money:,} "
+            f"· {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad\n"
+            f"-# {emoji('clock')} One claim every **{VOTE_COOLDOWN_HOURS}h**.\n"
+            f"{check_line}"
         )
     btns = [{"type": 2, "style": 5, "label": "Vote on discordbotlist.com",
              "emoji": emoji_partial("ballot_box"), "url": VOTE_URL}]
@@ -17629,7 +17711,7 @@ _ITEM_SOURCE_LINES = {
     "Ammo Pouch":       "Gold shop · also drops from Common Crates",
     "Camp Rations":     "Gold shop · a small chance per Hunting Camp collect",
     "Gift Box":         "Gold shop",
-    "Scratch Pad":      "Gold shop",
+    "Scratch Pad":      "Vote reward (`/vote`)",
     "Iron Plating":     "Rare+ Crates · craft 3 Rare Crystals in `/craft`",
     "Hunter's Stim":    "Epic+ Crates · winning a danger encounter (~10%)",
     "Signal Flare":     "Locating a mythic while tracking (~15%) · Rare Crates",

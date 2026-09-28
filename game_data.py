@@ -4376,7 +4376,7 @@ ITEMS = {
     },
     "Scratch Pad": {
         "emoji": "🎫", "tradable": False,
-        "description": "A 4x4 scratch card — 5 of the 16 panels hide a prize. Scratch panels one at a time to reveal them all.",
+        "description": "A 4x4 scratch card — 5 of the 16 panels hide a prize, but you only get 3 scratches. A /vote reward.",
     },
     "Iron Plating": {
         "emoji": "🛡️", "tradable": True,
@@ -4459,14 +4459,15 @@ DANGER_WHISTLE_WIN_CHANCE   = 0.20   # per won danger encounter
 CAMP_RATIONS_COLLECT_CHANCE = 0.08   # per idle-camp haul collect
 
 # ── Scratch Pad — a 4x4 (16-cell) scratch card, 5 cells hide a prize, 11 are
-# blank. Every prize is eventually found (no risk of missing one — the fun is
-# the reveal, not the odds), so the price must sit ABOVE the guaranteed total
-# payout or repeated buy-and-scratch would mint free money. Each cell's prize
+# blank, but a player only gets SCRATCH_PAD_MAX_PICKS scratches — real risk of
+# finding 0 of the 5. Not sold anywhere; it's a /vote reward, so there's no
+# purchase price to balance against a guaranteed payout (the 12h vote
+# cooldown is what bounds how often a player can get one). Each cell's prize
 # uses the same (weight, type, data) shape as CRATE_REWARDS so the resolver
 # can be shared; money is a value_scale multiple, same convention as crates.
-SCRATCH_PAD_GRID_SIZE  = 16
-SCRATCH_PAD_PRIZE_COUNT = 5
-SCRATCH_PAD_PRICE_X    = 14   # ~17% house edge over the ~11.6x money EV below
+SCRATCH_PAD_GRID_SIZE   = 16
+SCRATCH_PAD_PRIZE_COUNT = 5    # prize cells hidden in the grid
+SCRATCH_PAD_MAX_PICKS   = 3    # scratches allowed — can't find all 5
 SCRATCH_PAD_REWARDS = [
     (60, "money",      {"min_x": 1, "max_x": 3}),
     (25, "money",      {"min_x": 3, "max_x": 6}),
@@ -4501,7 +4502,6 @@ ITEM_GOLD_SHOP = {
     "Ammo Pouch":   {"price_x": 1.0},
     "Camp Rations": {"price_x": 1.5},
     "Gift Box":     {"price_x": 3.0},
-    "Scratch Pad":  {"price_x": SCRATCH_PAD_PRICE_X},
 }
 # Gem-shop items — flat gem price. Time-savers only, never power (see plan rule 5).
 ITEM_GEM_SHOP = {
