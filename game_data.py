@@ -2807,7 +2807,7 @@ CRATE_RARITY = {k: v["rarity"] for k, v in CRATE_TIERS.items()}
 
 # Reward pool definitions
 # Each reward: (weight, type, data)
-# types: money, gems, perm_boost, temp_boost, title
+# types: money, gems, perm_boost, temp_boost, title, item
 # money data: {"min_x": A, "max_x": B} — multiples of the OPENER's value scale
 #   (crate_value_scale(level): the average animal value of the best biome their
 #   level has unlocked). 2026-09-27: flat ◈ amounts made a village crate worth
@@ -2815,71 +2815,89 @@ CRATE_RARITY = {k: v["rarity"] for k, v in CRATE_TIERS.items()}
 # perm_boost data: {"stat": "luck"|"sell"|"xp", "amount": N}
 # temp_boost data: {"stat": "luck"|"sell"|"xp", "amount": N, "minutes": M}
 # title data: {"title": "..."}
+# item data: {"name": "...", "qty": N, "bag": "items"|"heal"} — bag picks which
+#   inventory the item lands in (see ITEMS / HEALING_ITEMS below).
+# 2026-09-27: item entries were added by taking weight OUT of each tier's
+# money/temp_boost entries (proportionally, same ratios preserved) so a crate's
+# total expected value didn't change — see the consumable-items plan.
 
 CRATE_REWARDS = {
     "Common Crate": [
-        (40, "money",      {"min_x": 5,    "max_x": 20}),
-        (30, "money",      {"min_x": 10,   "max_x": 40}),
+        (36, "money",      {"min_x": 5,    "max_x": 20}),
+        (27, "money",      {"min_x": 10,   "max_x": 40}),
         (5,  "gems",       {"min": 3,            "max": 8}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 10, "minutes": 15}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 10, "minutes": 15}),
-        (10, "temp_boost", {"stat": "xp",    "amount": 10, "minutes": 15}),
-        (5,  "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 30}),
-        (5,  "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 30}),
+        (9,  "temp_boost", {"stat": "luck",  "amount": 10, "minutes": 15}),
+        (9,  "temp_boost", {"stat": "sell",  "amount": 10, "minutes": 15}),
+        (9,  "temp_boost", {"stat": "xp",    "amount": 10, "minutes": 15}),
+        (4,  "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 30}),
+        (4,  "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 30}),
         (3,  "perm_boost", {"stat": "luck",  "amount": 1}),
         (2,  "perm_boost", {"stat": "sell",  "amount": 1}),
         (2,  "perm_boost", {"stat": "xp",    "amount": 1}),
+        (4,  "item",       {"name": "Smoke Bomb",   "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Regen Tonic",  "qty": 1, "bag": "heal"}),
+        (4,  "item",       {"name": "Ammo Pouch",   "qty": 1, "bag": "items"}),
     ],
     "Uncommon Crate": [
-        (38, "money",      {"min_x": 10,   "max_x": 40}),
-        (25, "money",      {"min_x": 20,   "max_x": 80}),
+        (34, "money",      {"min_x": 10,   "max_x": 40}),
+        (23, "money",      {"min_x": 20,   "max_x": 80}),
         (6,  "gems",       {"min": 5,            "max": 12}),
-        (12, "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 30}),
-        (12, "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 30}),
-        (10, "temp_boost", {"stat": "xp",    "amount": 15, "minutes": 30}),
+        (11, "temp_boost", {"stat": "luck",  "amount": 15, "minutes": 30}),
+        (11, "temp_boost", {"stat": "sell",  "amount": 15, "minutes": 30}),
+        (9,  "temp_boost", {"stat": "xp",    "amount": 15, "minutes": 30}),
         (6,  "temp_boost", {"stat": "luck",  "amount": 20, "minutes": 45}),
         (6,  "temp_boost", {"stat": "sell",  "amount": 20, "minutes": 45}),
         (4,  "perm_boost", {"stat": "luck",  "amount": 1}),
         (3,  "perm_boost", {"stat": "sell",  "amount": 1}),
         (3,  "perm_boost", {"stat": "xp",    "amount": 1}),
+        (4,  "item",       {"name": "Smoke Bomb",   "qty": 1, "bag": "items"}),
+        (5,  "item",       {"name": "Scent Lure",   "qty": 1, "bag": "items"}),
     ],
     "Rare Crate": [
-        (30, "money",      {"min_x": 40,   "max_x": 160}),
+        (23, "money",      {"min_x": 40,   "max_x": 160}),
         (8,  "gems",       {"min": 8,            "max": 18}),
-        (15, "temp_boost", {"stat": "luck",  "amount": 20, "minutes": 45}),
-        (15, "temp_boost", {"stat": "sell",  "amount": 20, "minutes": 45}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 30, "minutes": 90}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 30, "minutes": 90}),
-        (8,  "temp_boost", {"stat": "xp",    "amount": 30, "minutes": 90}),
+        (12, "temp_boost", {"stat": "luck",  "amount": 20, "minutes": 45}),
+        (12, "temp_boost", {"stat": "sell",  "amount": 20, "minutes": 45}),
+        (8,  "temp_boost", {"stat": "luck",  "amount": 30, "minutes": 90}),
+        (8,  "temp_boost", {"stat": "sell",  "amount": 30, "minutes": 90}),
+        (6,  "temp_boost", {"stat": "xp",    "amount": 30, "minutes": 90}),
         (5,  "perm_boost", {"stat": "luck",  "amount": 2}),
         (5,  "perm_boost", {"stat": "sell",  "amount": 2}),
         (5,  "perm_boost", {"stat": "xp",    "amount": 2}),
         (3,  "title",      {"title": "Lucky Find"}),
         (2,  "title",      {"title": "The Collector"}),
+        (4,  "item",       {"name": "Iron Plating",   "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Signal Flare",   "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Danger Whistle", "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Rare Bait",      "qty": 1, "bag": "items"}),
+        (3,  "item",       {"name": "Weather Vane",   "qty": 1, "bag": "items"}),
     ],
     "Epic Crate": [
-        (36, "money",      {"min_x": 60,   "max_x": 240}),
+        (31, "money",      {"min_x": 60,   "max_x": 240}),
         (10, "gems",       {"min": 12,           "max": 30}),
-        (15, "temp_boost", {"stat": "luck",  "amount": 40, "minutes": 90}),
-        (15, "temp_boost", {"stat": "sell",  "amount": 40, "minutes": 90}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 50, "minutes": 120}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 50, "minutes": 120}),
-        (10, "temp_boost", {"stat": "xp",    "amount": 50, "minutes": 120}),
+        (13, "temp_boost", {"stat": "luck",  "amount": 40, "minutes": 90}),
+        (13, "temp_boost", {"stat": "sell",  "amount": 40, "minutes": 90}),
+        (9,  "temp_boost", {"stat": "luck",  "amount": 50, "minutes": 120}),
+        (9,  "temp_boost", {"stat": "sell",  "amount": 50, "minutes": 120}),
+        (9,  "temp_boost", {"stat": "xp",    "amount": 50, "minutes": 120}),
         (8,  "perm_boost", {"stat": "luck",  "amount": 3}),
         (8,  "perm_boost", {"stat": "sell",  "amount": 3}),
         (8,  "perm_boost", {"stat": "xp",    "amount": 3}),
         (5,  "title",      {"title": "Epic Opener"}),
         (3,  "title",      {"title": "Gear Hoarder"}),
         (2,  "title",      {"title": "The Fortunate"}),
+        (4,  "item",       {"name": "Iron Plating",  "qty": 1, "bag": "items"}),
+        (5,  "item",       {"name": "Hunter's Stim", "qty": 1, "bag": "items"}),
+        (3,  "item",       {"name": "Haul Wagon",    "qty": 1, "bag": "items"}),
     ],
     "Legendary Crate": [
-        (38, "money",      {"min_x": 150,  "max_x": 600}),
+        (34, "money",      {"min_x": 150,  "max_x": 600}),
         (12, "gems",       {"min": 20,           "max": 45}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 60, "minutes": 120}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 60, "minutes": 120}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 75, "minutes": 180}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 75, "minutes": 180}),
-        (10, "temp_boost", {"stat": "xp",    "amount": 75, "minutes": 180}),
+        (8,  "temp_boost", {"stat": "luck",  "amount": 60, "minutes": 120}),
+        (8,  "temp_boost", {"stat": "sell",  "amount": 60, "minutes": 120}),
+        (8,  "temp_boost", {"stat": "luck",  "amount": 75, "minutes": 180}),
+        (8,  "temp_boost", {"stat": "sell",  "amount": 75, "minutes": 180}),
+        (8,  "temp_boost", {"stat": "xp",    "amount": 75, "minutes": 180}),
         (10, "perm_boost", {"stat": "luck",  "amount": 5}),
         (10, "perm_boost", {"stat": "sell",  "amount": 5}),
         (10, "perm_boost", {"stat": "xp",    "amount": 5}),
@@ -2887,15 +2905,19 @@ CRATE_REWARDS = {
         (5,  "title",      {"title": "Legend in the Making"}),
         (3,  "title",      {"title": "The Privileged"}),
         (2,  "title",      {"title": "Legendary Opener"}),
+        (3,  "item",       {"name": "Iron Plating",     "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Hunter's Stim",    "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Bloodhound Scent", "qty": 1, "bag": "items"}),
+        (3,  "item",       {"name": "Trail Map",        "qty": 1, "bag": "items"}),
     ],
     "Mythic Crate": [
-        (30, "money",      {"min_x": 400,  "max_x": 1_600}),
+        (25, "money",      {"min_x": 400,  "max_x": 1_600}),
         (15, "gems",       {"min": 40,           "max": 90}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 180}),
-        (10, "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
-        (10, "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 180}),
-        (10, "temp_boost", {"stat": "xp",    "amount": 100, "minutes": 180}),
+        (9,  "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
+        (9,  "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 180}),
+        (9,  "temp_boost", {"stat": "luck",  "amount": 100, "minutes": 180}),
+        (9,  "temp_boost", {"stat": "sell",  "amount": 100, "minutes": 180}),
+        (9,  "temp_boost", {"stat": "xp",    "amount": 100, "minutes": 180}),
         (10, "perm_boost", {"stat": "luck",  "amount": 8}),
         (10, "perm_boost", {"stat": "sell",  "amount": 8}),
         (10, "perm_boost", {"stat": "xp",    "amount": 8}),
@@ -2904,6 +2926,9 @@ CRATE_REWARDS = {
         (3,  "title",      {"title": "The Anointed"}),
         (2,  "title",      {"title": "Mythic Opener"}),
         (1,  "title",      {"title": "The One Who Has Everything"}),
+        (3,  "item",       {"name": "Iron Plating",  "qty": 1, "bag": "items"}),
+        (4,  "item",       {"name": "Hunter's Stim", "qty": 1, "bag": "items"}),
+        (3,  "item",       {"name": "Lucky Hammer",  "qty": 1, "bag": "items"}),
     ],
 }
 
@@ -2945,6 +2970,9 @@ def open_crate(crate_name: str, value_scale: int = 1) -> dict:
                 "amount": rdata["amount"], "minutes": rdata["minutes"]}
     if rtype == "title":
         return {"type": "title", "title": rdata["title"]}
+    if rtype == "item":
+        return {"type": "item", "name": rdata["name"], "qty": rdata.get("qty", 1),
+                "bag": rdata.get("bag", "items")}
     return {"type": "money", "amount": 0}
 
 
@@ -3771,6 +3799,7 @@ QUEST_TEMPLATES = [
         "base_xp":     800,
         "base_money":  10_000,
         "bonus_gems":  2, "bonus_chance": 0.3,   # rare+ catches deserve a shot at gems
+        "bonus_item":  "Scent Lure",             # same roll — a bonus item, not a separate one
         "max_count":   20,   # rare+ catches are inherently scarce
         "requires":    {"rarity": True},
     },
@@ -4043,11 +4072,14 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
     # the player after they've already put the work in.
     gems_reward  = 0
     crate_reward = None
+    item_reward  = None
     if rng.random() < t.get("bonus_chance", 0):
         if t.get("bonus_gems"):
             gems_reward = max(1, int(t["bonus_gems"] * max(1.0, tier["xp_mult"] ** 0.5)))
         if t.get("bonus_crate"):
             crate_reward = t["bonus_crate"]
+        if t.get("bonus_item"):
+            item_reward = t["bonus_item"]
 
     # Clamp count to a reasonable minimum, and to this template's own ceiling
     # (if any) — see the "max_count" note above QUEST_TEMPLATES. XP keeps
@@ -4112,6 +4144,7 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
         "money_reward": money_reward,
         "gems_reward":  gems_reward,
         "crate_reward": crate_reward,
+        "item_reward":  item_reward,
         "completed":    False,
         "claimed":      False,
         "created_date": today,
@@ -4303,15 +4336,151 @@ def tool_combat_accuracy(tool_name: str) -> float:
 
 
 # ── Healing items ─────────────────────────────────────────────
-# ~10,000 gold per HP — deliberately steep now that animal encounters are a
-# rare, high-value bonus (10x payout, mostly Legendary): healing should cost
-# a real slice of what you just won, not be pocket change off ambient hunting.
+# Prices are "price_x": multiples of crate_value_scale(level) (the average
+# animal value of the opener's best unlocked biome), resolved at shop-render/
+# buy time via healing_item_price() in app.py — NOT a flat ◈ amount. A flat
+# price used to be steep at level 5 and pocket change at level 1000.
 HEALING_ITEMS = {
-    "Bandage":       {"heal": 25,  "price": 250_000,  "emoji": "🩹"},
-    "First Aid Kit": {"heal": 60,  "price": 600_000,  "emoji": "🧰"},
-    "Field Medkit":  {"heal": 100, "price": 1_000_000, "emoji": "⛑️"},
+    "Bandage":       {"heal": 25,  "price_x": 1.2, "emoji": "🩹"},
+    "First Aid Kit": {"heal": 60,  "price_x": 3.0, "emoji": "🧰"},
+    "Field Medkit":  {"heal": 100, "price_x": 5.0, "emoji": "⛑️"},
+    "Regen Tonic":   {"heal": 45,  "price_x": 2.0, "emoji": "🧪"},
 }
 HEALING_ITEMS["Field Medkit"]["emoji"] = EMOJI.get("potion_bottle") or HEALING_ITEMS["Field Medkit"]["emoji"]
+
+# ── General consumable items ─────────────────────────────────────────────
+# 2026-09-27: one main source + one backup source per item (see the
+# consumable-items plan) — gold shop for "saves a bad situation" items (sold
+# for gold, a money sink), crates/crafting for power spikes (feel like finds),
+# gem shop for pure time-skips (never power — see ITEM_TRADABLE below).
+# Shop-bought items are never tradable: a level-scaled gold price + /market
+# would let a low-level alt buy cheap and resell to a high-level player.
+ITEM_STACK_CAP = 10   # max copies of any one item a player can hold
+
+ITEMS = {
+    "Smoke Bomb": {
+        "emoji": "💨", "tradable": False,
+        "description": "Thrown mid-fight, it lets you slip away from a danger encounter with no HP lost.",
+    },
+    "Ammo Pouch": {
+        "emoji": "🎒", "tradable": False,
+        "description": "Restocks your currently equipped ammo.",
+    },
+    "Camp Rations": {
+        "emoji": "🍖", "tradable": False,
+        "description": "Feeds your Hunting Camp — the next haul you collect comes in noticeably bigger.",
+    },
+    "Gift Box": {
+        "emoji": "🎁", "tradable": False,
+        "description": "A treat you bought for yourself. Opens into a small random reward.",
+    },
+    "Iron Plating": {
+        "emoji": "🛡️", "tradable": True,
+        "description": "Strap it on before a fight — cuts incoming damage for a while, in any danger encounter.",
+    },
+    "Hunter's Stim": {
+        "emoji": "💉", "tradable": True,
+        "description": "A jolt before the fight — boosts your damage dealt in danger encounters for a while.",
+    },
+    "Signal Flare": {
+        "emoji": "🔦", "tradable": True,
+        "description": "Burn it to sharpen your senses — a temporary Luck boost.",
+    },
+    "Bloodhound Scent": {
+        "emoji": "🐾", "tradable": True,
+        "description": "A potent trail scent — a bigger, longer Luck boost than a Signal Flare.",
+    },
+    "Scent Lure": {
+        "emoji": "🧉", "tradable": True,
+        "description": "Draws animals in — a small temporary Luck boost.",
+    },
+    "Danger Whistle": {
+        "emoji": "📯", "tradable": True,
+        "description": "Blow it before your next hunt — guarantees you get the ambush in your very next danger encounter.",
+    },
+    "Rare Bait": {
+        "emoji": "🪱", "tradable": True,
+        "description": "Choice bait — a solid temporary Luck boost.",
+    },
+    "Trail Map": {
+        "emoji": "🗺️", "tradable": False,
+        "description": "Marks a shortcut — instantly finishes any trip you're currently traveling on.",
+    },
+    "Weather Vane": {
+        "emoji": "🌬️", "tradable": True,
+        "description": "Reads the wind — a temporary XP boost.",
+    },
+    "Forge Coal": {
+        "emoji": "⚫", "tradable": False,
+        "description": "Stokes the forge — instantly finishes the crystal at the front of your craft queue.",
+    },
+    "Lucky Hammer": {
+        "emoji": "🔨", "tradable": True,
+        "description": "One good knock — doubles the money/gem reward of the next crate you open.",
+    },
+    "War Horn": {
+        "emoji": "📣", "tradable": False,
+        "description": "Rallies your tribe — every member gets a temporary Luck boost.",
+    },
+    "Haul Wagon": {
+        "emoji": "🛒", "tradable": False,
+        "description": "Rolls your camp's clock back a few hours — instantly banks the extra haul (capped by storage).",
+    },
+}
+
+# ── Item effect tuning ───────────────────────────────────────────
+AMMO_POUCH_QTY        = 20
+IRON_PLATING_PCT      = 15
+IRON_PLATING_MINUTES  = 30
+HUNTERS_STIM_PCT      = 20
+HUNTERS_STIM_MINUTES  = 15
+SIGNAL_FLARE_LUCK     = 15
+SIGNAL_FLARE_MINUTES  = 20
+BLOODHOUND_LUCK       = 30
+BLOODHOUND_MINUTES    = 30
+SCENT_LURE_LUCK       = 10
+SCENT_LURE_MINUTES    = 15
+RARE_BAIT_LUCK        = 18
+RARE_BAIT_MINUTES     = 20
+WEATHER_VANE_XP       = 15
+WEATHER_VANE_MINUTES  = 30
+WAR_HORN_LUCK         = 10
+WAR_HORN_HOURS        = 2
+HAUL_WAGON_HOURS      = 3
+
+# Drop chances rolled at the moment they're described in the plan.
+SIGNAL_FLARE_TRACK_CHANCE   = 0.15   # per successful mythic locate
+HUNTERS_STIM_WIN_CHANCE     = 0.10   # per won danger encounter
+DANGER_WHISTLE_WIN_CHANCE   = 0.20   # per won danger encounter
+CAMP_RATIONS_COLLECT_CHANCE = 0.08   # per idle-camp haul collect
+
+# Gold-shop items price_x (see healing_item_price()/item_shop_price() in app.py)
+ITEM_GOLD_SHOP = {
+    "Smoke Bomb":   {"price_x": 1.5},
+    "Ammo Pouch":   {"price_x": 1.0},
+    "Camp Rations": {"price_x": 1.5},
+    "Gift Box":     {"price_x": 3.0},
+}
+# Gem-shop items — flat gem price. Time-savers only, never power (see plan rule 5).
+ITEM_GEM_SHOP = {
+    "Haul Wagon": {"price": 40},
+    "Trail Map":  {"price": 20},
+    "Forge Coal": {"price": 15},
+}
+# Tribe-shop items — bought with the buyer's own gems, granted as a personal item.
+ITEM_TRIBE_SHOP = {
+    "War Horn": {"price": 60},
+}
+
+# Craft recipes: shards/crystals -> a finished item, instant (like the crate
+# shop), not queued like crystal-fusing. kind: "shard" or "crystal".
+CRAFT_ITEM_RECIPES = {
+    "Iron Plating":     {"kind": "crystal", "rarity": "rare",      "cost": 3},
+    "Rare Bait":        {"kind": "crystal", "rarity": "uncommon",  "cost": 3},
+    "Forge Coal":       {"kind": "crystal", "rarity": "common",    "cost": 2},
+    "Lucky Hammer":     {"kind": "crystal", "rarity": "legendary", "cost": 1},
+    "Bloodhound Scent": {"kind": "shard",   "rarity": "epic",      "cost": 5},
+}
 
 # ── The trial weapon (first-session onboarding, Plan B) ──
 # Rookie Rush (a separate 15-min auto-granted xp/luck/sell boost) was folded
@@ -4351,8 +4520,9 @@ HUNTERS_PATH_STEPS = [
      "reward": {"gems": 10}},
     {"key": "hunt_with_tool",   "label": "Hunt with your new tool",
      "emoji": "🏹", "panel": "menu",
-     "hint": "Use `/hunt` now that you're properly equipped.",
-     "reward": {"money": 500}},
+     "hint": "Use `/hunt` now that you're properly equipped. You'll also get a Smoke Bomb "
+             "and a Bandage — try `/use` on them anytime.",
+     "reward": {"money": 500, "item": "Smoke Bomb", "heal_item": "Bandage"}},
     {"key": "claim_daily",      "label": "Claim your daily reward",
      "emoji": "🎁", "panel": "daily",
      "hint": "Open `/daily` and claim it — free money and XP, once a day.",

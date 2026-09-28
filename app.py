@@ -86,6 +86,14 @@ from game_data import (
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
     CRATE_GEMSTONE_CHANCE, MYTH_SHARD_KILL_CHANCE,
+    # General consumable items (2026-09-27)
+    ITEMS, ITEM_STACK_CAP, ITEM_GOLD_SHOP, ITEM_GEM_SHOP, ITEM_TRIBE_SHOP, CRAFT_ITEM_RECIPES,
+    AMMO_POUCH_QTY, IRON_PLATING_PCT, IRON_PLATING_MINUTES, HUNTERS_STIM_PCT, HUNTERS_STIM_MINUTES,
+    SIGNAL_FLARE_LUCK, SIGNAL_FLARE_MINUTES, BLOODHOUND_LUCK, BLOODHOUND_MINUTES,
+    SCENT_LURE_LUCK, SCENT_LURE_MINUTES, RARE_BAIT_LUCK, RARE_BAIT_MINUTES,
+    WEATHER_VANE_XP, WEATHER_VANE_MINUTES, WAR_HORN_LUCK, WAR_HORN_HOURS, HAUL_WAGON_HOURS,
+    SIGNAL_FLARE_TRACK_CHANCE, HUNTERS_STIM_WIN_CHANCE, DANGER_WHISTLE_WIN_CHANCE,
+    CAMP_RATIONS_COLLECT_CHANCE,
     # Quests
     QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
     WEEKLY_QUEST_TEMPLATES, QUESTS_PER_WEEK, WEEKLY_QUESTS_MAX, DAILY_QUEST_MILESTONES,
@@ -1334,14 +1342,20 @@ def _accent(user_id: str) -> int:
 # TEMP BOOSTS
 # ─────────────────────────────────────────────
 
-def get_active_temp_boosts(user_id: str) -> dict:
-    """Return combined active temp boost percentages."""
+def _sum_active_boosts(boost_list: list) -> dict:
+    """Combine a list of {stat, amount, expires_at} entries into stat -> total,
+    dropping expired ones. Shared by personal temp_boosts and a tribe's
+    War-Horn-style temp_boosts, so both read the same expiry/summing logic."""
     now = time.time()
     boosts = {"luck": 0, "sell": 0, "xp": 0}
-    for b in data[user_id].get("temp_boosts", []):
+    for b in boost_list:
         if b["expires_at"] > now:
             boosts[b["stat"]] = boosts.get(b["stat"], 0) + b["amount"]
     return boosts
+
+def get_active_temp_boosts(user_id: str) -> dict:
+    """Return combined active temp boost percentages."""
+    return _sum_active_boosts(data[user_id].get("temp_boosts", []))
 
 # ─────────────────────────────────────────────
 # PERSISTENCE
@@ -1627,6 +1641,7 @@ def init_user(user_id: str):
         },
         "crate_inv": {},
         "shards": {}, "crystals": {}, "gemstones": {}, "craft_queue": [],
+        "items": {}, "item_buffs": {},
         # Idle Hunter V2 — brand-new accounts start the guided first hunt.
         # (Existing players were marked completed by migration _migrate_v13.)
         "onboarding": {"version": 2, "completed": (not FEATURE_ONBOARDING_V2),
@@ -1738,6 +1753,8 @@ def init_user(user_id: str):
     data[user_id].setdefault("crystals", {})           # rarity -> count
     data[user_id].setdefault("gemstones", {})          # rarity -> count (decor)
     data[user_id].setdefault("craft_queue", [])        # [{rarity, done_ts}] crystal crafts
+    data[user_id].setdefault("items", {})              # generic consumables: name -> count
+    data[user_id].setdefault("item_buffs", {})         # buff key -> expiry ts (Iron Plating, Hunter's Stim)
 
     for k, v in {
         "ammo_used": 0, "lottery_wins": 0, "tools_used": [], "events_completed": 0,
@@ -2697,9 +2714,10 @@ def get_total_boosts(user_id: str) -> dict:
     t_luck = t_sell = t_xp = 0
     if tribe_name and tribe_name in tribe_data:
         td     = tribe_data[tribe_name]
-        t_luck = td.get("luck_boost", 0)
-        t_sell = td.get("sell_price_boost", 0)
-        t_xp   = td.get("xp_boost", 0)
+        t_temp = _sum_active_boosts(td.get("temp_boosts", []))   # War Horn: a timed tribe-wide rally
+        t_luck = td.get("luck_boost", 0) + t_temp.get("luck", 0)
+        t_sell = td.get("sell_price_boost", 0) + t_temp.get("sell", 0)
+        t_xp   = td.get("xp_boost", 0) + t_temp.get("xp", 0)
     tool_info  = TOOLS.get(data[user_id].get("tool", "Bare Hands"), {})
     tool_luck  = tool_info.get("boost_luck", 0)
     tool_xp    = tool_info.get("boost_xp", 0)
@@ -3077,6 +3095,8 @@ def collect_idle_haul(user_id: str) -> dict:
 
     boosts     = get_total_boosts(user_id)
     sell_boost = boosts["sell"]; xp_boost = boosts["xp"]; luck_boost = boosts["luck"]
+    ration_bonus = data[user_id].pop("_camp_rations_active", False)
+    ration_mult  = 1.25 if ration_bonus else 1.0
 
     per_animal: dict[str, dict] = {}
     total_val = total_xp = rares = 0
@@ -3084,8 +3104,8 @@ def collect_idle_haul(user_id: str) -> dict:
     for animal in haul:
         base_val   = ANIMAL_DATA.get(animal, {}).get("value", 0)
         base_xp    = ANIMAL_DATA.get(animal, {}).get("xp", 0)
-        sell_value = int(base_val * (1 + sell_boost / 100))
-        xp_earned  = int(base_xp * (1 + xp_boost / 100))
+        sell_value = int(base_val * (1 + sell_boost / 100) * ration_mult)
+        xp_earned  = int(base_xp * (1 + xp_boost / 100) * ration_mult)
         is_rare    = random.random() < rare_catch_chance(luck_boost) + trophy_effect_value(user_id, "perfect_catch_pp") / 100
         if is_rare:
             sell_value *= 3; xp_earned *= 2; rares += 1
@@ -3147,9 +3167,15 @@ def collect_idle_haul(user_id: str) -> dict:
         "total_xp": total_xp, "level_ups": level_ups, "idle": True,
     })
 
+    item_dropped = None
+    if random.random() < CAMP_RATIONS_COLLECT_CHANCE:
+        add_item(user_id, "Camp Rations", 1)
+        item_dropped = "Camp Rations"
+
     return {"count": count, "per_animal": per_animal, "total_val": total_val,
             "total_xp": total_xp, "level_ups": level_ups, "rares": rares,
-            "hunters_path_result": _hp_result}
+            "hunters_path_result": _hp_result, "ration_bonus": ration_bonus,
+            "item_dropped": item_dropped}
 
 # ─────────────────────────────────────────────
 # RECORD & LOG HELPERS
@@ -3818,6 +3844,55 @@ def add_gemstone(user_id: str, rarity: str, n: int = 1) -> None:
     g = data[user_id].setdefault("gemstones", {})
     g[rarity] = g.get(rarity, 0) + n
 
+# ─────────────────────────────────────────────
+# GENERIC ITEMS  ·  shop/crate/craft/drop consumables (2026-09-27)
+# ─────────────────────────────────────────────
+
+def item_count(user_id: str, name: str) -> int:
+    return int(data.get(user_id, {}).get("items", {}).get(name, 0))
+
+def add_item(user_id: str, name: str, n: int = 1) -> int:
+    """Add ``n`` of item ``name``, clamped to ITEM_STACK_CAP. Returns the new
+    count. Any copies that don't fit are converted to a modest gold payout
+    instead of being silently discarded — random drop sources (crates,
+    tracking, danger wins, quests, Hunter's Path) don't pre-check the cap the
+    way shop/craft purchases do, so a "you received X" message would
+    otherwise sometimes hand out nothing at all."""
+    it = data[user_id].setdefault("items", {})
+    before = it.get(name, 0)
+    after  = min(ITEM_STACK_CAP, before + n)
+    it[name] = after
+    overflow = (before + n) - after
+    if overflow > 0:
+        comp = overflow * item_shop_price(0.5, data[user_id].get("level", 1))
+        add_money(user_id, comp, f"item overflow: {name}")
+    return after
+
+def item_shop_price(price_x: float, level: int) -> int:
+    """Level-scaled gold price for a shop item: price_x multiples of
+    crate_value_scale(level), the same unit crate money rolls use — so an
+    item costs about the same number of catches at any level."""
+    return max(1, round(price_x * crate_value_scale(level)))
+
+def healing_item_price(name: str, level: int) -> int:
+    return item_shop_price(HEALING_ITEMS[name]["price_x"], level)
+
+def item_buff_active(user_id: str, key: str) -> bool:
+    return data.get(user_id, {}).get("item_buffs", {}).get(key, 0) > time.time()
+
+_ITEM_BUFF_PCT = {"iron_plating": IRON_PLATING_PCT, "hunters_stim": HUNTERS_STIM_PCT}
+
+def item_buff_value(user_id: str, key: str) -> int:
+    return _ITEM_BUFF_PCT.get(key, 0) if item_buff_active(user_id, key) else 0
+
+def set_item_buff(user_id: str, key: str, minutes: int) -> None:
+    """Activate (or extend, if already running) a timed item buff."""
+    ib = data[user_id].setdefault("item_buffs", {})
+    now = time.time()
+    start = ib.get(key, 0) if ib.get(key, 0) > now else now
+    ib[key] = start + minutes * 60
+    mark_user_dirty(user_id)
+
 def craft_tick(user_id: str) -> int:
     """Convert any finished crystal crafts in the queue into crystals. Mutates
     one user — safe outside a transaction. Returns how many crystals completed."""
@@ -4397,6 +4472,9 @@ def _tracking_locate(user_id: str, tr: dict) -> dict:
     data[user_id]["tracking"] = None
     st = data[user_id].setdefault("stats", {})
     st["tracks_completed"] = st.get("tracks_completed", 0) + 1
+    if random.random() < SIGNAL_FLARE_TRACK_CHANCE:
+        add_item(user_id, "Signal Flare", 1)
+        data[user_id]["_boss"]["item_dropped"] = "Signal Flare"
     mark_user_dirty(user_id)
     analytics(user_id, "myth_tracking_completed", creature=creature,
               biome=biome, bonus=bonus, steps=tr["step"])
@@ -4801,6 +4879,9 @@ def animal_fight_active(user_id: str) -> bool:
 def _animal_encounter_roll(user_id: str, stats: dict) -> str:
     """One-shot ambush determination for a normal danger encounter. Returns
     'ambush' (you got the drop), 'normal', or 'shaken' (it got you first)."""
+    if data[user_id].pop("_danger_whistle_active", False):   # Danger Whistle: guaranteed ambush, once
+        mark_user_dirty(user_id)
+        return "ambush"
     luck = max(0, get_total_boosts(user_id).get("luck", 0))
     tier = get_tool_tier(data[user_id].get("tool", "Bare Hands"))
     skill = luck / 4 + tier * 3
@@ -4871,10 +4952,20 @@ def _animal_fight_win(user_id: str, name: str, biome: str, *, bonus_mult: float 
         d["xp"] -= xp_for_level(d["level"]); d["level"] += 1; level_ups += 1
     st = d.setdefault("stats", {})
     st["animal_fights_won"] = st.get("animal_fights_won", 0) + 1
+
+    dropped = []
+    if random.random() < HUNTERS_STIM_WIN_CHANCE:
+        add_item(user_id, "Hunter's Stim", 1)
+        dropped.append("Hunter's Stim")
+    if random.random() < DANGER_WHISTLE_WIN_CHANCE:
+        add_item(user_id, "Danger Whistle", 1)
+        dropped.append("Danger Whistle")
+
     mark_user_dirty(user_id)
     analytics(user_id, "animal_fight_won", animal=name, biome=biome)
     return {"kind": "win", "animal": name, "sell_value": sell_value, "xp": xp_earned,
-            "level_ups": level_ups, "level": d["level"], "hp": hp, "max_hp": mx}
+            "level_ups": level_ups, "level": d["level"], "hp": hp, "max_hp": mx,
+            "dropped_items": dropped}
 
 def _animal_fight_ko(user_id: str, name: str, biome: str) -> dict:
     data[user_id]["fight"] = None
@@ -4908,16 +4999,17 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
         st["animal_fights_fled"] = st.get("animal_fights_fled", 0) + 1
         return {"kind": "escape", "animal": name}
 
+    stim_mult = 1 + item_buff_value(user_id, "hunters_stim") / 100
     dealt = 0
     if action == "attack":
         if random.random() < min(0.97, acc):
-            dealt = R(dmin, dmax)
+            dealt = int(R(dmin, dmax) * stim_mult)
             log.append(f"{emoji('target')} You hit the {name} for **{dealt}**.")
         else:
             log.append(f"{emoji('target')} Your shot goes wide.")
     elif action == "power":
         if random.random() < POWER_ATTACK_ACCURACY:
-            dealt = int(R(dmin, dmax) * POWER_ATTACK_DAMAGE_MULT)
+            dealt = int(R(dmin, dmax) * POWER_ATTACK_DAMAGE_MULT * stim_mult)
             log.append(f"{emoji('impact')} Power attack connects for **{dealt}**!")
         else:
             log.append(f"{emoji('impact')} You overcommit and miss completely.")
@@ -4951,6 +5043,7 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
     if stats["damage"][1] > 0 and random.random() < stats["attack_chance"]:
         base = R(*stats["damage"])
         mdmg = max(1, int(base * 0.4)) if guarded else base
+        mdmg = max(1, int(mdmg * (1 - item_buff_value(user_id, "iron_plating") / 100)))
         if guarded:
             log.append(f"{emoji('shield')} It lunges — your guard soaks most of it (**{mdmg}**).")
         else:
@@ -5023,11 +5116,15 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
             lvl = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{outcome['level']}**"
         elif outcome.get("level_ups", 0) > 1:
             lvl = f"\n-# {USER_EMOJIS['level_up']} Level up ×{outcome['level_ups']}! Now level **{outcome['level']}**"
+        drop_line = ""
+        if outcome.get("dropped_items"):
+            names = ", ".join(f"{ITEMS.get(n, {}).get('emoji', '')} {n}" for n in outcome["dropped_items"])
+            drop_line = f"\n-# Also found: {names}"
         body = (
             f"### {ico} {name} — Caught!\n"
             f"A hard-won catch.\n"
             f"-# **+ ◈ {outcome['sell_value']:,}** · **+ {outcome['xp']:,} XP**\n"
-            f"-# {emoji('hp') or '❤️'} HP: **{outcome['hp']}/{outcome.get('max_hp', PLAYER_BASE_HP)}**{lvl}"
+            f"-# {emoji('hp') or '❤️'} HP: **{outcome['hp']}/{outcome.get('max_hp', PLAYER_BASE_HP)}**{lvl}{drop_line}"
         )
         color = 0x2ECC71
     elif kind == "ko":
@@ -5234,6 +5331,13 @@ def _grant_hunters_path_reward(user_id: str, step: dict) -> str:
         ci = data[user_id].setdefault("crate_inv", {})
         ci[r["crate"]] = ci.get(r["crate"], 0) + 1
         parts.append(f"{CRATE_TIERS.get(r['crate'], {}).get('emoji', emoji('crate_sample'))} {r['crate']}")
+    if "item" in r:
+        add_item(user_id, r["item"], 1)
+        parts.append(f"{ITEMS.get(r['item'], {}).get('emoji', '')} {r['item']}")
+    if "heal_item" in r:
+        hi = data[user_id].setdefault("healing_inv", {})
+        hi[r["heal_item"]] = hi.get(r["heal_item"], 0) + 1
+        parts.append(f"{HEALING_ITEMS.get(r['heal_item'], {}).get('emoji', '')} {r['heal_item']}")
     return " · ".join(parts)
 
 def hunters_path_maybe_complete(user_id: str) -> dict:
@@ -5524,6 +5628,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
     acc_b = luck // 25 + trophy_effect_value(user_id, "combat_accuracy_pct")          # Roc: Grapnel Talon
     pk_acc_b = trophy_effect_value(user_id, "punch_kick_accuracy_pct")                # Manticore: Barbed Tail-Spine
     dmg_mult = 1 + trophy_effect_value(user_id, "myth_dmg_pct") / 100                 # Werewolf: Silver-Burned Fang
+    dmg_mult *= 1 + item_buff_value(user_id, "hunters_stim") / 100                    # Hunter's Stim
     R     = random.randint
     log: list[str] = []
 
@@ -5640,6 +5745,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
             special = random.random() < 0.15
             mdmg    = int(base * 1.6) if special else base
             mdmg    = int(mdmg * (1 - trophy_effect_value(user_id, "incoming_dmg_pct") / 100))  # Sea Serpent
+            mdmg    = max(1, int(mdmg * (1 - item_buff_value(user_id, "iron_plating") / 100)))  # Iron Plating
             if not b.get("first_enemy_hit_done"):
                 red = trophy_effect_value(user_id, "first_enemy_hit_reduction_pct")   # Yeti: Frost-Matted Pelt
                 if red:
@@ -6794,9 +6900,14 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
 
     if intro or not b.get("log"):
         _bonus_line = _TRACK_BONUS_BLURB.get(b.get("tracking_bonus", ""), "")
+        _item_line = ""
+        if b.get("item_dropped"):
+            it = ITEMS.get(b["item_dropped"], {})
+            _item_line = f"\n-# {it.get('emoji', '')} Along the way you picked up a **{b['item_dropped']}**!"
         log_txt = (f"-# {RARITY_ICONS.get('mythic','')} **You've run the {ico} {name} to ground!**\n"
                    f"-# {random.choice(_MYTH_TAUNTS)}"
-                   + (f"\n-# {_bonus_line}" if _bonus_line else ""))
+                   + (f"\n-# {_bonus_line}" if _bonus_line else "")
+                   + _item_line)
     else:
         log_txt = "\n".join(f"-# {ln}" for ln in b.get("log", []))
 
@@ -7821,6 +7932,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         {"label": "Tools",    "emoji": emoji_partial('wrench'), "value": "tools",    "default": tab == "tools"},
         {"label": "Ammo",     "emoji": emoji_partial('diamond_small'), "value": "ammo",     "default": tab == "ammo"},
         {"label": "Healing",  "emoji": emoji_partial('adhesive_bandage'), "value": "healing",  "default": tab == "healing"},
+        {"label": "Items",    "emoji": emoji_partial('crate_sample'), "value": "items", "default": tab == "items"},
         {"label": "Vehicles", "emoji": emoji_partial('jeep'), "value": "vehicles", "default": tab == "vehicles"},
     ]
     tab_dropdown = {"type": 1, "components": [{"type": 3,
@@ -7987,9 +8099,10 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     elif tab == "healing":
         header = f"{shop_header}\n{hp_status_line(user_id)}"
         item_sections = []
+        level = d.get("level", 1)
         for name, it in HEALING_ITEMS.items():
             owned_qty = d.get("healing_inv", {}).get(name, 0)
-            _pr = ev_price(it["price"])
+            _pr = ev_price(healing_item_price(name, level))
             content = (f"### {it['emoji']} {name}\n"
                       f"Owned: **{owned_qty}** · ◈ {_shop_price_str(_pr)}\n"
                       f"-# Restores **{it['heal']} HP**. Use it mid-fight or from your inventory.")
@@ -8000,6 +8113,42 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                     "custom_id": f"shop:heal_buy:{name}:{user_id}"},
             })
         comps = [{"type": 10, "content": header},
+                 {"type": 14, "divider": True, "spacing": 1},
+                 tab_dropdown,
+                 {"type": 14, "divider": True, "spacing": 1},
+                 *item_sections,
+                 _back_row(user_id)]
+
+    elif tab == "items":
+        level = d.get("level", 1)
+        item_sections = []
+        for name, spec in ITEM_GOLD_SHOP.items():
+            it = ITEMS[name]
+            owned_qty = item_count(user_id, name)
+            _pr = ev_price(item_shop_price(spec["price_x"], level))
+            content = (f"### {it['emoji']} {name}\n"
+                      f"Owned: **{owned_qty}/{ITEM_STACK_CAP}** · ◈ {_shop_price_str(_pr)}\n"
+                      f"-# {it['description']}")
+            item_sections.append({
+                "type": 9,
+                "components": [{"type": 10, "content": content}],
+                "accessory": {"type": 2, "style": 1, "label": "Buy", "disabled": owned_qty >= ITEM_STACK_CAP,
+                    "custom_id": f"shop:item_buy:{name}:{user_id}"},
+            })
+        for name, spec in ITEM_GEM_SHOP.items():
+            it = ITEMS[name]
+            owned_qty = item_count(user_id, name)
+            _pr = ev_price(spec["price"])
+            content = (f"### {it['emoji']} {name}\n"
+                      f"Owned: **{owned_qty}/{ITEM_STACK_CAP}** · {emoji('gem')} {_shop_price_str(_pr)}\n"
+                      f"-# {it['description']}")
+            item_sections.append({
+                "type": 9,
+                "components": [{"type": 10, "content": content}],
+                "accessory": {"type": 2, "style": 1, "label": "Buy", "disabled": owned_qty >= ITEM_STACK_CAP,
+                    "custom_id": f"shop:item_buy:{name}:{user_id}"},
+            })
+        comps = [{"type": 10, "content": shop_header},
                  {"type": 14, "divider": True, "spacing": 1},
                  tab_dropdown,
                  {"type": 14, "divider": True, "spacing": 1},
@@ -8480,6 +8629,8 @@ def _quest_section(q: dict, claim_prefix: str, user_id: str) -> dict:
         reward_bits.append(f"{emoji('gem')}{q['gems_reward']}")
     if q.get("crate_reward"):
         reward_bits.append(f"1× {q['crate_reward']}")
+    if q.get("item_reward"):
+        reward_bits.append(f"1× {q['item_reward']}")
     content = (
         f"{done_tag}{_quest_icon(q)} {q['description']}\n"
         f"{bar} {q['progress']:,}/{q['target']:,} ({pct_label})\n"
@@ -8772,13 +8923,19 @@ def build_idle_haul_result_components(user_id: str, result: dict) -> list:
 
     inv_count = len(d.get("inv", []))
     sell_val  = inv_sell_value(user_id)
+    extra_line = ""
+    if result.get("ration_bonus"):
+        extra_line += f"\n-# {ITEMS['Camp Rations']['emoji']} Camp Rations kicked in — **+25%** this haul."
+    if result.get("item_dropped"):
+        it = ITEMS.get(result["item_dropped"], {})
+        extra_line += f"\n-# {it.get('emoji', '')} Your hunters also found a **{result['item_dropped']}**!"
     body = (
         f"### {d.get('_display_name', 'Hunter')}'s Hunting Camp — Haul Collected\n"
         f"Your hunters brought back **{result['count']}** animals from "
         f"{BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**:\n"
         + "\n".join(lines)
         + f"\n\n**+ {result['total_xp']:,} XP · Sell Value: ◈ {result['total_val']:,}**"
-        f"{lvl_line}\n"
+        f"{lvl_line}{extra_line}\n"
         f"-# {emoji('inventory')} Inventory: **{inv_count}** · Sell value: **◈ {sell_val:,}**\n"
         f"-# ◈ **{d['money']:,}** · Level **{d['level']:,}** "
         f"({d['xp']:,}/{xp_for_level(d['level']):,})"
@@ -8888,8 +9045,12 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
         "ammo_inv": {}, "equipped_ammo": None,
         "vehicle": "None", "owned_vehicles": [],
         # Crafting materials wipe too — a fresh run doesn't keep a
-        # stockpile of crates/shards/crystals from the last one.
+        # stockpile of crates/shards/crystals from the last one. Consumable
+        # items wipe too, or a player could launder shards/crystals into
+        # crafted items (Iron Plating, Lucky Hammer, ...) right before a
+        # reset and dodge the wipe entirely.
         "crate_inv": {}, "shards": {}, "crystals": {}, "craft_queue": [],
+        "items": {}, "item_buffs": {},
         # Camp resets fully too — no hired hunters, no capacity upgrades,
         # same as a brand-new account.
         "idle": {
@@ -9034,6 +9195,9 @@ def _fmt_reward(reward: dict) -> str:
         return f"{emoji('clock')} **+{reward['amount']}% {stat_label}** for {reward['minutes']} min"
     if t == "title":
         return f'`🏷️` Title: **"{reward["title"]}"**'
+    if t == "item":
+        it = ITEMS.get(reward["name"]) or HEALING_ITEMS.get(reward["name"], {})
+        return f"{it.get('emoji', '')} {reward['name']}"
     return "???"
 
 def _crystals_owned_line(user_id: str) -> str:
@@ -9062,6 +9226,31 @@ def _crate_shop_sections(user_id: str) -> list:
             "components": [{"type": 10, "content": content}],
             "accessory": {"type": 2, "style": 1 if can else 2, "label": "Buy",
                 "custom_id": f"crate:buy:{name}:{user_id}", "disabled": not can},
+        })
+    return sections
+
+def _craft_item_recipe_sections(user_id: str) -> list:
+    """Instant shard/crystal -> finished item recipes (Iron Plating, etc.) —
+    unlike crystal-fusing, these are one click, no timer, like the crate shop."""
+    sections = []
+    for name, rec in CRAFT_ITEM_RECIPES.items():
+        it = ITEMS[name]
+        owned = item_count(user_id, name)
+        have  = shard_count(user_id, rec["rarity"]) if rec["kind"] == "shard" else crystal_count(user_id, rec["rarity"])
+        cost  = rec["cost"]
+        can   = have >= cost and owned < ITEM_STACK_CAP
+        mat_icon = SHARD_ICONS[rec["rarity"]] if rec["kind"] == "shard" else CRYSTAL_ICONS[rec["rarity"]]
+        mat_word = "Shard" if rec["kind"] == "shard" else "Crystal"
+        content = (
+            f"{it['emoji']} **{name}** — {mat_icon} {cost} {_rarity_label(rec['rarity'])} "
+            f"{mat_word}{'s' if cost != 1 else ''} (you have **{have}**) · Owned: **{owned}/{ITEM_STACK_CAP}**\n"
+            f"-# {it['description']}"
+        )
+        sections.append({
+            "type": 9,
+            "components": [{"type": 10, "content": content}],
+            "accessory": {"type": 2, "style": 1 if can else 2, "label": "Craft",
+                "custom_id": f"craft:item:{name}:{user_id}", "disabled": not can},
         })
     return sections
 
@@ -9200,6 +9389,10 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
     rows.append({"type": 14, "divider": True, "spacing": 1})
     rows.append({"type": 10, "content": f"### {emoji('crate_sample')} Crate Shop\n{_crystals_owned_line(user_id)}"})
     rows.extend(_crate_shop_sections(user_id))
+
+    rows.append({"type": 14, "divider": True, "spacing": 1})
+    rows.append({"type": 10, "content": f"### {emoji('adhesive_bandage')} Item Crafting\n-# Instant — no queue."})
+    rows.extend(_craft_item_recipe_sections(user_id))
 
     rows.append({"type": 1, "components": [
         {"type": 2, "style": 2, "label": "Refresh", "emoji": emoji_partial("refresh"), "custom_id": f"craft:open:{user_id}"},
@@ -9391,6 +9584,7 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
         money = q.get("money_reward", 0)
         gems  = q.get("gems_reward", 0)
         crate = q.get("crate_reward")
+        item  = q.get("item_reward")
         q["claimed"] = True
 
         d["xp"] += xp
@@ -9403,6 +9597,8 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
         if crate:
             ci = d.setdefault("crate_inv", {})
             ci[crate] = ci.get(crate, 0) + 1
+        if item:
+            add_item(user_id, item, 1)
         d["stats"].setdefault("first_quest_claim_ts", int(time.time()))
         _hp_result = hunters_path_maybe_complete(user_id)
 
@@ -9424,6 +9620,7 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
             if wk["n"] >= DAILY_QUEST_WEEKLY_TARGET and not wk["paid"]:
                 wk["paid"] = True
                 add_gems(user_id, DAILY_QUEST_WEEKLY_GEMS, "quest_milestone")
+                add_item(user_id, "Weather Vane", 1)
                 milestone_gems = DAILY_QUEST_WEEKLY_GEMS
                 milestone_hit  = DAILY_QUEST_WEEKLY_TARGET
 
@@ -9433,7 +9630,7 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
             d["level"] += 1
             level_ups   += 1
 
-        return {"ok": True, "xp": xp, "money": money, "gems": gems, "crate": crate,
+        return {"ok": True, "xp": xp, "money": money, "gems": gems, "crate": crate, "item": item,
                 "level_ups": level_ups,
                 "level": d["level"], "xp_now": d["xp"],
                 "xp_needed": xp_for_level(d["level"]),
@@ -10516,6 +10713,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
     elif page == "shop":
         def _bl(key):
             return f" · **MAX {MAX_TRIBE_BOOST}%**" if td.get(key, 0) >= MAX_TRIBE_BOOST else f" — 50 {emoji('gem')}"
+        war_horn_price = ITEM_TRIBE_SHOP["War Horn"]["price"]
         content = (
             f"### {emoji('shop')} Tribe Shop — {tribe_name}\n"
             f"{emoji('gem')} Your Gems: **{data[user_id]['gems']}**\n\n"
@@ -10523,7 +10721,10 @@ def build_tribe_components(user_id: str, tribe_name: str,
             f"{TRIBE_EMOJIS['sell_boost']} Sell Boost: **{td['sell_price_boost']}%**{_bl('sell_price_boost')}\n"
             f"{TRIBE_EMOJIS['xp_boost']} XP Boost: **{td['xp_boost']}%**{_bl('xp_boost')}\n"
             f"{TRIBE_EMOJIS['members']} +1 Slot: **{td['max_members']}** — 100 {emoji('gem')}\n"
-            f"-# Tribe boosts cap at {MAX_TRIBE_BOOST}%."
+            f"-# Tribe boosts cap at {MAX_TRIBE_BOOST}%.\n\n"
+            f"{ITEMS['War Horn']['emoji']} **War Horn** — {war_horn_price} {emoji('gem')} "
+            f"(you own {item_count(user_id, 'War Horn')}/{ITEM_STACK_CAP})\n"
+            f"-# {ITEMS['War Horn']['description']} Use it with `/use`."
         )
         btns = []
         if is_leader or is_officer:
@@ -10540,6 +10741,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
                 {"type": 2, "style": 3, "label": "+1 Slot",
                  "custom_id": f"tribe:shop:max_members:100:1:{user_id}"},
             ]
+        btns.append({"type": 2, "style": 2, "label": "Buy War Horn",
+                     "custom_id": f"tribe:buyitem:war_horn:{user_id}",
+                     "disabled": item_count(user_id, "War Horn") >= ITEM_STACK_CAP})
         rows = [{"type": 10, "content": content}, {"type": 14, "divider": True, "spacing": 1}]
         if btns:
             rows.append({"type": 1, "components": btns})
@@ -11555,6 +11759,13 @@ def _resolve_crate_reward(user_id: str, crate_name: str) -> tuple[dict, dict, di
     flow and auto-open-on-pickup (Settings). Returns (reward, extras, hp_result)."""
     reward = open_crate(crate_name, crate_value_scale(data[user_id].get("level", 1)))
 
+    # Only consume the Lucky Hammer once it actually lands on a money/gems
+    # roll — otherwise a title/boost/item roll (roughly half of most tiers'
+    # weight table) would burn the buff for zero effect.
+    if data[user_id].get("_lucky_hammer_active") and reward["type"] in ("money", "gems"):
+        reward["amount"] *= 2
+        data[user_id]["_lucky_hammer_active"] = False
+
     if reward["type"] == "money":
         add_money(user_id, reward["amount"], "crate")
         data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + reward["amount"]
@@ -11576,6 +11787,12 @@ def _resolve_crate_reward(user_id: str, crate_name: str) -> tuple[dict, dict, di
         earned = data[user_id].setdefault("earned_titles", [])
         if title not in earned:
             earned.append(title)
+    elif reward["type"] == "item":
+        if reward.get("bag") == "heal":
+            hi = data[user_id].setdefault("healing_inv", {})
+            hi[reward["name"]] = hi.get(reward["name"], 0) + reward.get("qty", 1)
+        else:
+            add_item(user_id, reward["name"], reward.get("qty", 1))
 
     data[user_id]["stats"]["crates_opened"] = data[user_id]["stats"].get("crates_opened", 0) + 1
     _hp_result = hunters_path_maybe_complete(user_id)
@@ -12235,6 +12452,8 @@ async def _dispatch_component(interaction: discord.Interaction):
                 xp_msg += f" · {emoji('gem')}{result['gems']}"
             if result.get("crate"):
                 xp_msg += f" · 1× {result['crate']}"
+            if result.get("item"):
+                xp_msg += f" · 1× {result['item']}"
             if result["level_ups"] == 1:
                 xp_msg += f" · Level up! Now level **{result['level']}**"
             elif result["level_ups"] > 1:
@@ -12244,7 +12463,8 @@ async def _dispatch_component(interaction: discord.Interaction):
             if result.get("milestone_hit"):
                 await send_ephemeral_v2(interaction,
                     f"{emoji('gem')} **Weekly goal reached!** {result['milestone_hit']} daily quests "
-                    f"completed this week — **+{result['milestone_gems']}** {emoji('gem')}.", 0x9B59B6)
+                    f"completed this week — **+{result['milestone_gems']}** {emoji('gem')} "
+                    f"· 1× {ITEMS['Weather Vane']['emoji']} Weather Vane.", 0x9B59B6)
             await _hunters_path_notify(interaction, owner_id, result.get("hunters_path_result"))
             page = _quest_page.get(owner_id, 0)
             await smart_update_v2(interaction, build_quests_components(owner_id, page))
@@ -12284,6 +12504,8 @@ async def _dispatch_component(interaction: discord.Interaction):
             xp_msg += f" · {emoji('gem')}{result['gems']}"
         if result.get("crate"):
             xp_msg += f" · 1× {result['crate']}"
+        if result.get("item"):
+            xp_msg += f" · 1× {result['item']}"
         if result["level_ups"] == 1:
             xp_msg += f" · Level up! Now level **{result['level']}**"
         elif result["level_ups"] > 1:
@@ -12364,6 +12586,30 @@ async def _dispatch_component(interaction: discord.Interaction):
                     "queue_full":        f"{emoji('cross_mark')} The forge queue is full.",
                     "bad_rarity":        f"{emoji('cross_mark')} Unknown rarity.",
                 }.get(res.get("reason"), f"{emoji('cross_mark')} Couldn't craft that.")
+            await smart_update_v2(interaction, build_craft_components(owner_id, notice))
+            return
+
+        if parts[1] == "item":
+            item_name = parts[2]
+            rec = CRAFT_ITEM_RECIPES.get(item_name)
+            if not rec:
+                return
+            notice = None
+            async with user_transaction(owner_id):
+                have = (shard_count(owner_id, rec["rarity"]) if rec["kind"] == "shard"
+                        else crystal_count(owner_id, rec["rarity"]))
+                if item_count(owner_id, item_name) >= ITEM_STACK_CAP:
+                    notice = f"{emoji('cross_mark')} You already have the max ({ITEM_STACK_CAP}) of this item."
+                elif have < rec["cost"]:
+                    mat_word = "shards" if rec["kind"] == "shard" else "crystals"
+                    notice = f"{emoji('cross_mark')} Need {rec['cost']} {_rarity_label(rec['rarity'])} {mat_word}."
+                else:
+                    if rec["kind"] == "shard":
+                        data[owner_id]["shards"][rec["rarity"]] -= rec["cost"]
+                    else:
+                        data[owner_id]["crystals"][rec["rarity"]] -= rec["cost"]
+                    add_item(owner_id, item_name, 1)
+                    notice = f"{emoji('check_mark')} Crafted a **{item_name}**."
             await smart_update_v2(interaction, build_craft_components(owner_id, notice))
             return
 
@@ -13174,8 +13420,8 @@ async def _dispatch_component(interaction: discord.Interaction):
             if item_name not in HEALING_ITEMS:
                 await send_ephemeral_v2(interaction, "Unknown item.", 0xE74C3C)
                 return
-            price = HEALING_ITEMS[item_name]["price"]
             async with user_transaction(owner_id):
+                price = healing_item_price(item_name, data[owner_id].get("level", 1))
                 ok, err = _shop_purchase(owner_id, "money", price, "healing item")
                 if ok:
                     hi = data[owner_id].setdefault("healing_inv", {})
@@ -13184,6 +13430,29 @@ async def _dispatch_component(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, err, 0xE74C3C)
                 return
             await smart_update_v2(interaction, build_shop_components(owner_id, "healing"))
+            return
+
+        if parts[1] == "item_buy":
+            item_name = parts[2]
+            gold_spec = ITEM_GOLD_SHOP.get(item_name)
+            gem_spec  = ITEM_GEM_SHOP.get(item_name)
+            if not gold_spec and not gem_spec:
+                await send_ephemeral_v2(interaction, "Unknown item.", 0xE74C3C)
+                return
+            async with user_transaction(owner_id):
+                if item_count(owner_id, item_name) >= ITEM_STACK_CAP:
+                    ok, err = False, f"{emoji('cross_mark')} You already have the max ({ITEM_STACK_CAP}) of this item."
+                elif gold_spec:
+                    price = item_shop_price(gold_spec["price_x"], data[owner_id].get("level", 1))
+                    ok, err = _shop_purchase(owner_id, "money", price, "shop item")
+                else:
+                    ok, err = _shop_purchase(owner_id, "gems", gem_spec["price"], "shop item")
+                if ok:
+                    add_item(owner_id, item_name, 1)
+            if not ok:
+                await send_ephemeral_v2(interaction, err, 0xE74C3C)
+                return
+            await smart_update_v2(interaction, build_shop_components(owner_id, "items"))
             return
 
         if parts[1] == "tool_prev":
@@ -13821,6 +14090,29 @@ async def _dispatch_component(interaction: discord.Interaction):
                         MAX_TRIBE_BOOST,
                         tribe_data[tribe_nm].get(boost_key, 0) + amount,
                     )
+            if _err:
+                await send_ephemeral_v2(interaction, _err, 0xE74C3C)
+                return
+            await smart_update_v2(
+                interaction,
+                build_tribe_components(owner_id, tribe_nm, "shop", sort),
+            )
+            return
+
+        if action == "buyitem":
+            item_key = parts[2]
+            if item_key != "war_horn":
+                await send_ephemeral_v2(interaction, "Unknown shop item.", 0xE74C3C)
+                return
+            price = ITEM_TRIBE_SHOP["War Horn"]["price"]
+            _err = None
+            async with user_tribe_transaction(owner_id, tribe_nm):
+                if item_count(owner_id, "War Horn") >= ITEM_STACK_CAP:
+                    _err = f"{emoji('cross_mark')} You already have the max ({ITEM_STACK_CAP}) War Horns."
+                elif not spend_gems(owner_id, price, "tribe shop"):
+                    _err = f"Need {emoji('gem')}{price}."
+                else:
+                    add_item(owner_id, "War Horn", 1)
             if _err:
                 await send_ephemeral_v2(interaction, _err, 0xE74C3C)
                 return
@@ -16206,7 +16498,7 @@ bot.tree.add_command(tribe_group)
 _market: dict[str, dict] = {}        # id -> {id, seller, kind, item, qty, price, created_ts, expires_ts}
 _market_view: dict[str, dict] = {}   # viewer uid -> {"filter": "all"|"crate"|"trophy", "page": int}
 _MARKET_PAGE = 5
-_MARKET_FILTERS = {"all": "Everything", "crate": "Crates", "trophy": "Trophies"}
+_MARKET_FILTERS = {"all": "Everything", "crate": "Crates", "trophy": "Trophies", "item": "Items"}
 
 def _market_canon(item: str) -> tuple[str, str] | tuple[None, None]:
     """(canonical item name, kind) for a loose name, or (None, None)."""
@@ -16217,13 +16509,22 @@ def _market_canon(item: str) -> tuple[str, str] | tuple[None, None]:
     for n in TROPHY_EFFECTS:
         if raw == n.lower():
             return n, "trophy"
+    for n, it in ITEMS.items():
+        if it.get("tradable") and raw == n.lower():
+            return n, "item"
     return None, None
 
+_MARKET_KIND_BAG = {"crate": "crate_inv", "trophy": "myth_items", "item": "items"}
+
 def _market_inv(user_id: str, kind: str) -> dict:
-    return data[user_id].setdefault("crate_inv" if kind == "crate" else "myth_items", {})
+    return data[user_id].setdefault(_MARKET_KIND_BAG.get(kind, "crate_inv"), {})
 
 def _market_icon(item: str, kind: str) -> str:
-    return CRATE_TIERS[item]["emoji"] if kind == "crate" else trophy_emoji(item)
+    if kind == "crate":
+        return CRATE_TIERS[item]["emoji"]
+    if kind == "item":
+        return ITEMS.get(item, {}).get("emoji", "")
+    return trophy_emoji(item)
 
 def _market_live(kind: str = "all") -> list[dict]:
     now = time.time()
@@ -16253,12 +16554,14 @@ def _market_sellable(user_id: str) -> list[tuple[str, str, int]]:
     d = data.get(user_id) or {}
     out = [(n, "crate", c) for n, c in (d.get("crate_inv") or {}).items() if c > 0 and n in CRATE_TIERS]
     out += [(n, "trophy", c) for n, c in (d.get("myth_items") or {}).items() if c > 0 and n in TROPHY_EFFECTS]
+    out += [(n, "item", c) for n, c in (d.get("items") or {}).items()
+            if c > 0 and ITEMS.get(n, {}).get("tradable")]
     return out
 
 async def market_create_listing(user_id: str, item: str, qty: int, price: int) -> tuple[bool, str]:
     name, kind = _market_canon(item)
     if not name:
-        return False, "You can only sell **crates** and **Mythical trophies** on the market."
+        return False, "You can only sell **crates**, **Mythical trophies**, or tradable **items** on the market."
     block = _market_account_block(user_id, selling=True)
     if block:
         return False, block
@@ -16308,6 +16611,11 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         if not lst or lst["expires_ts"] <= time.time():
             return False, "That listing is gone — someone beat you to it, or it expired."
         n     = lst["qty"] if qty is None else max(1, min(int(qty), lst["qty"]))
+        if lst["kind"] == "item":
+            room = ITEM_STACK_CAP - int(data[buyer_id].get("items", {}).get(lst["item"], 0))
+            if room <= 0:
+                return False, f"You already have the max ({ITEM_STACK_CAP}) of **{lst['item']}**."
+            n = min(n, room)
         total = n * lst["price"]
         if data[buyer_id]["money"] < total:
             return False, f"You need **◈ {total:,}** for {n}× {lst['item']}."
@@ -16336,9 +16644,10 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         f"## {emoji('money_bag')} Market sale!\n"
         f"`{get_username(buyer_id)}` bought **{n}× {lst['item']}** for **◈ {total:,}**.\n"
         f"-# You received **◈ {total - tax:,}** after the {int(MARKET_TAX * 100)}% market tax."))
+    _use_hint = {"trophy": "\n-# Use trophies from `/use` or the Trophy Cabinet.",
+                 "item":   "\n-# Use it with `/use`."}.get(lst["kind"], "\n-# Open crates with `/use`.")
     return True, (f"{emoji('check_mark')} Bought **{n}× {_market_icon(lst['item'], lst['kind'])} {lst['item']}** "
-                  f"for **◈ {total:,}**." + ("\n-# Use trophies from `/use` or the Trophy Cabinet."
-                                             if lst["kind"] == "trophy" else "\n-# Open crates with `/use`."))
+                  f"for **◈ {total:,}**." + _use_hint)
 
 async def market_return(listing_id: str, *, requester: str | None = None) -> tuple[bool, str]:
     """Cancel (requester = the seller) or expire (requester None) a listing and
@@ -16360,14 +16669,19 @@ async def market_return(listing_id: str, *, requester: str | None = None) -> tup
         # Delete first: a crash in between loses the items, never duplicates them.
         await backend.market_delete(listing_id)
         _market.pop(listing_id, None)
-        inv = _market_inv(seller, lst["kind"])
-        inv[lst["item"]] = int(inv.get(lst["item"], 0)) + lst["qty"]
+        if lst["kind"] == "item":
+            add_item(seller, lst["item"], lst["qty"])   # over-cap copies become gold, never lost
+        else:
+            inv = _market_inv(seller, lst["kind"])
+            inv[lst["item"]] = int(inv.get(lst["item"], 0)) + lst["qty"]
     return True, f"{emoji('check_mark')} **{lst['qty']}× {lst['item']}** returned to your inventory."
 
 def _market_drop_crate_listings(user_id: str) -> None:
-    """Account resets wipe crates — listed crates go with them (otherwise listing
-    them just before a reset and cancelling afterwards would dodge the wipe)."""
-    for lid in [lid for lid, l in _market.items() if l["seller"] == user_id and l["kind"] == "crate"]:
+    """Account resets wipe crates and items — listings for either go with them
+    (otherwise listing one just before a reset and cancelling afterwards would
+    dodge the wipe). Trophies survive resets, so trophy listings are untouched."""
+    for lid in [lid for lid, l in _market.items()
+                if l["seller"] == user_id and l["kind"] in ("crate", "item")]:
         _market.pop(lid, None)
         try:
             asyncio.get_running_loop().create_task(backend.market_delete(lid))
@@ -16424,17 +16738,20 @@ def build_market_buy_components(user_id: str, listing_id: str) -> list:
     if l["kind"] == "trophy":
         body += (f"-# Use it for {trophy_duration_hours(l['item'])}h: {TROPHY_EFFECTS[l['item']]['desc']}\n"
                  f"-# You own {trophy_copies(user_id, l['item'])}.\n")
+    elif l["kind"] == "item":
+        body += f"-# {ITEMS[l['item']]['description']}\n-# You own {item_count(user_id, l['item'])}/{ITEM_STACK_CAP}.\n"
     else:
         body += f"-# {CRATE_TIERS[l['item']]['description']}\n-# You own {data[user_id].get('crate_inv', {}).get(l['item'], 0)}.\n"
     body += f"-# Your balance: **◈ {data[user_id]['money']:,}**"
+    at_cap = l["kind"] == "item" and item_count(user_id, l["item"]) >= ITEM_STACK_CAP
     btns = [{"type": 2, "style": 3, "label": f"Buy 1 · ◈ {_short_num(l['price'])}",
              "custom_id": f"market:buy:{listing_id}:1:{user_id}",
-             "disabled": data[user_id]["money"] < l["price"]}]
+             "disabled": at_cap or data[user_id]["money"] < l["price"]}]
     if l["qty"] > 1:
         total = l["qty"] * l["price"]
         btns.append({"type": 2, "style": 1, "label": f"Buy all {l['qty']} · ◈ {_short_num(total)}",
                      "custom_id": f"market:buy:{listing_id}:all:{user_id}",
-                     "disabled": data[user_id]["money"] < total})
+                     "disabled": at_cap or data[user_id]["money"] < total})
     btns.append({"type": 2, "style": 2, "label": "◀ Market", "custom_id": f"market:browse:keep:{user_id}"})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body}, {"type": 14, "divider": True, "spacing": 1},
@@ -16794,9 +17111,10 @@ async def id_cmd(interaction: discord.Interaction, user: discord.User = None):
 # /info  — encyclopedia: biomes · tools · ammo · animals
 # ─────────────────────────────────────────────
 
-_INFO_CATEGORIES = ("biomes", "tools", "ammo", "animals", "myths", "badges")
+_INFO_CATEGORIES = ("biomes", "tools", "ammo", "animals", "myths", "badges", "items")
 _INFO_CAT_LABELS = {"biomes": "Biomes", "tools": "Tools", "ammo": "Ammo",
-                    "animals": "Animals", "myths": "Mythical Creatures", "badges": "Badges"}
+                    "animals": "Animals", "myths": "Mythical Creatures", "badges": "Badges",
+                    "items": "Items"}
 
 # game_data.py has no per-biome flavour text of its own — keep short blurbs here.
 _INFO_BIOME_BLURB = {
@@ -16852,6 +17170,8 @@ def _info_entries(category: str) -> list[tuple[str, str]]:
     if category == "badges":
         return (sorted(((k, b["label"]) for k, b in BADGES.items()), key=lambda p: p[1])
                 + [(k, f"{b['label']} (special)") for k, b in SPECIAL_BADGES.items()])
+    if category == "items":
+        return [(n, n) for n in sorted(list(ITEMS) + list(HEALING_ITEMS))]
     return []
 
 
@@ -17068,6 +17388,48 @@ def _info_render_badge(key: str):
             _emoji_cdn_url(badge_emoji(key, 1)))
 
 
+_ITEM_SOURCE_LINES = {
+    "Smoke Bomb":       "Gold shop · also drops from Common/Uncommon Crates",
+    "Regen Tonic":      "Gold shop (next to the healing items) · also drops from Common Crates",
+    "Ammo Pouch":       "Gold shop · also drops from Common Crates",
+    "Camp Rations":     "Gold shop · a small chance per Hunting Camp collect",
+    "Gift Box":         "Gold shop",
+    "Iron Plating":     "Rare+ Crates · craft 3 Rare Crystals in `/craft`",
+    "Hunter's Stim":    "Epic+ Crates · winning a danger encounter (~10%)",
+    "Signal Flare":     "Locating a mythic while tracking (~15%) · Rare Crates",
+    "Bloodhound Scent": "Craft 5 Epic Shards in `/craft` · Legendary Crates",
+    "Scent Lure":       "Uncommon+ Crates · a daily quest reward",
+    "Danger Whistle":   "Winning a danger encounter (~20%) · Rare Crates",
+    "Rare Bait":        "Craft 3 Uncommon Crystals in `/craft` · Rare Crates",
+    "Trail Map":        f"{emoji('gem')} Gem shop (~20 gems) · Legendary Crates",
+    "Weather Vane":     "The weekly 20-quest goal (alongside the gems) · Rare Crates",
+    "Forge Coal":       f"{emoji('gem')} Gem shop (~15 gems) · craft 2 Common Crystals in `/craft`",
+    "Lucky Hammer":     "Craft 1 Legendary Crystal in `/craft` · Mythic Crates",
+    "War Horn":         "Tribe shop (your own gems)",
+    "Haul Wagon":       f"{emoji('gem')} Gem shop (~40 gems) · Epic Crates",
+}
+
+def _info_render_item(key: str):
+    if key in HEALING_ITEMS:
+        it = HEALING_ITEMS[key]
+        source = "Gold shop (Healing tab)" if key != "Regen Tonic" else _ITEM_SOURCE_LINES["Regen Tonic"]
+        lines = [
+            f"### {emoji('adhesive_bandage')} Item Information",
+            f"-# **Heals:** {it['heal']} HP",
+            f"-# **Tradable on `/market`:** No",
+            f"-# **Source:** {source}",
+        ]
+        return f"# {it['emoji']} {key}", "-# Healing item", "\n".join(lines), None
+    it = ITEMS[key]
+    lines = [
+        f"### {emoji('crate_sample')} Item Information",
+        f"-# **Effect:** {it['description']}",
+        f"-# **Tradable on `/market`:** {'Yes' if it['tradable'] else 'No'}",
+        f"-# **Max stack:** {ITEM_STACK_CAP}",
+        f"-# **Source:** {_ITEM_SOURCE_LINES.get(key, '—')}",
+    ]
+    return f"# {it['emoji']} {key}", "-# Consumable item", "\n".join(lines), None
+
 def _info_render(category: str, key: str):
     if category == "biomes":
         return _info_render_biome(key)
@@ -17081,6 +17443,8 @@ def _info_render(category: str, key: str):
         return _info_render_myth(key)
     if category == "badges":
         return _info_render_badge(key)
+    if category == "items":
+        return _info_render_item(key)
     return "# ?", "", "Nothing to show.", None
 
 
@@ -17224,6 +17588,173 @@ def _canon_healing_name(value: str) -> str | None:
             return n
     return None
 
+def _canon_item_name(value: str) -> str | None:
+    """Resolve a loose consumable-item string to an ITEMS key."""
+    v = value.strip().lower()
+    for n in ITEMS:
+        if v == n.lower():
+            return n
+    return None
+
+def _append_temp_boost(container: dict, stat: str, amount: int, minutes: int) -> None:
+    """Append a {stat, amount, expires_at} entry to container["temp_boosts"]
+    and prune expired ones. ``container`` is either a player's data dict or a
+    tribe's data dict — both store temp boosts the same shape."""
+    tb = container.setdefault("temp_boosts", [])
+    tb.append({"stat": stat, "amount": amount, "expires_at": time.time() + minutes * 60})
+    container["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
+
+def _grant_temp_luck_or_xp(user_id: str, stat: str, amount: int, minutes: int) -> None:
+    _append_temp_boost(data[user_id], stat, amount, minutes)
+
+# item_name -> (stat, amount, minutes, flavor verb) — these 4 items are all
+# "grant a temp luck/xp boost", differing only in size; table-driven so a
+# future one is a data row, not a new elif branch.
+_TEMP_BOOST_ITEMS = {
+    "Signal Flare":     ("luck", SIGNAL_FLARE_LUCK, SIGNAL_FLARE_MINUTES, "Flare's up"),
+    "Bloodhound Scent": ("luck", BLOODHOUND_LUCK, BLOODHOUND_MINUTES, "The scent is thick"),
+    "Scent Lure":       ("luck", SCENT_LURE_LUCK, SCENT_LURE_MINUTES, "Lure's out"),
+    "Rare Bait":        ("luck", RARE_BAIT_LUCK, RARE_BAIT_MINUTES, "Baited"),
+    "Weather Vane":     ("xp", WEATHER_VANE_XP, WEATHER_VANE_MINUTES, "Wind's read"),
+}
+
+async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: str, item_name: str):
+    if item_count(user_id, item_name) <= 0:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{item_name}**.", 0xE74C3C)
+        return
+    it = ITEMS[item_name]
+
+    if item_name == "War Horn":
+        # Mutates tribe_data, so this needs the tribe lock too — every other
+        # tribe mutation goes through user_tribe_transaction (see memory:
+        # "every tribe mutation must recheck ... and run in
+        # user_tribe_transaction"); a plain user_transaction here would race
+        # with any concurrent tribe write and never get flushed by
+        # _flush_tribes().
+        tribe_name = data[user_id].get("tribe")
+        if not tribe_name or tribe_name not in tribe_data:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You need to be in a tribe to sound the horn.", 0xE74C3C)
+            return
+        async with user_tribe_transaction(user_id, tribe_name):
+            if item_count(user_id, item_name) <= 0:
+                await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{item_name}**.", 0xE74C3C)
+                return
+            if tribe_name not in tribe_data:
+                await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} That tribe no longer exists.", 0xE74C3C)
+                return
+            _append_temp_boost(tribe_data[tribe_name], "luck", WAR_HORN_LUCK, WAR_HORN_HOURS * 60)
+            iv = data[user_id]["items"]
+            iv[item_name] -= 1
+            if iv[item_name] <= 0:
+                del iv[item_name]
+        await send_ephemeral_v2(interaction,
+            f"{it['emoji']} You sound the horn — **{tribe_name}** gets **+{WAR_HORN_LUCK}% Luck** for {WAR_HORN_HOURS}h.",
+            0x2ECC71)
+        return
+
+    msg, color, consume = "", 0x2ECC71, True
+
+    async with user_transaction(user_id):
+        if item_count(user_id, item_name) <= 0:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{item_name}**.", 0xE74C3C)
+            return
+
+        if item_name == "Smoke Bomb":
+            if not animal_fight_active(user_id):
+                msg, color, consume = f"{emoji('cross_mark')} There's no danger encounter to escape right now.", 0xE74C3C, False
+            else:
+                animal = data[user_id]["fight"].get("animal", "it")
+                data[user_id]["fight"] = None
+                msg = f"{it['emoji']} Smoke fills the air — you slip away from the **{animal}** clean, no HP lost."
+
+        elif item_name == "Ammo Pouch":
+            ammo_name = data[user_id].get("equipped_ammo") or "Wooden Arrow"
+            if ammo_name not in AMMO:
+                ammo_name = "Wooden Arrow"
+            inv = data[user_id].setdefault("ammo_inv", {})
+            inv[ammo_name] = inv.get(ammo_name, 0) + AMMO_POUCH_QTY
+            msg = f"{it['emoji']} You restock **+{AMMO_POUCH_QTY} {ammo_name}**."
+
+        elif item_name == "Camp Rations":
+            idle = data[user_id].get("idle", {})
+            if not idle.get("active") or idle.get("stacks", 0) <= 0:
+                msg, color, consume = f"{emoji('cross_mark')} You don't have an active Hunting Camp to feed.", 0xE74C3C, False
+            else:
+                data[user_id]["_camp_rations_active"] = True
+                msg = f"{it['emoji']} Your hunters tuck in — the next haul you collect will be noticeably bigger."
+
+        elif item_name == "Gift Box":
+            level = data[user_id].get("level", 1)
+            if random.random() < 0.7:
+                amt = int(random.uniform(3, 8) * crate_value_scale(level))
+                add_money(user_id, amt, "gift box")
+                msg = f"{it['emoji']} You open it — **◈ {amt:,}**!"
+            else:
+                _grant_temp_luck_or_xp(user_id, "luck", 10, 20)
+                msg = f"{it['emoji']} You open it — **+10% Luck** for 20 minutes!"
+
+        elif item_name == "Iron Plating":
+            set_item_buff(user_id, "iron_plating", IRON_PLATING_MINUTES)
+            msg = f"{it['emoji']} Plated up — **-{IRON_PLATING_PCT}% incoming damage** for {IRON_PLATING_MINUTES} min, in any danger encounter."
+
+        elif item_name == "Hunter's Stim":
+            set_item_buff(user_id, "hunters_stim", HUNTERS_STIM_MINUTES)
+            msg = f"{it['emoji']} Jolted up — **+{HUNTERS_STIM_PCT}% damage dealt** for {HUNTERS_STIM_MINUTES} min, in any danger encounter."
+
+        elif item_name in _TEMP_BOOST_ITEMS:
+            stat, amount, minutes, verb = _TEMP_BOOST_ITEMS[item_name]
+            _grant_temp_luck_or_xp(user_id, stat, amount, minutes)
+            stat_label = "Luck" if stat == "luck" else "XP"
+            msg = f"{it['emoji']} {verb} — **+{amount}% {stat_label}** for {minutes} min."
+
+        elif item_name == "Danger Whistle":
+            data[user_id]["_danger_whistle_active"] = True
+            msg = f"{it['emoji']} One sharp blow — you'll get the **ambush** in your next danger encounter."
+
+        elif item_name == "Trail Map":
+            travel = data[user_id].get("travel")
+            if not travel:
+                msg, color, consume = f"{emoji('cross_mark')} You're not traveling anywhere right now.", 0xE74C3C, False
+            else:
+                dest = travel["dest"]
+                data[user_id]["biome"] = dest
+                data[user_id]["travel"] = None
+                msg = f"{it['emoji']} Shortcut found — you arrive instantly at **{BIOME_NAMES.get(dest, dest)}**."
+
+        elif item_name == "Forge Coal":
+            q = data[user_id].get("craft_queue", [])
+            if not q:
+                msg, color, consume = f"{emoji('cross_mark')} Nothing is queued in the forge right now.", 0xE74C3C, False
+            else:
+                q[0]["done_ts"] = time.time()
+                craft_tick(user_id)
+                msg = f"{it['emoji']} The forge roars — your next crystal finishes instantly."
+
+        elif item_name == "Lucky Hammer":
+            data[user_id]["_lucky_hammer_active"] = True
+            msg = f"{it['emoji']} One good knock — the next crate you open pays out **double** money/gems."
+
+        elif item_name == "Haul Wagon":
+            idle = data[user_id].get("idle", {})
+            if not idle.get("active") or idle.get("stacks", 0) <= 0:
+                msg, color, consume = f"{emoji('cross_mark')} You don't have an active Hunting Camp.", 0xE74C3C, False
+            else:
+                idle["started_at"] = idle.get("started_at", time.time()) - HAUL_WAGON_HOURS * 3600
+                idle_tick(user_id)
+                msg = f"{it['emoji']} You roll the clock back **{HAUL_WAGON_HOURS}h** — your camp's haul jumps ahead."
+
+        else:
+            msg, color, consume = f"{emoji('cross_mark')} `{item_name}` can't be used yet.", 0xE74C3C, False
+
+        if consume:
+            iv = data[user_id]["items"]
+            iv[item_name] -= 1
+            if iv[item_name] <= 0:
+                del iv[item_name]
+            mark_user_dirty(user_id)
+
+    await send_ephemeral_v2(interaction, msg, color)
+
 async def _use_healing_item_and_show(interaction: discord.Interaction, user_id: str, item_name: str):
     inv = data[user_id].get("healing_inv", {})
     if inv.get(item_name, 0) <= 0:
@@ -17266,6 +17797,10 @@ async def use_cmd(interaction: discord.Interaction, item: str):
     if heal_name:
         await _use_healing_item_and_show(interaction, user_id, heal_name)
         return
+    item_name = _canon_item_name(item)
+    if item_name:
+        await _use_generic_item_and_show(interaction, user_id, item_name)
+        return
     trophy = next((t for t in TROPHY_EFFECTS if t.lower() == item.strip().lower()), None)
     if trophy:
         async with user_transaction(user_id):
@@ -17274,8 +17809,8 @@ async def use_cmd(interaction: discord.Interaction, item: str):
                                 0x2ECC71 if res.get("ok") else 0xE74C3C)
         return
     await send_ephemeral_v2(interaction,
-        f"{emoji('cross_mark')} `{item}` isn't something you can use. `/use` opens Hunting Crates or heals with items like a "
-        f"Bandage / First Aid Kit / Field Medkit — buy them in </craft:{COMMAND_ID.get('craft','0')}> or "
+        f"{emoji('cross_mark')} `{item}` isn't something you can use. `/use` opens Hunting Crates, heals with items like a "
+        f"Bandage, or uses a consumable like a Smoke Bomb — buy them in </craft:{COMMAND_ID.get('craft','0')}> or "
         f"the shop.", 0xE67E22)
 
 @use_cmd.autocomplete("item")
@@ -17290,6 +17825,8 @@ async def _use_item_autocomplete(interaction: discord.Interaction, current: str)
     out += [app_commands.Choice(name=f"{n} (×{c}) — trophy, {trophy_duration_hours(n)}h"[:100], value=n)
             for n, c in (d.get("myth_items") or {}).items()
             if c > 0 and n in TROPHY_EFFECTS and cur in n.lower()]
+    out += [app_commands.Choice(name=f"{n} (×{c})"[:100], value=n)
+            for n, c in (d.get("items") or {}).items() if c > 0 and cur in n.lower()]
     return out[:25]
 
 @bot.tree.command(name="rules", description="View the Idle Hunter rules")
