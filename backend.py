@@ -222,6 +222,16 @@ async def init_schema():
         )
     """)
 
+    # Player market listings (2026-09-27). One JSON row per active listing; the
+    # listed items are held here (escrow), not in the seller's inventory.
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS market_listings (
+            listing_id TEXT PRIMARY KEY,
+            data       TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Create indexes
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_level ON users(level DESC)")
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_money ON users(money DESC)")
@@ -311,6 +321,29 @@ async def delete_tribe(name: str) -> None:
     if SAVES_DISABLED:
         return
     await _pool.execute("DELETE FROM tribes WHERE name = ?", (name,))
+    await _pool.commit()
+
+# ── Player market ──────────────────────────────────────────────
+async def market_load() -> dict[str, dict]:
+    if _pool is None:
+        return {}
+    async with _pool.execute("SELECT listing_id, data FROM market_listings") as cur:
+        return {row[0]: json.loads(row[1]) for row in await cur.fetchall()}
+
+async def market_save(listing: dict) -> None:
+    if SAVES_DISABLED or _pool is None:
+        return
+    await _pool.execute(
+        """INSERT INTO market_listings (listing_id, data, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(listing_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
+        (listing["id"], json.dumps(listing)))
+    await _pool.commit()
+
+async def market_delete(listing_id: str) -> None:
+    if SAVES_DISABLED or _pool is None:
+        return
+    await _pool.execute("DELETE FROM market_listings WHERE listing_id = ?", (listing_id,))
     await _pool.commit()
 
 async def bulk_save_tribes(tribes_dict: dict):

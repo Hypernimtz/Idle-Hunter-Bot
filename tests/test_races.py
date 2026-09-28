@@ -800,6 +800,199 @@ def test_db_backup_roundtrip():
 
 
 # ─────────────────────────────────────────────────────────────
+# ── trophies: consumable, timed ───────────────────────────────
+def _a_trophy(i=0):
+    return sorted(game_data.TROPHY_EFFECTS)[i]
+
+
+def test_trophy_use_consumes_a_copy_and_expires():
+    _reset()
+    uid, t = "2101", _a_trophy()
+    d = _mk_user(uid, myth_items={t: 2})
+    key = game_data.TROPHY_EFFECTS[t]["effect_key"]
+    res = app.use_trophy(uid, t)
+    assert res["ok"] and d["myth_items"][t] == 1
+    hours = game_data.trophy_duration_hours(t)
+    assert 1 <= hours <= 24 and abs(res["expires"] - (time.time() + hours * 3600)) < 5
+    assert app.trophy_effect_value(uid, key) > 0
+    d["trophy_active"][t] = time.time() - 1          # ran out
+    assert app.trophy_effect_value(uid, key) == 0
+    d["myth_items"][t] = 0
+    assert app.use_trophy(uid, t)["reason"] == "none_owned"
+    assert t in d["myth_items"], "a used-up trophy still counts as collected"
+
+
+def test_trophy_slot_cap_and_24h_cap():
+    _reset()
+    uid, t1, t2 = "2102", _a_trophy(0), _a_trophy(1)
+    d = _mk_user(uid, myth_items={t1: 50, t2: 1})       # 2 types collected → 1 slot
+    assert app.trophy_slots_unlocked(uid) == 1
+    assert app.use_trophy(uid, t1)["ok"]
+    assert app.use_trophy(uid, t2)["reason"] == "slots_full"
+    for _ in range(40):                                 # extending stops at the 24h cap
+        if not app.use_trophy(uid, t1)["ok"]:
+            break
+    assert d["trophy_active"][t1] <= time.time() + game_data.TROPHY_MAX_ACTIVE_HOURS * 3600 + 1
+    left = d["myth_items"][t1]
+    assert app.use_trophy(uid, t1)["reason"] == "maxed" and d["myth_items"][t1] == left
+
+
+def test_legacy_equipped_trophies_become_a_free_activation():
+    _reset()
+    uid, t = "2103", _a_trophy()
+    app.data[uid] = {}
+    _mk_user(uid)
+    d = app.data[uid]
+    d.update({"myth_items": {t: 1}, "equipped_trophies": [t]})
+    app.init_user(uid)
+    assert d["equipped_trophies"] == [] and d["myth_items"][t] == 1
+    assert t in app.active_trophies(uid)
+
+
+# ── market ────────────────────────────────────────────────────
+def _market_reset():
+    _reset()
+    app._market.clear()
+    app._market_view.clear()
+    app._dm_user = _noop_dm
+
+
+async def _noop_dm(*a, **k):
+    return True
+
+
+def _seller(uid, **over):
+    return _mk_user(uid, level=50, joined_date="2020-01-01", **over)
+
+
+def test_market_sell_escrows_and_buy_pays_minus_tax():
+    _market_reset()
+    s, b = "2201", "2202"
+    sd = _seller(s, money=0, crate_inv={"Rare Crate": 3})
+    bd = _mk_user(b, money=5_000, crate_inv={})
+
+    async def body():
+        await _ensure_db()
+        ok, lid = await app.market_create_listing(s, "rare", 2, 1_000)
+        assert ok, lid
+        assert sd["crate_inv"]["Rare Crate"] == 1
+        stored = await backend.market_load()
+        assert stored[lid]["qty"] == 2
+        ok, msg = await app.market_buy(b, lid, None)
+        assert ok, msg
+        assert bd["crate_inv"]["Rare Crate"] == 2 and bd["money"] == 3_000
+        assert sd["money"] == 1_900, sd["money"]          # 2,000 minus 5% burned
+        assert lid not in app._market and lid not in await backend.market_load()
+    run(body())
+
+
+def test_market_last_unit_sells_once_under_contention():
+    _market_reset()
+    s, b1, b2 = "2211", "2212", "2213"
+    sd = _seller(s, money=0, myth_items={_a_trophy(): 1})
+    _mk_user(b1, money=10_000); _mk_user(b2, money=10_000)
+
+    async def body():
+        await _ensure_db()
+        ok, lid = await app.market_create_listing(s, _a_trophy(), 1, 500)
+        assert ok
+        lock = backend.get_user_lock(s)
+        await lock.acquire()
+        t1 = asyncio.ensure_future(app.market_buy(b1, lid, 1))
+        t2 = asyncio.ensure_future(app.market_buy(b2, lid, 1))
+        await asyncio.sleep(0.05)
+        lock.release()
+        results = await asyncio.gather(t1, t2)
+        assert sorted(r[0] for r in results) == [False, True], results
+        got = [app.trophy_copies(u, _a_trophy()) for u in (b1, b2)]
+        assert sorted(got) == [0, 1]
+        assert sd["money"] == 475
+    run(body())
+
+
+def test_market_cancel_and_expiry_return_items():
+    _market_reset()
+    s = "2221"
+    t = _a_trophy()
+    sd = _seller(s, myth_items={t: 3}, crate_inv={"Epic Crate": 1})
+
+    async def body():
+        await _ensure_db()
+        ok, l1 = await app.market_create_listing(s, t, 2, 10)
+        ok2, l2 = await app.market_create_listing(s, "Epic Crate", 1, 10)
+        assert ok and ok2 and sd["myth_items"][t] == 1 and "Epic Crate" not in sd["crate_inv"]
+        assert t in sd["myth_items"], "listing every copy must keep the trophy 'collected'"
+        ok, _ = await app.market_return(l1, requester="someone-else")
+        assert not ok
+        ok, _ = await app.market_return(l1, requester=s)
+        assert ok and sd["myth_items"][t] == 3
+        app._market[l2]["expires_ts"] = time.time() - 1
+        await app.market_expiry_task.coro()
+        assert sd["crate_inv"]["Epic Crate"] == 1 and not app._market
+    run(body())
+
+
+def test_market_rules():
+    _market_reset()
+    s, fresh, tester = "2231", "2232", "2233"
+    _seller(s, money=10**9, crate_inv={"Common Crate": 20})
+    _mk_user(fresh, level=50, crate_inv={"Common Crate": 1})          # joined today
+    _mk_user(tester, level=50, joined_date="2020-01-01", is_tester=True,
+             money=10**9, crate_inv={"Common Crate": 1})
+
+    async def body():
+        await _ensure_db()
+        assert not (await app.market_create_listing(fresh, "Common Crate", 1, 10))[0]
+        assert not (await app.market_create_listing(tester, "Common Crate", 1, 10))[0]
+        assert not (await app.market_create_listing(s, "Common Crate", 1, 0))[0]
+        assert not (await app.market_create_listing(s, "Common Crate", 99, 10))[0]
+        assert not (await app.market_create_listing(s, "Bandage", 1, 10))[0]
+        ids = []
+        for _ in range(game_data.MARKET_MAX_LISTINGS):
+            ok, lid = await app.market_create_listing(s, "Common Crate", 1, 10)
+            assert ok
+            ids.append(lid)
+        assert not (await app.market_create_listing(s, "Common Crate", 1, 10))[0]
+        assert not (await app.market_buy(s, ids[0], 1))[0], "can't buy your own listing"
+        assert not (await app.market_buy(tester, ids[0], 1))[0], "testers can't buy"
+    run(body())
+
+
+def test_reset_wipes_listed_crates_but_not_trophies():
+    _market_reset()
+    s, t = "2241", _a_trophy()
+    _seller(s, crate_inv={"Mythic Crate": 1}, myth_items={t: 1})
+
+    async def body():
+        await _ensure_db()
+        await app.market_create_listing(s, "Mythic Crate", 1, 10)
+        await app.market_create_listing(s, t, 1, 10)
+        async with app.user_transaction(s):
+            app.apply_account_reset(s, prestige=True)
+        await asyncio.sleep(0)
+        kinds = sorted(l["kind"] for l in app._market.values())
+        assert kinds == ["trophy"], kinds
+    run(body())
+
+
+def test_market_panel_buy_flow():
+    _market_reset()
+    s, b = "2251", "2252"
+    _seller(s, crate_inv={"Uncommon Crate": 1})
+    bd = _mk_user(b, money=1_000)
+
+    async def body():
+        await _ensure_db()
+        ok, lid = await app.market_create_listing(s, "Uncommon Crate", 1, 250)
+        with Harness() as h:
+            await _click(b, f"market:view:{lid}:{b}")
+            await _click(b, f"market:buy:{lid}:1:{b}")
+            await _click(s, f"market:buy:{lid}:1:{b}")        # someone else's panel
+        assert bd["crate_inv"].get("Uncommon Crate") == 1 and bd["money"] == 750
+        assert len(h.panels) >= 2
+    run(body())
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

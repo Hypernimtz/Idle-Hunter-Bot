@@ -2434,6 +2434,33 @@ def trophy_emoji(name: str) -> str:
 
 
 # ─────────────────────────────────────────────
+# TROPHY USE  ·  consumable timed effects (2026-09-27)
+# ─────────────────────────────────────────────
+# Using a trophy consumes one copy and switches its effect on for a while —
+# longer for creatures from harder biomes: village 1h … celestial peaks 24h.
+# Using one that's already running adds its duration again, up to the max.
+TROPHY_MAX_ACTIVE_HOURS = 24
+
+def trophy_duration_hours(trophy: str) -> int:
+    creature = TROPHY_EFFECTS.get(trophy, {}).get("creature", "")
+    tier = BIOME_TOOL_TIER.get(MYTHIC_CREATURES.get(creature, {}).get("biome", ""), 1)
+    top = max(BIOME_TOOL_TIER.values())
+    hours = 1 + (tier - 1) * (TROPHY_MAX_ACTIVE_HOURS - 1) / max(1, top - 1)
+    return max(1, min(TROPHY_MAX_ACTIVE_HOURS, round(hours)))
+
+
+# ─────────────────────────────────────────────
+# PLAYER MARKET  (2026-09-27)
+# ─────────────────────────────────────────────
+MARKET_TAX            = 0.05             # of every sale, burned (removed from the economy)
+MARKET_MAX_LISTINGS   = 10               # active listings per seller
+MARKET_LISTING_HOURS  = 72               # unsold listings return to the seller after this
+MARKET_MAX_PRICE      = 100_000_000_000  # per item
+MARKET_MIN_LEVEL      = 10               # to sell — keeps fresh alt accounts from funnelling loot
+MARKET_MIN_AGE_DAYS   = 3
+
+
+# ─────────────────────────────────────────────
 # AMMO
 # ─────────────────────────────────────────────
 

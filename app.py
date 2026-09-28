@@ -42,6 +42,9 @@ from game_data import (
     # Mythical creatures (mythic tier / boss roster)
     MYTHIC_CREATURES, MYTH_DROPS, creature_emoji,
     TROPHY_EFFECTS, TROPHY_SLOT_THRESHOLDS, trophy_emoji,
+    TROPHY_MAX_ACTIVE_HOURS, trophy_duration_hours,
+    MARKET_TAX, MARKET_MAX_LISTINGS, MARKET_LISTING_HOURS, MARKET_MAX_PRICE,
+    MARKET_MIN_LEVEL, MARKET_MIN_AGE_DAYS,
     # Tools
     TOOLS, get_tool_tier, can_hunt_biome, get_all_tools_sorted,
     tool_needs_ammo, get_tool_ammo_type, ammo_compatible_with_tool, tool_emoji,
@@ -1718,7 +1721,16 @@ def init_user(user_id: str):
     refresh_health(user_id)
     data[user_id].setdefault("myth_items", {})         # mythic-creature trophies (count, still tracked for compat)
     data[user_id].setdefault("myth_record", {})        # creature -> {kills, first_kill_ts, best_hp_left}
-    data[user_id].setdefault("equipped_trophies", [])  # trophy names equipped in the Trophy Cabinet
+    data[user_id].setdefault("equipped_trophies", [])  # legacy (pre-2026-09-27 permanent equips)
+    data[user_id].setdefault("trophy_active", {})      # trophy name -> effect expiry ts
+    if data[user_id]["equipped_trophies"]:
+        # Trophies became timed consumables: honour what was equipped with one
+        # free activation each (no copy consumed), then retire the old list.
+        _now = time.time()
+        for _t in data[user_id]["equipped_trophies"]:
+            if _t in TROPHY_EFFECTS:
+                data[user_id]["trophy_active"].setdefault(_t, _now + trophy_duration_hours(_t) * 3600)
+        data[user_id]["equipped_trophies"] = []
     data[user_id].setdefault("_boss", None)            # pending boss encounter
     data[user_id].setdefault("travel", None)           # in-transit state, or None
     data[user_id].setdefault("crate_inv", {})
@@ -2577,15 +2589,64 @@ def get_prestige_boost(user_id: str) -> int:
     return data[user_id].get("prestige", 0) * 20
 
 # ─────────────────────────────────────────────
-# TROPHY CABINET  ·  equippable mythic-trophy effects (2026-09-16)
+# TROPHY CABINET  ·  consumable timed trophy effects (2026-09-27)
 # ─────────────────────────────────────────────
-# A trophy is never sold or consumed — see game_data.TROPHY_EFFECTS for what
-# each one does. Equipping/unequipping just moves a name in/out of
-# equipped_trophies; the effect itself is read live from these helpers at
-# whatever system it touches (combat, tracking, travel, camp, hunt...).
+# Using a trophy consumes one copy (myth_items[name] -= 1) and switches its
+# effect on until data[uid]["trophy_active"][name] (an expiry timestamp) —
+# 1h for village trophies up to 24h for celestial ones (trophy_duration_hours).
+# How many can run at once is capped by trophy_slots_unlocked(). The effect is
+# read live from these helpers at whatever system it touches (combat,
+# tracking, travel, camp, hunt...). Copies are tradeable on /market.
+
+def active_trophies(user_id: str) -> dict[str, float]:
+    """{trophy name: expiry ts} for every trophy effect still running."""
+    now = time.time()
+    act = data.get(user_id, {}).get("trophy_active") or {}
+    return {t: exp for t, exp in act.items() if exp > now and t in TROPHY_EFFECTS}
 
 def equipped_trophy_names(user_id: str) -> list[str]:
-    return data[user_id].get("equipped_trophies", []) or []
+    return list(active_trophies(user_id))
+
+def trophy_copies(user_id: str, trophy: str) -> int:
+    return int((data.get(user_id, {}).get("myth_items") or {}).get(trophy, 0))
+
+def use_trophy(user_id: str, trophy: str) -> dict:
+    """Consume one copy and start (or extend) its effect. Call inside a
+    user_transaction. Returns {"ok": bool, "reason"?, "expires"?, "hours"?, "extended"?}."""
+    if trophy not in TROPHY_EFFECTS:
+        return {"ok": False, "reason": "unknown"}
+    if trophy_copies(user_id, trophy) <= 0:
+        return {"ok": False, "reason": "none_owned"}
+    now  = time.time()
+    act  = active_trophies(user_id)          # also drops expired entries below
+    running = trophy in act
+    if not running and len(act) >= trophy_slots_unlocked(user_id):
+        return {"ok": False, "reason": "slots_full"}
+    cap = now + TROPHY_MAX_ACTIVE_HOURS * 3600
+    if running and act[trophy] >= cap - 60:
+        return {"ok": False, "reason": "maxed"}
+    hours = trophy_duration_hours(trophy)
+    act[trophy] = min(cap, max(now, act.get(trophy, now)) + hours * 3600)
+    data[user_id]["trophy_active"] = act
+    data[user_id]["myth_items"][trophy] -= 1          # key stays at 0: "collected" is kept
+    st = data[user_id].setdefault("stats", {})
+    st["trophies_used"] = st.get("trophies_used", 0) + 1
+    mark_user_dirty(user_id)
+    return {"ok": True, "expires": act[trophy], "hours": hours, "extended": running}
+
+def _trophy_use_note(trophy: str, res: dict) -> str:
+    if res.get("ok"):
+        verb = "extended" if res.get("extended") else "is active"
+        return (f"{emoji('check_mark')} {trophy_emoji(trophy)} **{trophy}** {verb} — ends "
+                f"<t:{int(res['expires'])}:R>\n-# {TROPHY_EFFECTS[trophy]['desc']}")
+    return f"{emoji('cross_mark')} {_TROPHY_USE_ERRORS.get(res.get('reason'), 'Could not use that trophy.')}"
+
+_TROPHY_USE_ERRORS = {
+    "unknown":    "That isn't a trophy.",
+    "none_owned": "You don't have a copy of that trophy — win one from its Mythical or buy one on `/market`.",
+    "slots_full": "All your trophy slots are busy — wait for one to run out.",
+    "maxed":      f"That trophy is already running at the {TROPHY_MAX_ACTIVE_HOURS}h maximum.",
+}
 
 def trophy_effect_value(user_id: str, effect_key: str) -> float:
     """Sum of `value` across equipped trophies matching this effect_key.
@@ -6303,6 +6364,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Updates",        "emoji": emoji_partial("list"),           "value": "update",      "description": "View latest updates"},
             {"label": "Collection",     "emoji": emoji_partial('book'),                  "value": "guide",       "description": "Species, Mythicals, trophies & world completion"},
             {"label": "Refer a Friend", "emoji": emoji_partial('handshake'),                  "value": "refer",       "description": "Your referral code — you both earn"},
+            {"label": "Market",         "emoji": emoji_partial("shop"),           "value": "market",      "description": "Buy & sell crates and Mythical trophies"},
         ]
     }]}
 
@@ -6535,13 +6597,12 @@ def build_inventory_components(user_id: str, display_name: str, viewer_id: str =
     trophies   = d.get("myth_items", {}) or {}
     troph_comps = []
     if trophies:
-        t_count = len(trophies)
         equipped_n = len(equipped_trophy_names(user_id))
         slots_n    = trophy_slots_unlocked(user_id)
         troph_comps = [
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
-                {"type": 2, "style": 2, "label": f"Trophy Cabinet ({t_count} collected · {equipped_n}/{slots_n} equipped)",
+                {"type": 2, "style": 2, "label": f"Trophy Cabinet ({sum(trophies.values())} to use · {equipped_n}/{slots_n} active)",
                  "emoji": emoji_partial("trophy"), "custom_id": f"collection:trophies:{user_id}"},
             ]},
         ]
@@ -6800,11 +6861,12 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
             trophy_block = (
                 f"\n\n### {emoji('trophy')} TROPHY UNLOCKED\n"
                 f"**{drop}**\n"
-                f"-# Effect while equipped: {eff['desc']}\n"
-                f"-# Added to your Trophy Cabinet.{shard_line}"
+                f"-# Use it for {trophy_duration_hours(drop)}h: {eff['desc']}\n"
+                f"-# Use it from the Trophy Cabinet or `/use`, or sell it on `/market`.{shard_line}"
             )
         elif drop:
-            trophy_block = f"\n-# {emoji('trophy')} +1 **{drop}** (×{outcome.get('trophy_count', 1)} total){shard_line}"
+            trophy_block = (f"\n-# {emoji('trophy')} +1 **{drop}** (×{outcome.get('trophy_count', 1)} owned) "
+                            f"· use it or sell it on `/market`{shard_line}")
         else:
             trophy_block = shard_line
         body = (
@@ -7562,42 +7624,46 @@ def build_collection_regions_components(user_id: str) -> list:
 # TROPHY CABINET  ·  equippable mythic-trophy relics
 # ─────────────────────────────────────────────
 
-def _trophy_equip(user_id: str, slot_idx: int, trophy_name: str | None) -> None:
-    eq = [t for t in (data[user_id].get("equipped_trophies", []) or []) if t]
-    if trophy_name:
-        eq = [t for t in eq if t != trophy_name]
-    while len(eq) <= slot_idx:
-        eq.append(None)
-    eq[slot_idx] = trophy_name
-    data[user_id]["equipped_trophies"] = [t for t in eq if t]
-    mark_user_dirty(user_id)
-
-def build_trophy_cabinet_components(user_id: str) -> list:
-    owned    = data[user_id].get("myth_items", {}) or {}
-    equipped = equipped_trophy_names(user_id)
-    slots    = trophy_slots_unlocked(user_id)
-    lines = [f"## {emoji('trophy')} TROPHY CABINET", f"-# Collected: {len(owned)} / {len(MYTHIC_CREATURES)}", ""]
+def build_trophy_cabinet_components(user_id: str, note: str = "") -> list:
+    owned  = data[user_id].get("myth_items", {}) or {}
+    act    = active_trophies(user_id)
+    slots  = trophy_slots_unlocked(user_id)
+    copies = {t: n for t, n in owned.items() if n > 0 and t in TROPHY_EFFECTS}
+    lines = [f"## {emoji('trophy')} TROPHY CABINET",
+             f"-# Collected: {len(owned)} / {len(MYTHIC_CREATURES)} · "
+             f"Using a trophy spends one copy and switches its effect on for "
+             f"1–{TROPHY_MAX_ACTIVE_HOURS}h (tougher Mythicals last longer).", ""]
+    if note:
+        lines += [note, ""]
     if slots:
-        lines.append("**ACTIVE**")
-        for i in range(slots):
-            tname = equipped[i] if i < len(equipped) else None
-            if tname and tname in TROPHY_EFFECTS:
-                lines.append(f"{i+1}. {trophy_emoji(tname)} **{tname}**\n-# {TROPHY_EFFECTS[tname]['desc']}")
-            else:
-                lines.append(f"{i+1}. **— empty —**\n-# Use the Slot {i+1} button below to equip one.")
+        lines.append(f"**ACTIVE — {len(act)}/{slots} slots**")
+        for tname, exp in sorted(act.items(), key=lambda kv: kv[1]):
+            lines.append(f"{trophy_emoji(tname)} **{tname}** — ends <t:{int(exp)}:R>\n"
+                         f"-# {TROPHY_EFFECTS[tname]['desc']}")
+        if not act:
+            lines.append("-# Nothing running — use a trophy below.")
         next_th = next((t for t in TROPHY_SLOT_THRESHOLDS if t > len(owned)), None)
         if next_th:
-            lines.append(f"\n-# Slot {slots+1} unlocks at **{next_th}** unique trophies.")
+            lines.append(f"\n-# Slot {slots+1} unlocks at **{next_th}** different trophies collected.")
     else:
-        lines.append("-# Slot 1 unlocks after your first Mythical kill.")
+        lines.append("-# Your first trophy slot unlocks with your first trophy — "
+                     "kill a Mythical or buy one on `/market`.")
     comps = [{"type": 10, "content": "\n".join(lines)}, {"type": 14, "divider": True, "spacing": 1}]
-    if slots:
-        comps.append({"type": 1, "components": [
-            {"type": 2, "style": 2, "label": f"Slot {i+1}", "custom_id": f"collection:slot:{i}:{user_id}"}
-            for i in range(slots)
-        ]})
+    if slots and copies:
+        options = []
+        for tname, n in sorted(copies.items()):
+            opt = {"label": f"{tname} ×{n} · {trophy_duration_hours(tname)}h"[:100], "value": tname,
+                   "description": TROPHY_EFFECTS[tname]["desc"][:100]}
+            em = emoji_partial(trophy_emoji(tname))
+            if em:
+                opt["emoji"] = em
+            options.append(opt)
+        comps.append({"type": 1, "components": [{"type": 3,
+            "custom_id": f"collection:use_sel:{user_id}", "placeholder": "Use a trophy…",
+            "min_values": 1, "max_values": 1, "options": options[:25]}]})
     comps.append({"type": 1, "components": [
         {"type": 2, "style": 2, "label": "View All", "custom_id": f"collection:trophies_all:{user_id}"},
+        {"type": 2, "style": 1, "label": "Market", "custom_id": f"market:browse:trophy:{user_id}"},
         {"type": 2, "style": 2, "label": "◀ Collection", "custom_id": f"collection:hub:{user_id}"},
     ]})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
@@ -7613,39 +7679,6 @@ def build_trophy_all_components(user_id: str) -> list:
     comps = [
         {"type": 10, "content": "\n".join(lines)},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 1, "components": [
-            {"type": 2, "style": 2, "label": "◀ Trophy Cabinet", "custom_id": f"collection:trophies:{user_id}"},
-        ]},
-    ]
-    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
-
-def build_trophy_slot_picker_components(user_id: str, slot_idx: int) -> list:
-    slots = trophy_slots_unlocked(user_id)
-    if slot_idx < 0 or slot_idx >= slots:
-        return build_trophy_cabinet_components(user_id)
-    owned    = data[user_id].get("myth_items", {}) or {}
-    equipped = equipped_trophy_names(user_id)
-    current  = equipped[slot_idx] if slot_idx < len(equipped) else None
-    lines = [f"## {emoji('trophy')} Trophy Cabinet — Slot {slot_idx + 1}",
-             (f"-# Currently equipped: **{current}**" if current else "-# Choose a trophy to equip in this slot.")]
-
-    options = [{"label": "— Unequip —", "value": "__none__", "default": current is None}]
-    for tname in owned:
-        eff = TROPHY_EFFECTS.get(tname, {})
-        opt = {"label": tname[:100], "value": tname, "default": tname == current}
-        if eff.get("desc"):
-            opt["description"] = eff["desc"][:100]
-        em = emoji_partial(trophy_emoji(tname))
-        if em:
-            opt["emoji"] = em
-        options.append(opt)
-    options = options[:25]   # Discord select cap — practically unreachable (34 trophies max)
-
-    comps = [
-        {"type": 10, "content": "\n".join(lines)},
-        {"type": 14, "divider": True, "spacing": 1},
-        {"type": 1, "components": [{"type": 3, "custom_id": f"collection:slot_sel:{slot_idx}:{user_id}",
-            "placeholder": "Select a trophy...", "min_values": 1, "max_values": 1, "options": options}]},
         {"type": 1, "components": [
             {"type": 2, "style": 2, "label": "◀ Trophy Cabinet", "custom_id": f"collection:trophies:{user_id}"},
         ]},
@@ -8868,6 +8901,7 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
             "capacity_upgrades": 0,
         },
     })
+    _market_drop_crate_listings(user_id)   # listed crates are wiped with the rest
     mark_user_dirty(user_id)
     return d["prestige"]
 
@@ -11278,6 +11312,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         await smart_update_v2(interaction, build_events_components(user_id))
     elif panel == "settings":
         await smart_update_v2(interaction, build_settings_components(user_id))
+    elif panel == "market":
+        await smart_update_v2(interaction, build_market_components(user_id))
     else:
         await smart_update_v2(interaction, build_menu_components(user_id, dn))
 
@@ -11771,6 +11807,7 @@ async def on_interaction(interaction: discord.Interaction):
 # mutations / confirmations / ban / verify still reject a non-owner.
 # Value: fn(clicker_id: str, interaction) -> components list.
 _CROSS_USER_PANELS = {
+    "market":         lambda uid, it: build_market_components(uid),
     "menu":           lambda uid, it: build_menu_components(uid, it.user.display_name),
     "nav":            lambda uid, it: build_menu_components(uid, it.user.display_name),
     "shop":           lambda uid, it: build_shop_components(uid),
@@ -12882,6 +12919,11 @@ async def _dispatch_component(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_world_components(owner_id, await _world_goal_line(interaction)))
         return
 
+    # ── MARKET ────────────────────────────────
+    if parts[0] == "market":
+        await _market_dispatch(interaction, parts, values)
+        return
+
     # ── COLLECTION ─────────────────────────────
     if parts[0] == "collection":
         owner_id = parts[-1]
@@ -12908,14 +12950,14 @@ async def _dispatch_component(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_trophy_cabinet_components(owner_id))
         elif sub == "trophies_all":
             await smart_update_v2(interaction, build_trophy_all_components(owner_id))
-        elif sub == "slot":
-            slot_idx = int(parts[2])
-            await smart_update_v2(interaction, build_trophy_slot_picker_components(owner_id, slot_idx))
-        elif sub == "slot_sel":
-            slot_idx = int(parts[2])
-            chosen = (values[0] if values else "__none__")
+        elif sub == "use_sel":
+            trophy = values[0] if values else ""
             async with user_transaction(owner_id):
-                _trophy_equip(owner_id, slot_idx, None if chosen == "__none__" else chosen)
+                res = use_trophy(owner_id, trophy)
+            await smart_update_v2(interaction, build_trophy_cabinet_components(
+                owner_id, _trophy_use_note(trophy, res)))
+        elif sub in ("slot", "slot_sel"):
+            # Stale buttons from the old permanent-equip cabinet.
             await smart_update_v2(interaction, build_trophy_cabinet_components(owner_id))
         return
 
@@ -16151,6 +16193,386 @@ async def tribe_info_cmd(interaction: discord.Interaction, name: str = None):
 
 bot.tree.add_command(tribe_group)
 
+# ─────────────────────────────────────────────
+# /market  — player market: crates + trophies, paid in ◈ (2026-09-27)
+# ─────────────────────────────────────────────
+# Listed items leave the seller's inventory and sit in the listing (escrow)
+# until bought, cancelled, or expired (MARKET_LISTING_HOURS → returned). A
+# sale charges the buyer the full price and pays the seller minus
+# MARKET_TAX, which is burned. Every change to a listing happens under the
+# SELLER's user lock (buy = multi_user_transaction(buyer, seller)), so the
+# seller's lock is the listing lock. Persistence order is chosen so a crash
+# can lose a listing's items but never duplicate them.
+_market: dict[str, dict] = {}        # id -> {id, seller, kind, item, qty, price, created_ts, expires_ts}
+_market_view: dict[str, dict] = {}   # viewer uid -> {"filter": "all"|"crate"|"trophy", "page": int}
+_MARKET_PAGE = 5
+_MARKET_FILTERS = {"all": "Everything", "crate": "Crates", "trophy": "Trophies"}
+
+def _market_canon(item: str) -> tuple[str, str] | tuple[None, None]:
+    """(canonical item name, kind) for a loose name, or (None, None)."""
+    raw = (item or "").strip().lower()
+    for n in CRATE_TIERS:
+        if raw in (n.lower(), n.lower().replace(" crate", "")):
+            return n, "crate"
+    for n in TROPHY_EFFECTS:
+        if raw == n.lower():
+            return n, "trophy"
+    return None, None
+
+def _market_inv(user_id: str, kind: str) -> dict:
+    return data[user_id].setdefault("crate_inv" if kind == "crate" else "myth_items", {})
+
+def _market_icon(item: str, kind: str) -> str:
+    return CRATE_TIERS[item]["emoji"] if kind == "crate" else trophy_emoji(item)
+
+def _market_live(kind: str = "all") -> list[dict]:
+    now = time.time()
+    return sorted((l for l in _market.values()
+                   if l["expires_ts"] > now and kind in ("all", l["kind"])),
+                  key=lambda l: (l["price"], l["created_ts"]))
+
+def _market_account_block(user_id: str, selling: bool) -> str | None:
+    d = data[user_id]
+    if d.get("is_tester"):
+        return "Tester accounts can't use the market."
+    if not selling:
+        return None
+    if d.get("level", 1) < MARKET_MIN_LEVEL:
+        return f"You need to be **level {MARKET_MIN_LEVEL}** to sell on the market."
+    try:
+        joined = datetime.strptime(d.get("joined_date", ""), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - joined).days
+    except (ValueError, TypeError):
+        age_days = MARKET_MIN_AGE_DAYS    # unknown join date = legacy account
+    if age_days < MARKET_MIN_AGE_DAYS:
+        return f"Your account must be **{MARKET_MIN_AGE_DAYS} days old** to sell on the market."
+    return None
+
+def _market_sellable(user_id: str) -> list[tuple[str, str, int]]:
+    """[(item, kind, count)] the player could list right now."""
+    d = data.get(user_id) or {}
+    out = [(n, "crate", c) for n, c in (d.get("crate_inv") or {}).items() if c > 0 and n in CRATE_TIERS]
+    out += [(n, "trophy", c) for n, c in (d.get("myth_items") or {}).items() if c > 0 and n in TROPHY_EFFECTS]
+    return out
+
+async def market_create_listing(user_id: str, item: str, qty: int, price: int) -> tuple[bool, str]:
+    name, kind = _market_canon(item)
+    if not name:
+        return False, "You can only sell **crates** and **Mythical trophies** on the market."
+    block = _market_account_block(user_id, selling=True)
+    if block:
+        return False, block
+    if qty <= 0:
+        return False, "Quantity must be at least 1."
+    if not 1 <= price <= MARKET_MAX_PRICE:
+        return False, f"Price must be between ◈ 1 and ◈ {MARKET_MAX_PRICE:,} each."
+    listing = None
+    async with user_transaction(user_id):
+        if sum(1 for l in _market.values() if l["seller"] == user_id) >= MARKET_MAX_LISTINGS:
+            return False, f"You already have **{MARKET_MAX_LISTINGS}** listings — cancel one in `/market listings`."
+        inv  = _market_inv(user_id, kind)
+        have = int(inv.get(name, 0))
+        if have < qty:
+            return False, f"You only have **{have}× {name}**."
+        inv[name] = have - qty
+        if kind == "crate" and inv[name] <= 0:
+            del inv[name]                  # trophies keep their key: it marks them "collected"
+        now = time.time()
+        listing = {"id": secrets.token_hex(5), "seller": user_id, "kind": kind, "item": name,
+                   "qty": int(qty), "price": int(price), "created_ts": now,
+                   "expires_ts": now + MARKET_LISTING_HOURS * 3600}
+        _market[listing["id"]] = listing
+    # Written only after the seller's inventory change is flushed: a crash in
+    # between loses the escrowed items instead of duplicating them.
+    await backend.market_save(listing)
+    analytics(user_id, "market_list", item=name, qty=qty, price=price)
+    return True, listing["id"]
+
+async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[bool, str]:
+    """Buy `qty` (None = all remaining) from a listing. Returns (ok, message)."""
+    lst = _market.get(listing_id)
+    if not lst or lst["expires_ts"] <= time.time():
+        return False, "That listing is gone — someone beat you to it, or it expired."
+    seller = lst["seller"]
+    if seller == buyer_id:
+        return False, "That's your own listing — cancel it in `/market listings` instead."
+    block = _market_account_block(buyer_id, selling=False)
+    if block:
+        return False, block
+    if seller not in data:                   # seller's account was deleted
+        if _market.pop(listing_id, None):
+            await backend.market_delete(listing_id)
+        return False, "That listing is gone."
+    async with multi_user_transaction(buyer_id, seller):
+        lst = _market.get(listing_id)
+        if not lst or lst["expires_ts"] <= time.time():
+            return False, "That listing is gone — someone beat you to it, or it expired."
+        n     = lst["qty"] if qty is None else max(1, min(int(qty), lst["qty"]))
+        total = n * lst["price"]
+        if data[buyer_id]["money"] < total:
+            return False, f"You need **◈ {total:,}** for {n}× {lst['item']}."
+        left = lst["qty"] - n
+        # Listing state is persisted BEFORE anyone is paid: a crash after this
+        # loses the sale rather than letting the same items sell twice.
+        if left > 0:
+            await backend.market_save({**lst, "qty": left})
+        else:
+            await backend.market_delete(listing_id)
+        if not spend_money(buyer_id, total, "market buy"):
+            raise RuntimeError("market buy: balance changed under the buyer lock")
+        tax = int(total * MARKET_TAX)
+        add_money(seller, total - tax, "market sale")
+        inv = _market_inv(buyer_id, lst["kind"])
+        inv[lst["item"]] = int(inv.get(lst["item"], 0)) + n
+        if left > 0:
+            lst["qty"] = left
+        else:
+            _market.pop(listing_id, None)
+        for uid, key in ((buyer_id, "market_bought"), (seller, "market_sold")):
+            st = data[uid].setdefault("stats", {})
+            st[key] = st.get(key, 0) + n
+    analytics(buyer_id, "market_buy", item=lst["item"], qty=n, total=total)
+    asyncio.create_task(_dm_user(seller,
+        f"## {emoji('money_bag')} Market sale!\n"
+        f"`{get_username(buyer_id)}` bought **{n}× {lst['item']}** for **◈ {total:,}**.\n"
+        f"-# You received **◈ {total - tax:,}** after the {int(MARKET_TAX * 100)}% market tax."))
+    return True, (f"{emoji('check_mark')} Bought **{n}× {_market_icon(lst['item'], lst['kind'])} {lst['item']}** "
+                  f"for **◈ {total:,}**." + ("\n-# Use trophies from `/use` or the Trophy Cabinet."
+                                             if lst["kind"] == "trophy" else "\n-# Open crates with `/use`."))
+
+async def market_return(listing_id: str, *, requester: str | None = None) -> tuple[bool, str]:
+    """Cancel (requester = the seller) or expire (requester None) a listing and
+    hand the escrowed items back to the seller."""
+    lst = _market.get(listing_id)
+    if not lst:
+        return False, "That listing is already gone."
+    seller = lst["seller"]
+    if requester is not None and requester != seller:
+        return False, "That isn't your listing."
+    if seller not in data:
+        _market.pop(listing_id, None)
+        await backend.market_delete(listing_id)
+        return True, ""
+    async with user_transaction(seller):
+        lst = _market.get(listing_id)
+        if not lst:
+            return False, "That listing already sold or was returned."
+        # Delete first: a crash in between loses the items, never duplicates them.
+        await backend.market_delete(listing_id)
+        _market.pop(listing_id, None)
+        inv = _market_inv(seller, lst["kind"])
+        inv[lst["item"]] = int(inv.get(lst["item"], 0)) + lst["qty"]
+    return True, f"{emoji('check_mark')} **{lst['qty']}× {lst['item']}** returned to your inventory."
+
+def _market_drop_crate_listings(user_id: str) -> None:
+    """Account resets wipe crates — listed crates go with them (otherwise listing
+    them just before a reset and cancelling afterwards would dodge the wipe)."""
+    for lid in [lid for lid, l in _market.items() if l["seller"] == user_id and l["kind"] == "crate"]:
+        _market.pop(lid, None)
+        try:
+            asyncio.get_running_loop().create_task(backend.market_delete(lid))
+        except RuntimeError:
+            pass
+
+# ── panels ──────────────────────────────────────────────────────
+def build_market_components(user_id: str, note: str = "") -> list:
+    st   = _market_view.setdefault(user_id, {"filter": "all", "page": 0})
+    kind = st.get("filter", "all")
+    rows = _market_live(kind)
+    pages = max(1, -(-len(rows) // _MARKET_PAGE))
+    page  = max(0, min(st.get("page", 0), pages - 1))
+    st["page"] = page
+    head = (f"## {emoji('shop')} MARKET\n"
+            f"-# Crates & Mythical trophies from other hunters · paid in ◈ · "
+            f"{int(MARKET_TAX * 100)}% of every sale is burned\n"
+            f"-# Your balance: **◈ {data[user_id]['money']:,}**")
+    if note:
+        head += f"\n\n{note}"
+    comps: list = [{"type": 10, "content": head}, {"type": 14, "divider": True, "spacing": 1}]
+    if not rows:
+        comps.append({"type": 10, "content": "-# Nothing listed here right now. List something with `/market sell`."})
+    for l in rows[page * _MARKET_PAGE:(page + 1) * _MARKET_PAGE]:
+        extra = (f" · {trophy_duration_hours(l['item'])}h: {TROPHY_EFFECTS[l['item']]['desc']}"
+                 if l["kind"] == "trophy" else "")
+        text = (f"{_market_icon(l['item'], l['kind'])} **{l['item']}** ×{l['qty']} — **◈ {l['price']:,}** each\n"
+                f"-# by `{get_username(l['seller'])}` · ends <t:{int(l['expires_ts'])}:R>{extra}")
+        mine = l["seller"] == user_id
+        acc = ({"type": 2, "style": 4, "label": "Cancel", "custom_id": f"market:cancel:{l['id']}:{user_id}"}
+               if mine else
+               {"type": 2, "style": 3, "label": "Buy", "custom_id": f"market:view:{l['id']}:{user_id}"})
+        comps.append({"type": 9, "components": [{"type": 10, "content": text[:1000]}], "accessory": acc})
+    comps.append({"type": 14, "divider": True, "spacing": 1})
+    comps.append({"type": 1, "components": [{"type": 3, "custom_id": f"market:filter:{user_id}",
+        "placeholder": "Show…", "min_values": 1, "max_values": 1,
+        "options": [{"label": lbl, "value": k, "default": k == kind} for k, lbl in _MARKET_FILTERS.items()]}]})
+    comps.append({"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀", "custom_id": f"market:page:{page - 1}:{user_id}", "disabled": page == 0},
+        {"type": 2, "style": 2, "label": f"{page + 1}/{pages}", "custom_id": f"market:noop:{user_id}", "disabled": True},
+        {"type": 2, "style": 2, "label": "▶", "custom_id": f"market:page:{page + 1}:{user_id}", "disabled": page >= pages - 1},
+        {"type": 2, "style": 1, "label": "My Listings", "custom_id": f"market:mine:{user_id}"},
+    ]})
+    comps.append(ui_footer(user_id))
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+
+def build_market_buy_components(user_id: str, listing_id: str) -> list:
+    l = _market.get(listing_id)
+    if not l or l["expires_ts"] <= time.time():
+        return build_market_components(user_id, f"{emoji('cross_mark')} That listing is gone.")
+    icon = _market_icon(l["item"], l["kind"])
+    body = (f"### {icon} {l['item']}\n"
+            f"**◈ {l['price']:,}** each · **{l['qty']}** available · sold by `{get_username(l['seller'])}`\n")
+    if l["kind"] == "trophy":
+        body += (f"-# Use it for {trophy_duration_hours(l['item'])}h: {TROPHY_EFFECTS[l['item']]['desc']}\n"
+                 f"-# You own {trophy_copies(user_id, l['item'])}.\n")
+    else:
+        body += f"-# {CRATE_TIERS[l['item']]['description']}\n-# You own {data[user_id].get('crate_inv', {}).get(l['item'], 0)}.\n"
+    body += f"-# Your balance: **◈ {data[user_id]['money']:,}**"
+    btns = [{"type": 2, "style": 3, "label": f"Buy 1 · ◈ {_short_num(l['price'])}",
+             "custom_id": f"market:buy:{listing_id}:1:{user_id}",
+             "disabled": data[user_id]["money"] < l["price"]}]
+    if l["qty"] > 1:
+        total = l["qty"] * l["price"]
+        btns.append({"type": 2, "style": 1, "label": f"Buy all {l['qty']} · ◈ {_short_num(total)}",
+                     "custom_id": f"market:buy:{listing_id}:all:{user_id}",
+                     "disabled": data[user_id]["money"] < total})
+    btns.append({"type": 2, "style": 2, "label": "◀ Market", "custom_id": f"market:browse:keep:{user_id}"})
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": body}, {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": btns}]}]
+
+def build_market_mine_components(user_id: str, note: str = "") -> list:
+    mine = sorted((l for l in _market.values() if l["seller"] == user_id), key=lambda l: l["expires_ts"])
+    head = (f"## {emoji('shop')} MY LISTINGS — {len(mine)}/{MARKET_MAX_LISTINGS}\n"
+            f"-# Unsold items come back to you after {MARKET_LISTING_HOURS}h. "
+            f"List more with `/market sell`.")
+    if note:
+        head += f"\n\n{note}"
+    comps: list = [{"type": 10, "content": head}, {"type": 14, "divider": True, "spacing": 1}]
+    if not mine:
+        comps.append({"type": 10, "content": "-# You have nothing listed."})
+    for l in mine:
+        comps.append({"type": 9, "components": [{"type": 10, "content":
+            f"{_market_icon(l['item'], l['kind'])} **{l['item']}** ×{l['qty']} — ◈ {l['price']:,} each\n"
+            f"-# returns <t:{int(l['expires_ts'])}:R> if unsold"}],
+            "accessory": {"type": 2, "style": 4, "label": "Cancel",
+                          "custom_id": f"market:cancel:{l['id']}:{user_id}"}})
+    comps.append({"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Market", "custom_id": f"market:browse:keep:{user_id}"}]})
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+
+async def _market_dispatch(interaction: discord.Interaction, parts: list, values: list) -> None:
+    owner_id = parts[-1]
+    if str(interaction.user.id) != owner_id:
+        await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+        return
+    init_user(owner_id)
+    sub = parts[1] if len(parts) > 1 else "browse"
+    st  = _market_view.setdefault(owner_id, {"filter": "all", "page": 0})
+    if sub == "browse":
+        f = parts[2] if len(parts) > 3 else "keep"
+        if f in _MARKET_FILTERS:
+            st.update({"filter": f, "page": 0})
+        await smart_update_v2(interaction, build_market_components(owner_id))
+    elif sub == "filter":
+        st.update({"filter": values[0] if values and values[0] in _MARKET_FILTERS else "all", "page": 0})
+        await smart_update_v2(interaction, build_market_components(owner_id))
+    elif sub == "page":
+        st["page"] = int(parts[2])
+        await smart_update_v2(interaction, build_market_components(owner_id))
+    elif sub == "view":
+        await smart_update_v2(interaction, build_market_buy_components(owner_id, parts[2]))
+    elif sub == "buy":
+        qty = None if parts[3] == "all" else int(parts[3])
+        ok, msg = await market_buy(owner_id, parts[2], qty)
+        await smart_update_v2(interaction, build_market_components(
+            owner_id, msg if ok else f"{emoji('cross_mark')} {msg}"))
+    elif sub == "mine":
+        await smart_update_v2(interaction, build_market_mine_components(owner_id))
+    elif sub == "cancel":
+        ok, msg = await market_return(parts[2], requester=owner_id)
+        await smart_update_v2(interaction, build_market_mine_components(
+            owner_id, msg if ok else f"{emoji('cross_mark')} {msg}"))
+
+# ── commands ────────────────────────────────────────────────────
+market_group = app_commands.Group(
+    name="market",
+    description="Buy and sell crates and Mythical trophies with other hunters",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+)
+
+@market_group.command(name="browse", description="See what other hunters are selling")
+@app_commands.describe(show="Only show crates or trophies")
+@app_commands.choices(show=[app_commands.Choice(name=lbl, value=k) for k, lbl in _MARKET_FILTERS.items()])
+async def market_browse_cmd(interaction: discord.Interaction, show: str = "all"):
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return
+    _market_view[user_id] = {"filter": show if show in _MARKET_FILTERS else "all", "page": 0}
+    await send_v2_followup(interaction, build_market_components(user_id))
+
+@market_group.command(name="sell", description="List crates or Mythical trophies for other hunters to buy")
+@app_commands.describe(item="What to sell — start typing to pick something you own",
+                       quantity="How many to list", price="Price for EACH one, e.g. 50000, 250K, 2.5M")
+async def market_sell_cmd(interaction: discord.Interaction, item: str,
+                          quantity: app_commands.Range[int, 1, 100_000], price: str):
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return
+    try:
+        each = parse_amount(price)
+    except (ValueError, OverflowError):
+        each = None
+    if not each or each <= 0:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Enter a price like `50000`, `250K` or `2.5M`.", 0xE74C3C)
+        return
+    ok, res = await market_create_listing(user_id, item, quantity, each)
+    if not ok:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {res}", 0xE74C3C)
+        return
+    l = _market[res]
+    cheapest = next((o["price"] for o in _market_live(l["kind"])
+                     if o["item"] == l["item"] and o["id"] != l["id"]), None)
+    hint = f"\n-# Cheapest other {l['item']} listed: ◈ {cheapest:,}" if cheapest else ""
+    await send_v2_followup(interaction, build_market_mine_components(user_id,
+        f"{emoji('check_mark')} Listed **{l['qty']}× {_market_icon(l['item'], l['kind'])} {l['item']}** "
+        f"at **◈ {l['price']:,}** each. You get **◈ {int(l['price'] * (1 - MARKET_TAX)):,}** per sale "
+        f"after the {int(MARKET_TAX * 100)}% tax.{hint}"))
+
+@market_sell_cmd.autocomplete("item")
+async def _market_sell_autocomplete(interaction: discord.Interaction, current: str):
+    uid, cur = str(interaction.user.id), (current or "").lower()
+    return [app_commands.Choice(name=f"{n} (×{c})" + (f" — trophy, {trophy_duration_hours(n)}h" if k == "trophy" else ""),
+                                value=n)
+            for n, k, c in _market_sellable(uid) if cur in n.lower()][:25]
+
+@market_group.command(name="listings", description="See and cancel your own market listings")
+async def market_listings_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return
+    await send_v2_followup(interaction, build_market_mine_components(user_id))
+
+bot.tree.add_command(market_group)
+
+@tasks.loop(minutes=10)
+async def market_expiry_task():
+    """Hand unsold items back to sellers once their listing runs out."""
+    now = time.time()
+    for lid in [lid for lid, l in list(_market.items()) if l["expires_ts"] <= now]:
+        l = _market.get(lid)
+        if not l:
+            continue
+        ok, _ = await market_return(lid)
+        if ok and l["seller"] in data:
+            asyncio.create_task(_dm_user(l["seller"],
+                f"## {emoji('shop')} Market listing expired\n"
+                f"Nobody bought your **{l['qty']}× {l['item']}** — it's back in your inventory."))
+
+@market_expiry_task.error
+async def _mete(error): print("Market expiry task error:", error)
+
+
 @bot.tree.command(name="leaderboard", description="View hunter and tribe leaderboards")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -16601,7 +17023,8 @@ def _info_render_myth(key: str):
         f"-# **First-ever mythic kill:** ◈ {myth_first_kill_bounty(key):,} · {emoji('gem')} {MYTH_FIRST_KILL_GEMS:,} · {int(c['xp']*MYTH_XP_MULT):,} XP\n"
         f"-# **Bounty:** ◈ {myth_repeat_bounty_range(key)[0]:,}–{myth_repeat_bounty_range(key)[1]:,} · "
         f"{emoji('gem')} {MYTH_REPEAT_GEMS_RANGE[0]}–{MYTH_REPEAT_GEMS_RANGE[1]} · {int(c['xp']*MYTH_XP_MULT):,} XP",
-        f"-# **Drops:** {c['drop']} (trophy, worth ◈ {c['drop_value']:,})",
+        f"-# **Drops:** {c['drop']} — trophy, use for {trophy_duration_hours(c['drop'])}h: "
+        f"{TROPHY_EFFECTS.get(c['drop'], {}).get('desc', '')} (tradeable on `/market`)",
         f"-# **The fight:** turn-based brawl — you at {FIGHT_PLAYER_HP} HP vs it at "
         f"{FIGHT_MONSTER_HP_BASE + BIOME_TOOL_TIER.get(biome,1)*FIGHT_MONSTER_HP_TIER} HP. "
         f"Punch, Kick (big, risky), Defend, Shoot (**{FIGHT_SHOOT_AMMO} rounds** a volley), Taunt, or Flee. "
@@ -16827,10 +17250,10 @@ async def _use_healing_item_and_show(interaction: discord.Interaction, user_id: 
         f"{HEALING_ITEMS[item_name]['emoji']} You use a **{item_name}** (+{healed} HP).\n"
         f"{ico} **{new_hp}/{new_mx}**", 0x2ECC71)
 
-@bot.tree.command(name="use", description="Open a crate or use a healing item you own")
+@bot.tree.command(name="use", description="Open a crate, use a trophy or a healing item you own")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.describe(item="What to use — start typing to pick a crate or healing item you own")
+@app_commands.describe(item="What to use — start typing to pick a crate, trophy or healing item you own")
 async def use_cmd(interaction: discord.Interaction, item: str):
     user_id = await _common_init(interaction)
     if not user_id:
@@ -16842,6 +17265,13 @@ async def use_cmd(interaction: discord.Interaction, item: str):
     heal_name = _canon_healing_name(item)
     if heal_name:
         await _use_healing_item_and_show(interaction, user_id, heal_name)
+        return
+    trophy = next((t for t in TROPHY_EFFECTS if t.lower() == item.strip().lower()), None)
+    if trophy:
+        async with user_transaction(user_id):
+            res = use_trophy(user_id, trophy)
+        await send_ephemeral_v2(interaction, _trophy_use_note(trophy, res),
+                                0x2ECC71 if res.get("ok") else 0xE74C3C)
         return
     await send_ephemeral_v2(interaction,
         f"{emoji('cross_mark')} `{item}` isn't something you can use. `/use` opens Hunting Crates or heals with items like a "
@@ -16857,6 +17287,9 @@ async def _use_item_autocomplete(interaction: discord.Interaction, current: str)
            for n, c in (d.get("crate_inv") or {}).items() if c > 0 and cur in n.lower()]
     out += [app_commands.Choice(name=f"{n} (×{c}) — heal {HEALING_ITEMS[n]['heal']} HP", value=n)
             for n, c in (d.get("healing_inv") or {}).items() if c > 0 and cur in n.lower()]
+    out += [app_commands.Choice(name=f"{n} (×{c}) — trophy, {trophy_duration_hours(n)}h"[:100], value=n)
+            for n, c in (d.get("myth_items") or {}).items()
+            if c > 0 and n in TROPHY_EFFECTS and cur in n.lower()]
     return out[:25]
 
 @bot.tree.command(name="rules", description="View the Idle Hunter rules")
@@ -19538,6 +19971,12 @@ async def on_ready():
 
     load_runtime_state()
 
+    try:
+        _market.update(await backend.market_load())
+        print(f"✅ Market loaded ({len(_market)} listings)")
+    except Exception as e:
+        print("market load failed:", e)
+
     # Make sure the world is never empty on boot (Idle Hunter V2).
     if FEATURE_WORLD_CONDITIONS:
         try:
@@ -19648,6 +20087,7 @@ async def on_ready():
     if not world_map_url_refresh_task.is_running(): world_map_url_refresh_task.start()
     if not tribe_maintenance_task.is_running(): tribe_maintenance_task.start()
     if not analytics_prune_task.is_running():   analytics_prune_task.start()
+    if not market_expiry_task.is_running():     market_expiry_task.start()
     if not db_backup_task.is_running():         db_backup_task.start()
     if not loop_lag_monitor.is_running():       loop_lag_monitor.start()
     if FEATURE_WORLD_CONDITIONS and not world_condition_task.is_running():
