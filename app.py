@@ -16528,8 +16528,11 @@ def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 
     btns = [{"type": 2, "style": 5, "label": "Vote on discordbotlist.com",
              "emoji": emoji_partial("ballot_box"), "url": VOTE_URL}]
     if ready and not claimed:
+        # "star" in the EMOJI registry is "★" (U+2605 BLACK STAR) — a plain
+        # dingbat Discord's button validator rejects as "Invalid emoji". Use
+        # an actual Unicode emoji glyph directly instead of that registry key.
         btns.append({"type": 2, "style": 3, "label": "Claim Reward",
-                     "emoji": emoji_partial("star"), "custom_id": f"vote:claim:{user_id}"})
+                     "emoji": emoji_partial("⭐"), "custom_id": f"vote:claim:{user_id}"})
     btns.append({"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:back:{user_id}"})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
