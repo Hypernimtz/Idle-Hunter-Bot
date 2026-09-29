@@ -6777,6 +6777,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     hp_ico = emoji("hp") or "❤️"
     header = ui_header(tool_emoji(tool_name), f"{result['biome_name'].upper()} HUNT",
                         f"{get_username(user_id)} · {tool_name} · {ammo_line} · {hp_ico} {hp}/{mx}")
+    header = header.replace("## ", "### ", 1)  # one step smaller than the shared ## header
 
     total_xp_earned = 0
     total_sell_val  = 0
@@ -6799,7 +6800,7 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         if c["is_rare"]:
             tag += f"\n{emoji('sparkles')} **Perfect Catch!**"
         catch_parts.append(
-            f"### {a_em} {animal}\n"
+            f"{a_em} **{animal}**\n"
             f"-# {rarity_icon} {rarity.title()} · {ui_money(c['sell_value'])} · +{c['xp_earned']} XP"
             f"{tag}"
         )
