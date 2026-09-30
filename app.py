@@ -3519,56 +3519,9 @@ def _clean_node(node):
             _clean_node(v)
     return node
 
-# A panel whose first block is "### <custom emoji> Title ..." gets that emoji as a
-# big top-right thumbnail instead (and drops it from the heading). Status icons
-# (tick / cross / warning...) are skipped: a giant tick on a one-line confirmation
-# looks silly, so those keep the inline emoji.
-_ART_HEADING_RE = re.compile(r"^(#{1,3}) (?:`)?<(a?):([A-Za-z0-9_]+):(\d+)>(?:`)?[ ]+")
-_ART_SKIP_KEYS = ("check_mark", "cross_mark", "warning", "lock", "cooldown", "handshake",
-                  "wrench", "impact", "tip", "check", "no_entry")
-_ART_MIN_CHARS = 80
-_ART_MAX_COMPONENTS = 40
-
-def _count_v2(node) -> int:
-    if isinstance(node, list):
-        return sum(_count_v2(n) for n in node)
-    if not isinstance(node, dict):
-        return 0
-    return (1 + _count_v2(node.get("components", []))
-            + (1 if isinstance(node.get("accessory"), dict) else 0))
-
-def _apply_top_art(components) -> None:
-    try:
-        tops = components if isinstance(components, list) else [components]
-        skip_ids = {str(emoji_partial(k).get("id")) for k in _ART_SKIP_KEYS if emoji_partial(k).get("id")}
-        total = _count_v2(tops)
-        for top in tops:
-            if not isinstance(top, dict) or top.get("type") != 17:
-                continue
-            kids = top.get("components") or []
-            if not kids or kids[0].get("type") != 10:
-                continue
-            text = kids[0].get("content") or ""
-            m = _ART_HEADING_RE.match(text)
-            if not m or (len(kids) < 2 and len(text) < _ART_MIN_CHARS):
-                continue   # bare one-block notices keep their inline emoji
-            eid, animated = m.group(4), bool(m.group(2))
-            if eid in skip_ids or (_usable_emoji_ids and eid not in _usable_emoji_ids):
-                continue
-            if total + 2 > _ART_MAX_COMPONENTS:
-                continue
-            url = f"https://cdn.discordapp.com/emojis/{eid}.{'gif' if animated else 'png'}?size=256"
-            kids[0] = {"type": 9,
-                       "components": [{"type": 10, "content": m.group(1) + " " + text[m.end():]}],
-                       "accessory": {"type": 11, "media": {"url": url}}}
-            total += 2
-    except Exception:
-        logger.warning("top-right art pass failed", exc_info=True)
-
 def _clean_components(node):
-    """Entry point for every outgoing component list: top-right art, then the
-    unusable-emoji cleanup."""
-    _apply_top_art(node)
+    """Entry point for every outgoing component list. (Top-right thumbnails are
+    opt-in per panel via _gtop(), e.g. the gamble games — never applied globally.)"""
     return _clean_node(node)
 
 async def _raw(interaction: discord.Interaction, payload: dict):
@@ -5300,7 +5253,7 @@ def rookie_goals_block(user_id: str) -> str:
     rg = _ensure_rookie_goals(d) if d else {}
     done = sum(1 for v in rg.values() if v)
     total = len(ROOKIE_GOALS)
-    lines = [f"{emoji('check_mark') if rg.get(k) else '▫️'} {spec['emoji']} {spec['label']}"
+    lines = [f"{emoji('check_mark') if rg.get(k) else '▫️'} {emoji(spec['emoji'])} {spec['label']}"
              for k, spec in ROOKIE_GOALS.items()]
     chest = f" {emoji('gift')} Claimed!" if d.get("rookie_chest_claimed") else ""
     return (f"**Rookie Goals — {done}/{total}**{chest}\n" + "\n".join(f"-# {ln}" for ln in lines))
@@ -5448,7 +5401,7 @@ def hunters_path_line(user_id: str) -> str:
     if i >= len(HUNTERS_PATH_STEPS):
         return ""
     step = HUNTERS_PATH_STEPS[i]
-    return f"{emoji('world_map')} **Hunter's Path** {i}/{len(HUNTERS_PATH_STEPS)} — {step['emoji']} {step['label']}"
+    return f"{emoji('world_map')} **Hunter's Path** {i}/{len(HUNTERS_PATH_STEPS)} — {emoji(step['emoji'])} {step['label']}"
 
 def hunters_path_next_hint(user_id: str) -> str:
     """A short 'what to do next' line for panels that just finished a step —
@@ -5515,7 +5468,7 @@ def build_hunters_path_components(user_id: str) -> list:
         if "gems" in r: r_bits.append(f"{emoji('gem')}{r['gems']}")
         if "crate" in r: r_bits.append(r["crate"])
         r_line = " · ".join(r_bits)
-        lines.append(f"-# {mark} {step['emoji']} {step['label']} — *{r_line}*" +
+        lines.append(f"-# {mark} {emoji(step['emoji'])} {step['label']} — *{r_line}*" +
                      (f"\n-#   {step['hint']}" if i == cur else ""))
 
     rows = []
@@ -5523,7 +5476,7 @@ def build_hunters_path_components(user_id: str) -> list:
         step = HUNTERS_PATH_STEPS[cur]
         rows.append({"type": 1, "components": [
             {"type": 2, "style": 1, "label": f"Go: {step['label']}",
-             "emoji": {"name": step["emoji"]},
+             "emoji": emoji_partial(step["emoji"]),
              "custom_id": f"nav:{step['panel']}:{user_id}"},
         ]})
     rows.append({"type": 1, "components": [
@@ -9333,7 +9286,7 @@ def _craft_item_recipe_sections(user_id: str) -> list:
 def build_crate_shop_components(user_id: str) -> list:
     # The crate shop now lives inside the /craft screen. Kept as a thin alias so
     # existing `crate:shop` buttons and cross-user panels still resolve.
-    return build_craft_components(user_id)
+    return build_craft_components(user_id, tab="crates")
 
 def build_crate_open_menu_components(user_id: str) -> list:
     d = data[user_id]
@@ -9409,9 +9362,18 @@ def build_crate_result_components(user_id: str, crate_name: str, reward: dict,
 # CRAFT PANEL  ·  9 shards → 1 crystal (timed)
 # ─────────────────────────────────────────────
 
-def build_craft_components(user_id: str, notice: str = "") -> list:
+CRAFT_TABS = {
+    "crystals": ("Fuse Crystals", "crystal_rare", "Turn shards into crystals (queued)"),
+    "crates":   ("Crates",        "crate_sample", "Spend crystals on crates"),
+    "items":    ("Items",         "adhesive_bandage", "Instant shard / crystal recipes"),
+}
+
+def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> list:
     craft_tick(user_id)
     d = data[user_id]
+    if tab in CRAFT_TABS:
+        d["_craft_tab"] = tab
+    tab = d.get("_craft_tab") if d.get("_craft_tab") in CRAFT_TABS else "crystals"
     q = d.get("craft_queue", [])
 
     shard_lines = []
@@ -9438,37 +9400,44 @@ def build_craft_components(user_id: str, notice: str = "") -> list:
     if qsum:
         header += f"\n\n**In the forge ({len(q)}/{CRAFT_QUEUE_MAX}):**\n{qsum}"
 
-    craftable = [r for r in RARITY_KEYS if shard_count(user_id, r) >= CRYSTAL_SHARD_COST]
     rows: list = [
         {"type": 10, "content": header},
         {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [{"type": 3,
+            "custom_id": f"craft:tab:{user_id}",
+            "placeholder": "What do you want to craft?",
+            "min_values": 1, "max_values": 1, "flows": {},
+            "options": [{"label": lbl, "value": key, "description": desc, "default": key == tab,
+                         "emoji": emoji_partial(ico)}
+                        for key, (lbl, ico, desc) in CRAFT_TABS.items()]}]},
     ]
-    if len(q) >= CRAFT_QUEUE_MAX:
-        rows.append({"type": 10, "content": f"-# {emoji('warning')} The forge queue is full — wait for a crystal to finish."})
-    elif craftable:
-        opts = [{
-            "label": f"{_rarity_label(r)} Crystal",
-            "value": r,
-            "description": f"Uses {CRYSTAL_SHARD_COST} of your {shard_count(user_id, r)} {_rarity_label(r)} shards",
-            "emoji": emoji_partial(CRYSTAL_ICONS[r]) or None,
-        } for r in craftable]
-        for o in opts:
-            if not o.get("emoji"):
-                o.pop("emoji", None)
-        rows.append({"type": 1, "components": [{"type": 3,
-            "custom_id": f"craft:queue:{user_id}",
-            "placeholder": "Fuse shards into a crystal…",
-            "min_values": 1, "max_values": 1, "flows": {}, "options": opts}]})
+
+    if tab == "crystals":
+        craftable = [r for r in RARITY_KEYS if shard_count(user_id, r) >= CRYSTAL_SHARD_COST]
+        if len(q) >= CRAFT_QUEUE_MAX:
+            rows.append({"type": 10, "content": f"-# {emoji('warning')} The forge queue is full \u2014 wait for a crystal to finish."})
+        elif craftable:
+            opts = [{
+                "label": f"{_rarity_label(r)} Crystal",
+                "value": r,
+                "description": f"Uses {CRYSTAL_SHARD_COST} of your {shard_count(user_id, r)} {_rarity_label(r)} shards",
+                "emoji": emoji_partial(CRYSTAL_ICONS[r]) or None,
+            } for r in craftable]
+            for o in opts:
+                if not o.get("emoji"):
+                    o.pop("emoji", None)
+            rows.append({"type": 1, "components": [{"type": 3,
+                "custom_id": f"craft:queue:{user_id}",
+                "placeholder": "Fuse shards into a crystal\u2026",
+                "min_values": 1, "max_values": 1, "flows": {}, "options": opts}]})
+        else:
+            rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
+    elif tab == "crates":
+        rows.append({"type": 10, "content": f"### {emoji('crate_sample')} Crate Shop\n{_crystals_owned_line(user_id)}"})
+        rows.extend(_crate_shop_sections(user_id))
     else:
-        rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
-
-    rows.append({"type": 14, "divider": True, "spacing": 1})
-    rows.append({"type": 10, "content": f"### {emoji('crate_sample')} Crate Shop\n{_crystals_owned_line(user_id)}"})
-    rows.extend(_crate_shop_sections(user_id))
-
-    rows.append({"type": 14, "divider": True, "spacing": 1})
-    rows.append({"type": 10, "content": f"### {emoji('adhesive_bandage')} Item Crafting\n-# Instant — no queue."})
-    rows.extend(_craft_item_recipe_sections(user_id))
+        rows.append({"type": 10, "content": f"### {emoji('adhesive_bandage')} Item Crafting\n-# Instant \u2014 no queue."})
+        rows.extend(_craft_item_recipe_sections(user_id))
 
     rows.append({"type": 1, "components": [
         {"type": 2, "style": 2, "label": "Refresh", "emoji": emoji_partial("refresh"), "custom_id": f"craft:open:{user_id}"},
@@ -12870,6 +12839,11 @@ async def _dispatch_component(interaction: discord.Interaction):
 
         if parts[1] == "open":
             await smart_update_v2(interaction, build_craft_components(owner_id))
+            return
+
+        if parts[1] == "tab":
+            tab = values[0] if values else None
+            await smart_update_v2(interaction, build_craft_components(owner_id, tab=tab if tab in CRAFT_TABS else None))
             return
 
         if parts[1] == "queue":

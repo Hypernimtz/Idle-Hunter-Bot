@@ -711,7 +711,8 @@ def test_menu_uses_registry_icons_not_literals():
 
 
 def test_text_default_glyphs_get_emoji_presentation():
-    assert game_data.EMOJI["gear"].endswith("️")      # ⚙ renders as an emoji, not a text glyph
+    # ⚙ renders as an emoji, not a text glyph — or the key borrows custom art (gear -> settings)
+    assert game_data.EMOJI["gear"].startswith("<:") or game_data.EMOJI["gear"].endswith("️")
     assert game_data.EMOJI["shield"].startswith("<:")       # uploaded art wins over the placeholder
 
 

@@ -834,28 +834,47 @@ def test_gamble_panels_build_with_thumbnails_and_fit_component_cap():
         assert count(c) <= 40
 
 
-def test_top_right_art_pass():
-    long_body = "x" * 100
-    dice = app.EMOJI["dice"]
-    tick = app.EMOJI["check_mark"]
-    def panel(head):
-        return [{"type": 17, "components": [{"type": 10, "content": head + " " + long_body},
-                                            {"type": 1, "components": []}]}]
-    # custom emoji heading -> section + thumbnail, emoji stripped from the heading
-    c = panel(f"### {dice} Title")
-    app._clean_components(c)
-    first = c[0]["components"][0]
-    assert first["type"] == 9 and first["accessory"]["type"] == 11
-    assert first["components"][0]["content"].startswith("### Title")
-    assert "cdn.discordapp.com/emojis/" in first["accessory"]["media"]["url"]
-    # status icon, short text, unicode emoji and existing sections are left alone
-    for c in (panel(f"### {tick} Done"), panel("### 🎯 Title"),
-              [{"type": 17, "components": [{"type": 10, "content": f"### {dice} Hi"}]}]):
-        app._clean_components(c)
-        assert c[0]["components"][0]["type"] == 10
-    c = panel(f"### {dice} Title")
-    app._clean_components(c); app._clean_components(c)    # idempotent
-    assert c[0]["components"][0]["type"] == 9 and c[0]["components"][0]["components"][0]["content"].startswith("### Title")
+def test_craft_panel_has_category_dropdown_and_tabs():
+    _reset()
+    uid = "5020"
+    _mk_user(uid)
+    def opt_values(c):
+        for row in c[0]["components"]:
+            if row.get("type") == 1 and row["components"][0].get("custom_id", "").startswith("craft:tab:"):
+                return [o["value"] for o in row["components"][0]["options"]]
+    app.add_crystal(uid, "rare", 5)          # something affordable, so the item picker shows
+    seen_bodies = {}
+    for tab in ("crystals", "crates", "items"):
+        c = app.build_craft_components(uid, tab=tab)
+        assert opt_values(c) == ["crystals", "crates", "items"]
+        seen_bodies[tab] = str(c)
+    assert "craft:pick:" in seen_bodies["items"] and "crate:buy:" not in seen_bodies["items"]
+    assert "crate:buy:" in seen_bodies["crates"] and "craft:pick:" not in seen_bodies["crates"]
+    # the crate-shop alias lands on the Crates tab and the choice is remembered
+    app.build_crate_shop_components(uid)
+    assert app.data[uid]["_craft_tab"] == "crates"
+
+
+def test_fallback_art_borrowed_until_real_upload():
+    g = app.game_data if hasattr(app, "game_data") else __import__("game_data")
+    assert g.EMOJI["smoke_bomb"].startswith("<")           # borrowed dash art, not unicode
+    assert g.emoji_partial("bell").get("id")
+    for k in ("badge_event_fox", "badge_event_anchor", "badge_event_duck",
+              "badge_recruiter", "badge_master_recruiter"):
+        assert k in g.EMOJI
+    was = g.EMOJI["scroll"]
+    g.adopt_named_emojis({"scroll": "<:scroll:999>"})
+    try:
+        assert g.EMOJI["scroll"] == "<:scroll:999>"        # real upload wins over the borrow
+    finally:
+        g.EMOJI["scroll"] = was
+        g._FALLBACK_IN_USE.add("scroll")
+
+
+def test_beginner_checklists_use_registry_keys():
+    g = __import__("game_data")
+    for spec in list(g.ROOKIE_GOALS.values()) + list(g.HUNTERS_PATH_STEPS):
+        assert spec["emoji"].isascii() and spec["emoji"] in g.EMOJI, spec
 
 
 def _all_tests():

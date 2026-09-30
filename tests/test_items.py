@@ -331,12 +331,12 @@ def test_resync_item_emojis_picks_up_adopted_custom_emoji():
         game_data.ITEMS["Smoke Bomb"].update(orig_item_emoji)
 
 
-def test_resync_item_emojis_leaves_scratch_pad_on_unicode_placeholder():
-    """No custom Scratch Pad emoji has been uploaded yet — resync must be a
-    no-op for it until one is adopted under the "scratch_pad" key."""
+def test_resync_item_emojis_scratch_pad_uses_borrowed_art():
+    """No Scratch Pad art has been uploaded yet, so it borrows the Season Pass
+    icon — resync must keep that until one is adopted under "scratch_pad"."""
     before = app.ITEMS["Scratch Pad"]["emoji"]
     game_data.resync_item_emojis()
-    assert app.ITEMS["Scratch Pad"]["emoji"] == before == "🎫"
+    assert app.ITEMS["Scratch Pad"]["emoji"] == before == game_data.EMOJI["season_pass"]
 
 
 def test_field_medkit_maps_to_existing_potion_bottle_key():

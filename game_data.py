@@ -915,6 +915,48 @@ for _k, _v in list(EMOJI.items()):
 
 _EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]+):(\d+)>$")
 
+# Keys that only have a unicode placeholder but can reuse existing custom art in
+# the meantime. Unlike _EMOJI_ALIASES these are FALLBACKS: the moment art named
+# after the key itself is uploaded, adopt_named_emojis() replaces the borrowed one.
+# key -> existing custom key to borrow from
+_EMOJI_FALLBACK_ART = {
+    # consumables
+    "smoke_bomb": "dash", "gift_box": "gift", "iron_plating": "shield",
+    "hunters_stim": "ammo_basic_tranq", "bloodhound_scent": "animal_fallback",
+    "trail_map": "world_map", "forge_coal": "circle_black", "lucky_hammer": "hammer",
+    "scratch_pad": "season_pass", "bandage": "adhesive_bandage",
+    "first_aid_kit": "equipment", "regen_tonic": "potion_bottle",
+    # UI keys
+    "camping": "idle_camp", "tent": "idle_camp", "gear": "settings",
+    "bar_chart": "stats", "chart_with_upwards_trend": "stats",
+    "person": "profile", "adult": "profile", "group": "tribe_members",
+    "dollar": "coin_sample", "banknote_with_dollar_sign": "coin_sample",
+    "money_with_wings": "coin_sample", "diamond_blue": "gem",
+    "test_tube": "potion_bottle", "triangle_up": "upgrade",
+    "stopwatch": "clock", "hourglass_with_flowing_sand": "clock",
+    "star": "sparkles", "glowing_star": "sparkles", "sports_medal": "military_medal",
+    "toolbox": "equipment", "four_leaf_clover": "luck",
+    "books": "collection", "notebook": "collection", "open_file_folder": "collection",
+    "scroll": "quests", "cheering_megaphone": "announcement", "speaker": "announcement",
+    "globe_with_meridians": "earth", "calendar": "daily", "mailbox": "mail",
+    "x_mark": "cross_mark", "bell": "new_notif",
+    "video_game": "badge_game_master_gold", "bug": "badge_bug_hunter",
+}
+# Badge keys that had no registry entry at all (SPECIAL_BADGES referenced them).
+# Unicode placeholders so upload-by-name (event fox / anchor / duck, recruiter,
+# master recruiter) adopts the real art on the next restart.
+for _bk, _bv in {"badge_event_fox": "🦊", "badge_event_anchor": "⚓",
+                 "badge_event_duck": "🦆", "badge_recruiter": "🤝",
+                 "badge_master_recruiter": "🎖️"}.items():
+    EMOJI.setdefault(_bk, _bv)
+_FALLBACK_IN_USE: set = set()
+for _k, _src in _EMOJI_FALLBACK_ART.items():
+    _cur, _new = EMOJI.get(_k, ""), EMOJI.get(_src, "")
+    if _new.startswith("<") and not _cur.startswith("<"):
+        EMOJI[_k] = _new
+        _FALLBACK_IN_USE.add(_k)
+
+
 def adopt_named_emojis(available: dict[str, str]) -> list[str]:
     """Auto-activate art by NAME. ``available`` maps an uploaded emoji's name to its
     ``<:name:id>`` string (application + server emojis). Any registry key that is
@@ -923,11 +965,12 @@ def adopt_named_emojis(available: dict[str, str]) -> list[str]:
     then restart; no id copy-paste. Returns the keys adopted."""
     adopted = []
     for key, val in list(EMOJI.items()):
-        if val.startswith("<"):
+        if val.startswith("<") and key not in _FALLBACK_IN_USE:
             continue
         cand = available.get(key)
         if cand and _EMOJI_RE.match(cand):
             EMOJI[key] = cand
+            _FALLBACK_IN_USE.discard(key)
             adopted.append(key)
     # aliases that were copied by value at import time
     for alias, src in _EMOJI_ALIASES.items():
@@ -4592,12 +4635,14 @@ def resync_item_emojis() -> list[str]:
 TRIAL_TOOL_MIN      = 5
 TRIAL_TOOL          = "Shortbow"
 
+# "emoji" values below are EMOJI registry keys (resolve with emoji()/emoji_partial()),
+# not literal unicode, so the custom art shows.
 ROOKIE_GOALS = {
-    "catch_5":       {"label": "Catch 5 animals",           "emoji": "🐾"},
-    "reach_level_5": {"label": "Reach Level 5",              "emoji": "⭐"},
-    "discover_5":    {"label": "Discover 5 species",         "emoji": "📖"},
-    "buy_tool":      {"label": "Buy your first tool",        "emoji": "🛠️"},
-    "view_world":    {"label": "Check the World screen",     "emoji": "🌎"},
+    "catch_5":       {"label": "Catch 5 animals",           "emoji": "animal_fallback"},
+    "reach_level_5": {"label": "Reach Level 5",              "emoji": "sparkles"},
+    "discover_5":    {"label": "Discover 5 species",         "emoji": "book"},
+    "buy_tool":      {"label": "Buy your first tool",        "emoji": "equipment"},
+    "view_world":    {"label": "Check the World screen",     "emoji": "earth"},
 }
 
 # ── Hunter's Path — the first-hour progression spine (2026-09-15) ───────────
@@ -4618,52 +4663,52 @@ ROOKIE_GOALS = {
 # busywork with no real action behind it.
 HUNTERS_PATH_STEPS = [
     {"key": "buy_tool",         "label": "Buy your first real tool",
-     "emoji": "🛠️", "panel": "shop",
+     "emoji": "equipment", "panel": "shop",
      "hint": "Open `/shop` and buy a tool — it equips automatically.",
      "reward": {"gems": 10}},
     {"key": "hunt_with_tool",   "label": "Hunt with your new tool",
-     "emoji": "🏹", "panel": "menu",
+     "emoji": "bow", "panel": "menu",
      "hint": "Use `/hunt` now that you're properly equipped. You'll also get a Smoke Bomb "
              "and a Bandage — try `/use` on them anytime.",
      "reward": {"money": 500, "item": "Smoke Bomb", "heal_item": "Bandage"}},
     {"key": "claim_daily",      "label": "Claim your daily reward",
-     "emoji": "🎁", "panel": "daily",
+     "emoji": "gift", "panel": "daily",
      "hint": "Open `/daily` and claim it — free money and XP, once a day.",
      "reward": {"gems": 5}},
     {"key": "complete_quest",   "label": "Complete a quest",
-     "emoji": "📜", "panel": "quests",
+     "emoji": "quests", "panel": "quests",
      "hint": "Open `/quests` and claim one you've already finished.",
      "reward": {"money": 750}},
     {"key": "discover_5",       "label": "Discover 5 species",
-     "emoji": "📖", "panel": "guide",
+     "emoji": "book", "panel": "guide",
      "hint": "Keep hunting — check `/guide` to see how many you've found.",
      "reward": {"crate": "Common Crate"}},
     {"key": "open_crate",       "label": "Open your first crate",
-     "emoji": "📦", "panel": "craft",
+     "emoji": "crate_sample", "panel": "craft",
      "hint": "Open `/craft` and use a crate you've picked up from hunting.",
      "reward": {"gems": 10}},
     {"key": "travel",           "label": "Travel to a new region",
-     "emoji": "🌍", "panel": "world",
+     "emoji": "world_map", "panel": "world",
      "hint": "Open `/world` and travel somewhere new.",
      "reward": {"money": 1000}},
     {"key": "catch_new_region", "label": "Catch something new there",
-     "emoji": "🐾", "panel": "menu",
+     "emoji": "animal_fallback", "panel": "menu",
      "hint": "Hunt in your new region — its animals aren't found in the Village.",
      "reward": {"crate": "Uncommon Crate"}},
     {"key": "start_camp",       "label": "Station a Hunting Camp",
-     "emoji": "🏕️", "panel": "idle",
+     "emoji": "idle_camp", "panel": "idle",
      "hint": "Open `/idle` and station a hunter — they catch while you're away.",
      "reward": {"gems": 10}},
     {"key": "check_camp",       "label": "Check in on your camp",
-     "emoji": "🎒", "panel": "idle",
+     "emoji": "stats", "panel": "idle",
      "hint": "Open `/idle` again and collect what your camp caught.",
      "reward": {"money": 1000}},
     {"key": "first_rare",       "label": "Land a Rare or Epic catch",
-     "emoji": "🌟", "panel": "menu",
+     "emoji": "sparkles", "panel": "menu",
      "hint": "Keep hunting — a rarer catch pays out a lot more.",
      "reward": {"gems": 20}},
     {"key": "myth_lead",        "label": "Find your first Mythical lead",
-     "emoji": "👹", "panel": "menu",
+     "emoji": "skull", "panel": "menu",
      "hint": "Keep hunting — cryptid sightings start showing up from here.",
      "reward": {"gems": 30}},
 ]
