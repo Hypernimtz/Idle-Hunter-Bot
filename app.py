@@ -133,7 +133,7 @@ from backend import (
     get_user_lock, tribe_lock, state_lock
 )
 from dotenv import load_dotenv
-import os, sys
+import os, sys, re
 import functools
 import heapq
 load_dotenv("token.env")
@@ -3499,12 +3499,12 @@ def inv_summary_lines(user_id: str, max_items: int = INV_DISPLAY_MAX) -> str:
 # strip those before sending and just keep the text label.
 _usable_emoji_ids: set[str] = set()
 
-def _clean_components(node):
+def _clean_node(node):
     """Recursively drop `emoji` dicts that are empty or reference an emoji the
     bot cannot use. Mutates in place; returns the node for convenience."""
     if isinstance(node, list):
         for c in node:
-            _clean_components(c)
+            _clean_node(c)
     elif isinstance(node, dict):
         e = node.get("emoji")
         if isinstance(e, dict):
@@ -3516,8 +3516,60 @@ def _clean_components(node):
         elif "emoji" in node and not isinstance(e, dict):
             node.pop("emoji", None)
         for v in node.values():
-            _clean_components(v)
+            _clean_node(v)
     return node
+
+# A panel whose first block is "### <custom emoji> Title ..." gets that emoji as a
+# big top-right thumbnail instead (and drops it from the heading). Status icons
+# (tick / cross / warning...) are skipped: a giant tick on a one-line confirmation
+# looks silly, so those keep the inline emoji.
+_ART_HEADING_RE = re.compile(r"^(#{1,3}) (?:`)?<(a?):([A-Za-z0-9_]+):(\d+)>(?:`)?[ ]+")
+_ART_SKIP_KEYS = ("check_mark", "cross_mark", "warning", "lock", "cooldown", "handshake",
+                  "wrench", "impact", "tip", "check", "no_entry")
+_ART_MIN_CHARS = 80
+_ART_MAX_COMPONENTS = 40
+
+def _count_v2(node) -> int:
+    if isinstance(node, list):
+        return sum(_count_v2(n) for n in node)
+    if not isinstance(node, dict):
+        return 0
+    return (1 + _count_v2(node.get("components", []))
+            + (1 if isinstance(node.get("accessory"), dict) else 0))
+
+def _apply_top_art(components) -> None:
+    try:
+        tops = components if isinstance(components, list) else [components]
+        skip_ids = {str(emoji_partial(k).get("id")) for k in _ART_SKIP_KEYS if emoji_partial(k).get("id")}
+        total = _count_v2(tops)
+        for top in tops:
+            if not isinstance(top, dict) or top.get("type") != 17:
+                continue
+            kids = top.get("components") or []
+            if not kids or kids[0].get("type") != 10:
+                continue
+            text = kids[0].get("content") or ""
+            m = _ART_HEADING_RE.match(text)
+            if not m or (len(kids) < 2 and len(text) < _ART_MIN_CHARS):
+                continue   # bare one-block notices keep their inline emoji
+            eid, animated = m.group(4), bool(m.group(2))
+            if eid in skip_ids or (_usable_emoji_ids and eid not in _usable_emoji_ids):
+                continue
+            if total + 2 > _ART_MAX_COMPONENTS:
+                continue
+            url = f"https://cdn.discordapp.com/emojis/{eid}.{'gif' if animated else 'png'}?size=256"
+            kids[0] = {"type": 9,
+                       "components": [{"type": 10, "content": m.group(1) + " " + text[m.end():]}],
+                       "accessory": {"type": 11, "media": {"url": url}}}
+            total += 2
+    except Exception:
+        logger.warning("top-right art pass failed", exc_info=True)
+
+def _clean_components(node):
+    """Entry point for every outgoing component list: top-right art, then the
+    unusable-emoji cleanup."""
+    _apply_top_art(node)
+    return _clean_node(node)
 
 async def _raw(interaction: discord.Interaction, payload: dict):
     try:

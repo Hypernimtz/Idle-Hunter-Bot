@@ -834,6 +834,30 @@ def test_gamble_panels_build_with_thumbnails_and_fit_component_cap():
         assert count(c) <= 40
 
 
+def test_top_right_art_pass():
+    long_body = "x" * 100
+    dice = app.EMOJI["dice"]
+    tick = app.EMOJI["check_mark"]
+    def panel(head):
+        return [{"type": 17, "components": [{"type": 10, "content": head + " " + long_body},
+                                            {"type": 1, "components": []}]}]
+    # custom emoji heading -> section + thumbnail, emoji stripped from the heading
+    c = panel(f"### {dice} Title")
+    app._clean_components(c)
+    first = c[0]["components"][0]
+    assert first["type"] == 9 and first["accessory"]["type"] == 11
+    assert first["components"][0]["content"].startswith("### Title")
+    assert "cdn.discordapp.com/emojis/" in first["accessory"]["media"]["url"]
+    # status icon, short text, unicode emoji and existing sections are left alone
+    for c in (panel(f"### {tick} Done"), panel("### 🎯 Title"),
+              [{"type": 17, "components": [{"type": 10, "content": f"### {dice} Hi"}]}]):
+        app._clean_components(c)
+        assert c[0]["components"][0]["type"] == 10
+    c = panel(f"### {dice} Title")
+    app._clean_components(c); app._clean_components(c)    # idempotent
+    assert c[0]["components"][0]["type"] == 9 and c[0]["components"][0]["components"][0]["content"].startswith("### Title")
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
