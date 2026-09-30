@@ -735,20 +735,16 @@ def test_weekly_daily_quest_goal_pays_once_and_rolls():
     assert app.dq_week_state(uid) == {"start": 0, "n": 0, "paid": False}
 
 
-def test_gamble_max_bet_scales_with_level():
+def test_gamble_has_no_max_bet():
     _reset()
     uid = "5002"
     d = _mk_user(uid)
-    d["level"] = 1
-    lo = app.gamble_max_bet(uid)
-    d["level"] = 150
-    mid = app.gamble_max_bet(uid)
-    d["level"] = 1000
-    hi = app.gamble_max_bet(uid)
-    assert 0 < lo < mid < hi
+    for lvl in (1, 150, 1000):
+        d["level"] = lvl
+        assert app.gamble_max_bet(uid) == 0
     async def _modal():                    # discord modals need a running loop
         return app.SetBetModal(uid, "cf")
-    assert run(_modal()).max_bet == hi
+    assert run(_modal()).max_bet == 0
 
 
 def test_empty_tribes_are_pruned_but_real_ones_kept():

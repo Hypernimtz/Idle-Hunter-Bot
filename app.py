@@ -9982,17 +9982,10 @@ def _slots_biome(user_id: str) -> str:
     return b
 
 def gamble_max_bet(user_id: str) -> int:
-    """Highest wager allowed on ANY gamble game (blackjack, coinflip, roulette,
-    RPS, dice, high-low, slots), scaled by player level. It follows the slot
-    tables' ladder: each biome you've unlocked raises the cap to that table's max
-    (Lv 1 → ◈10K … Lv 1000 → ◈250M), so a fresh account can't stake a fortune."""
-    lvl  = data.get(user_id, {}).get("level", 1)
-    best = 0
-    for biome_key, lvl_req in BIOME_LEVELS:
-        cfg = SLOT_BIOME_CONFIG.get(biome_key)
-        if cfg and lvl >= lvl_req:
-            best = max(best, cfg[1])
-    return best or SLOT_BIOME_CONFIG["village"][1]
+    """Highest wager on any gamble game. 0 = no maximum (the level-scaled cap was
+    removed 2026-09-29); callers treat a falsy cap as unlimited. A bet is still
+    bounded by the player's own balance."""
+    return 0
 
 def _bet_cap_msg(cap: int, level: int) -> str:
     return (f"{emoji('cross_mark')} Your max bet at **Level {level}** is **◈ {cap:,}** "
@@ -10012,7 +10005,7 @@ def _slots_biome_options(user_id: str) -> list:
         min_b, max_b, chance, mult = cfg
         locked = user_level < lvl_req
         desc   = (f"Locked (Level {lvl_req})" if locked
-                  else f"Win: {chance}% · ×{mult} · Max ◈{max_b:,}")
+                  else f"Win: {chance}% · ×{mult}")
         opts.append({
             "label": BIOME_NAMES.get(biome_key, biome_key), "value": biome_key,
             "description": desc, "default": biome_key == cur,
@@ -10031,7 +10024,7 @@ def build_slots_chances_panel(user_id: str) -> list:
         lock_str = f" {emoji('lock')}" if locked else ""
         lines.append(
             f"{BIOME_EMOJIS.get(biome_key, emoji('world_map'))} **{BIOME_NAMES.get(biome_key, biome_key)}**{lock_str}\n"
-            f"-# Bet: ◈{min_b:,}–◈{max_b:,} · Win: {chance}% · ×{mult}"
+            f"-# Min bet ◈{min_b:,}  Win: {chance}% · ×{mult}"
         )
     content = f"### {emoji('slot_machine')} Slots — Win Chances by Biome\n\n" + "\n\n".join(lines)
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
@@ -10060,7 +10053,7 @@ def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> 
         content = (
             f"### {emoji('slot_machine')} Slots Machine\n"
             f"{BIOME_EMOJIS.get(biome, emoji('world_map'))} **{BIOME_NAMES.get(biome, biome)}**\n\n"
-            f"Min: **◈ {min_b:,}** · Max: **◈ {max_b:,}**\n"
+            f"Min bet: **◈ {min_b:,}**  No max\n"
             f"Win: **{chance}%** · Multiplier: **×{mult}**\n\n{bet_line}"
         )
     else:
@@ -14842,7 +14835,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                      "dice": "_dice_bet", "hl": "_hl_bet", "slots": "_slots_bet"}
         if _is_wager and parts[1] in _bet_keys:
             _cap = gamble_max_bet(owner_id)
-            if data[owner_id].get(_bet_keys[parts[1]], 0) > _cap:
+            if _cap and data[owner_id].get(_bet_keys[parts[1]], 0) > _cap:
                 await send_ephemeral_v2(interaction,
                     _bet_cap_msg(_cap, data[owner_id].get("level", 1)) + " Lower your bet first.", 0xE74C3C)
                 return
@@ -14951,10 +14944,6 @@ async def _dispatch_component(interaction: discord.Interaction):
                 if bet < min_b:
                     await send_ephemeral_v2(interaction,
                         f"{emoji('cross_mark')} Minimum bet on this table is **◈ {min_b:,}** — raise your bet.", 0xE74C3C)
-                    return
-                if bet > max_b:
-                    await send_ephemeral_v2(interaction,
-                        f"{emoji('cross_mark')} Maximum bet on this table is **◈ {max_b:,}** — lower your bet.", 0xE74C3C)
                     return
                 won    = random.randint(1, 100) <= chance
                 payout = int(bet * mult) if won else 0
@@ -15624,14 +15613,9 @@ class SetBetModal(_V2Modal, title="Set Your Bet"):
         self.game    = game
         self.min_bet = min_bet
         # Every table is capped by the player's level (slots tables can be lower).
-        _cap = gamble_max_bet(self.user_id)
-        max_bet = min(max_bet, _cap) if max_bet else _cap
-        self.max_bet = max_bet
-        if min_bet or max_bet:
-            self.bet_input.placeholder = (
-                f"Min: ◈{min_bet:,}  Max: ◈{max_bet:,}" if max_bet
-                else f"Min: ◈{min_bet:,}"
-            )
+        self.max_bet = 0   # no maximum on any table
+        if min_bet:
+            self.bet_input.placeholder = f"Min: ◈{min_bet:,}  (e.g. 1000, 50K, 1M)"
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _modal_gate(interaction, self.user_id):
@@ -16037,7 +16021,7 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
     def __init__(self, user_id: str):
         super().__init__()
         self.user_id = str(user_id)
-        self.bet_input.placeholder = f"Max: ◈{gamble_max_bet(self.user_id):,}  (e.g. 1000, 50K)"
+        self.bet_input.placeholder = "e.g. 1000, 50K, 1M"
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _modal_gate(interaction, self.user_id):
@@ -16045,10 +16029,6 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
         parsed = parse_amount(self.bet_input.value)
         if not parsed or parsed <= 0:
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Invalid amount.", 0xE74C3C)
-            return
-        _cap = gamble_max_bet(self.user_id)
-        if parsed > _cap:
-            await send_ephemeral_v2(interaction, _bet_cap_msg(_cap, data[self.user_id].get("level", 1)), 0xE74C3C)
             return
 
         cur = _bj_state.get(self.user_id)
