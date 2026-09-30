@@ -787,6 +787,53 @@ def test_hunt_drops_block_is_separate_from_catches():
 
 
 # ─────────────────────────────────────────────────────────────
+def test_slots_animal_odds_are_consistent_and_house_favoured():
+    o = app._slots_odds()
+    assert 0.85 < o["rtp"] < 0.97
+    assert abs(o["pair_p"] + o["triple_p"] + _slots_none_p() - 1) < 1e-9
+    seen = {"triple": 0, "pair": 0, "none": 0}
+    for _ in range(3000):
+        reels, kind, mult = app._slots_spin()
+        assert len(reels) == 3 and kind in seen
+        assert (mult == 0) == (kind == "none")
+        seen[kind] += 1
+    assert all(seen.values()), seen
+
+
+def _slots_none_p():
+    total = sum(w for _, w, _ in app.SLOT_REELS)
+    ps = [w / total for _, w, _ in app.SLOT_REELS]
+    # all three different
+    import itertools
+    return sum(ps[i] * ps[j] * ps[k] * 6 for i, j, k in itertools.combinations(range(len(ps)), 3))
+
+
+def test_highlow_both_sides_always_bettable():
+    for n in range(2, 13):          # the first card is never A or K
+        hi, lo = app._hl_multipliers(n)
+        assert hi >= 1.01 and lo >= 1.01, (n, hi, lo)
+    assert app._hl_multipliers(2)[0] == 1.01    # near-sure side pays a token +1%
+
+
+def test_gamble_panels_build_with_thumbnails_and_fit_component_cap():
+    _reset()
+    uid = "5010"
+    d = _mk_user(uid)
+    d["_dice_bet"] = d["_hl_bet"] = d["_slots_bet"] = 100
+    d["_hl_n"] = 7
+    panels = [app.build_gamble_menu(uid), app.build_coinflip_panel(uid), app.build_slots_panel(uid),
+              app.build_slots_chances_panel(uid), app.build_roulette_panel(uid), app.build_blackjack_panel(uid),
+              app.build_rps_panel(uid), app.build_dice_panel(uid), app.build_highlow_panel(uid, "guess"),
+              app.build_slots_panel(uid, "result", {"reels": ["Rabbit", "Rabbit", "Deer"], "bet": 100,
+                                                    "payout": 120, "kind": "pair"})]
+    def count(n):
+        if isinstance(n, list):
+            return sum(count(x) for x in n)
+        return 1 + count(n.get("components", [])) + (1 if n.get("accessory") else 0)
+    for c in panels:
+        assert count(c) <= 40
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

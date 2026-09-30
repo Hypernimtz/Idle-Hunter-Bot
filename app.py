@@ -9667,8 +9667,18 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
 # GAMBLE PANELS
 # ─────────────────────────────────────────────
 
-# Plain unicode so the reels render everywhere (DMs, user installs, any server).
-SLOT_SYMBOLS = ["`🍒`", "`🍋`", "`🔔`", "`⭐`", "`💎`", "7️⃣"]
+# Slots reels: (animal, weight, triple payout). Rarer animals land less often and
+# pay more; any exact pair pays SLOT_PAIR_MULT. _slots_odds() derives the shown
+# chances from this table (long-run return ~91%).
+SLOT_REELS = [
+    ("Rabbit",       30,  4),
+    ("Deer",         24,  7),
+    ("Wolf",         18, 10),
+    ("Bear",         14, 16),
+    ("Polar Bear",    9, 30),
+    ("Snow Leopard",  5, 65),
+]
+SLOT_PAIR_MULT = 1.2
 
 BJ_SUITS = ["♠", "♥", "♦", "♣"]
 BJ_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -9709,10 +9719,27 @@ def _bj_resume_or_clear(user_id: str) -> None:
     if not st or st.get("done"):
         _bj_state.pop(user_id, None)
 
+def _gi(icon: str, fallback: str = "") -> str:
+    """Header emoji prefix: empty when the game's art is shown as the panel's
+    top-right thumbnail instead (_gtop), else the emoji + a space."""
+    if _emoji_cdn_url(icon):
+        return ""
+    return (fallback or emoji(icon)) + " "
+
+def _gtop(content: str, icon: str) -> dict:
+    """First block of a gamble panel: the text with the game's art as a big
+    top-right thumbnail (custom emoji rendered from the CDN), plain text if the
+    icon isn't a custom emoji."""
+    url = _emoji_cdn_url(icon)
+    if not url:
+        return {"type": 10, "content": content}
+    return {"type": 9, "components": [{"type": 10, "content": content}],
+            "accessory": {"type": 11, "media": {"url": url}}}
+
 def build_gamble_menu(user_id: str) -> list:
     d = data[user_id]
     content = (
-        f"### {emoji('dice')} Gamble\n"
+        f"### {_gi('dice')}Gamble\n"
         f"Balance: **◈ {d['money']:,}**\n\n"
         f"-# Select a game from the dropdown below."
     )
@@ -9720,20 +9747,20 @@ def build_gamble_menu(user_id: str) -> list:
         {"label": "Coinflip", "emoji": emoji_partial("coinflip"),  "value": "coinflip",
          "description": "Double or nothing on a coin toss"},
         {"label": "Slots", "emoji": emoji_partial("slot_machine"), "value": "slots",
-         "description": "Spin the reels — higher biomes, bigger wins"},
-        {"label": "🃏 Blackjack",           "value": "blackjack",
+         "description": "Match animals on the reels — pairs and triples win"},
+        {"label": "Blackjack", "emoji": emoji_partial("spades_ace"), "value": "blackjack",
          "description": "Beat the dealer to 21"},
         {"label": "Roulette", "emoji": emoji_partial("red_ball"),  "value": "roulette",
          "description": "Bet on Red, Black or Green"},
-        {"label": "✊ Rock Paper Scissors",  "value": "rps",
+        {"label": "Rock Paper Scissors", "emoji": emoji_partial("raised_fist"), "value": "rps",
          "description": "Beat the bot hand-to-hand"},
         {"label": "Dice", "emoji": emoji_partial("dice"),  "value": "dice",
          "description": "Roll 2 dice — bet Low, Seven or High"},
-        {"label": "🔼 High-Low",            "value": "highlow",
+        {"label": "High-Low", "emoji": emoji_partial("hearts_king"), "value": "highlow",
          "description": "Guess if the next card is higher or lower"},
     ]
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "dice"),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [{"type": 3,
             "custom_id": f"gamble:game_select:{user_id}",
@@ -9779,6 +9806,14 @@ DICE_BETS = {
     "high":  ("High (8–12)", lambda t: 8 <= t <= 12, 2.2),
 }
 
+def _dice_info() -> str:
+    """Chance + payout per bet, computed from DICE_BETS over all 36 rolls."""
+    lines = []
+    for label, pred, mlt in DICE_BETS.values():
+        n = sum(1 for a in range(1, 7) for b in range(1, 7) if pred(a + b))
+        lines.append(f"-# **{label}** — {n}/36 ({n / 36 * 100:.1f}%) · pays **×{mlt}** · return {n / 36 * mlt * 100:.0f}%")
+    return "\n".join(lines)
+
 def build_dice_panel(user_id: str, state: str = "bet", result: dict = None) -> list:
     d           = data[user_id]
     current_bet = d.get("_dice_bet", 0)
@@ -9786,9 +9821,9 @@ def build_dice_panel(user_id: str, state: str = "bet", result: dict = None) -> l
     bet_line    = f"Bet: **◈ {current_bet:,}**" if current_bet else "Bet: *not set*"
     if state == "bet":
         content = (
-            f"### {emoji('dice')} Dice\n{bet_line}\n\n"
+            f"### {_gi('dice')}Dice\n{bet_line}\n\n"
             f"Two dice are rolled. Bet on the total:\n"
-            f"-# Low 2–6 → ×2.2  ·  Seven → ×5.5  ·  High 8–12 → ×2.2"
+            f"{_dice_info()}"
         )
     else:
         d1, d2 = result["dice"]; total = d1 + d2
@@ -9798,9 +9833,9 @@ def build_dice_panel(user_id: str, state: str = "bet", result: dict = None) -> l
         head   = f"{emoji('check_mark')} You won!" if won else f"{emoji('cross_mark')} You lost!"
         money_line = (f"**+◈ {payout - bet:,}**" if won else f"**-◈ {bet:,}**")
         content = (
-            f"### {emoji('dice')} Dice — {head}\n"
+            f"### {_gi('dice')}Dice — {head}\n"
             f"{emoji('dice')} **{d1}** + {emoji('dice')} **{d2}** = **{total}**  ·  you bet **{pick}**\n\n"
-            f"{money_line} · Balance: **◈ {d['money']:,}**\n\n{bet_line}"
+            f"{money_line} · Balance: **◈ {d['money']:,}**\n\n{bet_line}\n\n{_dice_info()}"
         )
     row_bets = {"type": 1, "components": [
         {"type": 2, "style": 1, "label": f"{DICE_BETS[k][0]} (×{DICE_BETS[k][2]})",
@@ -9812,7 +9847,7 @@ def build_dice_panel(user_id: str, state: str = "bet", result: dict = None) -> l
         {"type": 2, "style": 2, "label": "◀ Back",     "custom_id": f"gamble:back:{user_id}"},
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "dice"),
         {"type": 14, "divider": True, "spacing": 1},
         row_bets, row_util,
     ]}]
@@ -9835,8 +9870,9 @@ def _hl_multipliers(n: int) -> tuple[float, float]:
     def m(count: int) -> float:
         if count <= 0:
             return 0.0
-        mult = round((_HL_HOUSE_EDGE - push_p) / (count / 13), 2)
-        return mult if mult >= 1.1 else 0.0
+        # Both sides are always a real bet: a near-sure side still pays a token
+        # +1% (x1.01) rather than being disabled.
+        return max(1.01, round((_HL_HOUSE_EDGE - push_p) / (count / 13), 2))
     return m(13 - n), m(n - 1)
 
 def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) -> list:
@@ -9856,21 +9892,21 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
         else:
             head, money = f"{emoji('cross_mark')} You lost!", f"**-◈ {bet:,}**"
         content = (
-            f"### `🔼` High-Low — {head}\n"
+            f"### {_gi('hearts_king', '`🔼`')}High-Low — {head}\n"
             f"You guessed **{guess_lbl}**\n"
             f"**Card → next card**\n"
             f"## {_hl_card(n, result.get('s', '♠'))}  ➜  {_hl_card(m, result.get('ms', '♠'))}\n\n"
             f"{money} · Balance: **◈ {d['money']:,}**\n\n{bet_line}"
         )
         row_bets = {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "🃏 Deal again",
+            {"type": 2, "style": 3, "label": "Deal again", "emoji": emoji_partial("card_back"),
              "custom_id": f"gamble:hl:draw:{user_id}", "disabled": no_bet},
             {"type": 2, "style": 2, "label": "Change Bet",
              "custom_id": f"gamble:hl:setbet:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"gamble:back:{user_id}"},
         ]}
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": content},
+            _gtop(content, "hearts_king"),
             {"type": 14, "divider": True, "spacing": 1},
             row_bets,
         ]}]
@@ -9878,19 +9914,17 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
     n = d.get("_hl_n")
     if state == "guess" and n:
         m_hi, m_lo = _hl_multipliers(n)
-        note = ("-# That side is too close to a sure thing to bet — take the "
-                "longshot or re-deal." if (m_hi == 0 or m_lo == 0) else
-                "-# Same card = push (bet refunded).")
+        note = "-# Same card = push (bet refunded). The likelier side pays less."
         content = (
-            f"### `🔼` High-Low\n{bet_line}\n\n"
+            f"### {_gi('hearts_king', '`🔼`')}High-Low\n{bet_line}\n\n"
             f"**The card is**\n## {_hl_card(n, d.get('_hl_s', '♠'))}\n"
             f"Will the next card be higher or lower?\n{note}"
         )
         row = {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": f"🔼 Higher (×{m_hi})" if m_hi else "🔼 Higher —",
-             "custom_id": f"gamble:hl:hi:{user_id}", "disabled": (m_hi == 0)},
-            {"type": 2, "style": 4, "label": f"🔽 Lower (×{m_lo})" if m_lo else "🔽 Lower —",
-             "custom_id": f"gamble:hl:lo:{user_id}", "disabled": (m_lo == 0)},
+            {"type": 2, "style": 3, "label": f"Higher (×{m_hi})", "emoji": emoji_partial("⬆️"),
+             "custom_id": f"gamble:hl:hi:{user_id}"},
+            {"type": 2, "style": 4, "label": f"Lower (×{m_lo})", "emoji": emoji_partial("⬇️"),
+             "custom_id": f"gamble:hl:lo:{user_id}"},
         ]}
         row_util = {"type": 1, "components": [
             {"type": 2, "style": 1, "label": "Re-deal", "emoji": emoji_partial("refresh"), "custom_id": f"gamble:hl:draw:{user_id}"},
@@ -9898,25 +9932,25 @@ def build_highlow_panel(user_id: str, state: str = "draw", result: dict = None) 
             {"type": 2, "style": 2, "label": "◀ Back",     "custom_id": f"gamble:back:{user_id}"},
         ]}
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": content},
+            _gtop(content, "hearts_king"),
             {"type": 14, "divider": True, "spacing": 1},
             row, row_util,
         ]}]
 
     # state == "draw" — nothing dealt yet
     content = (
-        f"### `🔼` High-Low\n{bet_line}\n\n"
+        f"### {_gi('hearts_king', '`🔼`')}High-Low\n{bet_line}\n\n"
         f"A card (A–K) is drawn. Guess whether the **next** card is higher or lower.\n"
         f"-# Longer odds pay more · same card refunds your bet."
     )
     row = {"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "🃏 Deal", "custom_id": f"gamble:hl:draw:{user_id}",
+        {"type": 2, "style": 3, "label": "Deal", "emoji": emoji_partial("card_back"), "custom_id": f"gamble:hl:draw:{user_id}",
          "disabled": no_bet},
         {"type": 2, "style": 2, "label": "Change Bet", "custom_id": f"gamble:hl:setbet:{user_id}"},
         {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"gamble:back:{user_id}"},
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "hearts_king"),
         {"type": 14, "divider": True, "spacing": 1},
         row,
     ]}]
@@ -9932,7 +9966,7 @@ def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None)
 
     if state == "pick":
         content = (
-            f"### {emoji('coinflip')} Coinflip\n{last_line}\n{bet_line}\n\n"
+            f"### {_gi('coinflip')}Coinflip\n{last_line}\n{bet_line}\n\n"
             f"Pick heads or tails — win to double your bet!\n"
             f"-# Set a bet first, then pick your side."
         )
@@ -9943,20 +9977,20 @@ def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None)
         pick_lbl = "Heads" if pick == "heads" else "Tails"
         if won:
             content = (
-                f"### {emoji('coinflip')} Coinflip — {emoji('check_mark')} You won!\n"
+                f"### {_gi('coinflip')}Coinflip — {emoji('check_mark')} You won!\n"
                 f"**{flip_lbl}!** You picked **{pick_lbl}** — correct!\n\n"
                 f"**+◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         else:
             content = (
-                f"### {emoji('coinflip')} Coinflip — {emoji('cross_mark')} You lost!\n"
+                f"### {_gi('coinflip')}Coinflip — {emoji('cross_mark')} You lost!\n"
                 f"**{flip_lbl}!** You picked **{pick_lbl}** — wrong!\n\n"
                 f"**-◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "coinflip"),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 1, "label": "Heads",
@@ -9991,44 +10025,50 @@ def _bet_cap_msg(cap: int, level: int) -> str:
     return (f"{emoji('cross_mark')} Your max bet at **Level {level}** is **◈ {cap:,}** "
             f"— it rises as you level up.")
 
-def _slots_biome_config(user_id: str) -> tuple:
-    return SLOT_BIOME_CONFIG.get(_slots_biome(user_id), SLOT_BIOME_CONFIG["village"])
+def _slots_min_bet() -> int:
+    return SLOT_BIOME_CONFIG["village"][0]
 
-def _slots_biome_options(user_id: str) -> list:
-    user_level = data[user_id].get("level", 1)
-    cur        = _slots_biome(user_id)
-    opts = []
-    for biome_key, lvl_req in BIOME_LEVELS:
-        cfg = SLOT_BIOME_CONFIG.get(biome_key)
-        if not cfg:
-            continue
-        min_b, max_b, chance, mult = cfg
-        locked = user_level < lvl_req
-        desc   = (f"Locked (Level {lvl_req})" if locked
-                  else f"Win: {chance}% · ×{mult}")
-        opts.append({
-            "label": BIOME_NAMES.get(biome_key, biome_key), "value": biome_key,
-            "description": desc, "default": biome_key == cur,
-        })
-    return opts
+def _slots_odds() -> dict:
+    """Exact odds for the animal reels, straight from SLOT_REELS so the info
+    screen can never drift from what the spin actually does."""
+    total = sum(w for _, w, _ in SLOT_REELS)
+    ps = [w / total for _, w, _ in SLOT_REELS]
+    triples = [(name, p ** 3, m) for (name, _, m), p in zip(SLOT_REELS, ps)]
+    pair_p = 3 * sum(p * p * (1 - p) for p in ps)   # exactly two alike
+    rtp = pair_p * SLOT_PAIR_MULT + sum(t * m for _, t, m in triples)
+    return {"triples": triples, "pair_p": pair_p, "triple_p": sum(t for _, t, _ in triples), "rtp": rtp}
+
+def _slots_spin() -> tuple:
+    """(reels, kind, mult): kind is 'triple' | 'pair' | 'none'."""
+    names   = [n for n, _, _ in SLOT_REELS]
+    weights = [w for _, w, _ in SLOT_REELS]
+    reels = random.choices(names, weights=weights, k=3)
+    if len(set(reels)) == 1:
+        return reels, "triple", next(m for n, _, m in SLOT_REELS if n == reels[0])
+    if len(set(reels)) == 2:
+        return reels, "pair", SLOT_PAIR_MULT
+    return reels, "none", 0
+
+def _pct(p: float) -> str:
+    v = p * 100
+    return f"{v:.1f}%" if v >= 1 else f"{v:.2f}%"
 
 def build_slots_chances_panel(user_id: str) -> list:
-    user_level = data[user_id].get("level", 1)
-    lines = []
-    for biome_key, lvl_req in BIOME_LEVELS:
-        cfg = SLOT_BIOME_CONFIG.get(biome_key)
-        if not cfg:
-            continue
-        min_b, max_b, chance, mult = cfg
-        locked   = user_level < lvl_req
-        lock_str = f" {emoji('lock')}" if locked else ""
-        lines.append(
-            f"{BIOME_EMOJIS.get(biome_key, emoji('world_map'))} **{BIOME_NAMES.get(biome_key, biome_key)}**{lock_str}\n"
-            f"-# Min bet ◈{min_b:,}  Win: {chance}% · ×{mult}"
-        )
-    content = f"### {emoji('slot_machine')} Slots — Win Chances by Biome\n\n" + "\n\n".join(lines)
+    o = _slots_odds()
+    lines = [
+        f"`➕` **Pair** (2 alike) — {_pct(o['pair_p'])} chance · pays **×{SLOT_PAIR_MULT}**",
+        f"{emoji('sparkles')} **Triple** (3 alike) — {_pct(o['triple_p'])} chance combined:",
+    ]
+    for name, p, m in o["triples"]:
+        lines.append(f"-# {animal_emoji(name)}{animal_emoji(name)}{animal_emoji(name)} {name} — {_pct(p)} · ×{m}")
+    content = (
+        f"### {_gi('slot_machine')}Slots — Matching Odds\n"
+        + "\n".join(lines)
+        + f"\n\n-# Three reels of animals. Rarer animals appear less often and pay more. "
+          f"Long-run return ≈ {o['rtp'] * 100:.0f}% of your bets."
+    )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "slot_machine"),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 2, "label": "◀ Back",
@@ -10038,46 +10078,43 @@ def build_slots_chances_panel(user_id: str) -> list:
 
 def build_slots_panel(user_id: str, state: str = "bet", result: dict = None) -> list:
     d           = data[user_id]
-    biome       = _slots_biome(user_id)
-    cfg         = SLOT_BIOME_CONFIG.get(biome, SLOT_BIOME_CONFIG["village"])
-    min_b, max_b, chance, mult = cfg
     current_bet = d.get("_slots_bet", 0)
     no_bet      = current_bet == 0
-    biome_dd    = {"type": 1, "components": [{"type": 3,
-        "custom_id": f"gamble:slots:biome:{user_id}",
-        "placeholder": "🗺️ Select biome...", "min_values": 1, "max_values": 1,
-        "flows": {}, "options": _slots_biome_options(user_id),
-    }]}
     bet_line = f"Bet: **◈ {current_bet:,}**" if current_bet else "Bet: *not set — use Change Bet*"
+    o = _slots_odds()
+    info = (f"-# Pair {_pct(o['pair_p'])} → ×{SLOT_PAIR_MULT} · "
+            f"Triple {_pct(o['triple_p'])} → up to ×{max(m for _, _, m in SLOT_REELS)}")
     if state == "bet":
         content = (
-            f"### {emoji('slot_machine')} Slots Machine\n"
-            f"{BIOME_EMOJIS.get(biome, emoji('world_map'))} **{BIOME_NAMES.get(biome, biome)}**\n\n"
-            f"Min bet: **◈ {min_b:,}**  No max\n"
-            f"Win: **{chance}%** · Multiplier: **×{mult}**\n\n{bet_line}"
+            f"### {_gi('slot_machine')}Slots Machine\n"
+            f"Match animals on the reels — a pair or a triple wins.\n"
+            f"{info}\n\n"
+            f"Min bet: **◈ {_slots_min_bet():,}**  No max\n\n{bet_line}"
         )
     else:
         reels = result["reels"]; bet = result["bet"]
-        payout = result["payout"]; won = result["won"]
-        reel_str = f"[ {reels[0]} | {reels[1]} | {reels[2]} ]"
-        outcome  = f"{emoji('check_mark')} **Won! +◈ {payout - bet:,}**" if won else f"{emoji('cross_mark')} **No win. -◈ {bet:,}**"
-        content  = (
-            f"### {emoji('slot_machine')} Slots Machine\n{reel_str}\n\n"
+        payout = result["payout"]; kind = result["kind"]
+        reel_str = "  ".join(animal_emoji(r) for r in reels)
+        if kind == "triple":
+            outcome = f"{emoji('sparkles')} **Triple! +◈ {payout - bet:,}**"
+        elif kind == "pair":
+            outcome = f"{emoji('check_mark')} **Pair! +◈ {payout - bet:,}**"
+        else:
+            outcome = f"{emoji('cross_mark')} **No match. -◈ {bet:,}**"
+        content = (
+            f"### {_gi('slot_machine')}Slots Machine\n## {reel_str}\n\n"
             f"{outcome}\nBalance: **◈ {d['money']:,}**\n\n"
-            f"{BIOME_EMOJIS.get(biome,emoji('world_map'))} {BIOME_NAMES.get(biome,biome)} · "
-            f"Win: {chance}% · ×{mult}\n{bet_line}"
+            f"{info}\n{bet_line}"
         )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
-        {"type": 14, "divider": True, "spacing": 1},
-        biome_dd,
+        _gtop(content, "slot_machine"),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "Roll!", "emoji": emoji_partial("slot_machine"),
              "custom_id": f"gamble:slots:spin:{user_id}", "disabled": no_bet},
             {"type": 2, "style": 2, "label": "Change Bet",
              "custom_id": f"gamble:slots:setbet:{user_id}"},
-            {"type": 2, "style": 1, "label": "View Chances",
+            {"type": 2, "style": 1, "label": "Odds",
              "custom_id": f"gamble:slots:chances:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back",
              "custom_id": f"gamble:back:{user_id}"},
@@ -10109,7 +10146,7 @@ def build_roulette_panel(user_id: str, state: str = "bet", result: dict = None) 
     )
     if state == "bet":
         content = (
-            f"### {emoji('red_ball')} Roulette\n{last_line}\n{bet_line}\n\n"
+            f"### {_gi('red_ball')}Roulette\n{last_line}\n{bet_line}\n\n"
             f"Pick where the ball lands:\n"
             f"-# {_odds}"
         )
@@ -10120,20 +10157,20 @@ def build_roulette_panel(user_id: str, state: str = "bet", result: dict = None) 
         pick_lbl  = ROULETTE_BET_TYPES.get(pick, (pick,))[0]
         if won:
             content = (
-                f"### {emoji('red_ball')} Roulette — {emoji('check_mark')} You won!\n"
+                f"### {_gi('red_ball')}Roulette — {emoji('check_mark')} You won!\n"
                 f"Result: **{color_ico} {color.title()}** — You bet **{pick_lbl}**\n\n"
                 f"**+◈ {payout - bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         else:
             content = (
-                f"### {emoji('red_ball')} Roulette — {emoji('cross_mark')} You lost!\n"
+                f"### {_gi('red_ball')}Roulette — {emoji('cross_mark')} You lost!\n"
                 f"Result: **{color_ico} {color.title()}** — You bet **{pick_lbl}**\n\n"
                 f"**-◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "red_ball"),
         {"type": 14, "divider": True, "spacing": 1},
         row_colors, row_util,
     ]}]
@@ -10143,16 +10180,16 @@ def build_blackjack_panel(user_id: str) -> list:
     d  = data[user_id]
     if not st:
         content = (
-            f"### `🃏` Blackjack\nBalance: **◈ {d['money']:,}**\n\n"
+            f"### {_gi('spades_ace', '`🃏`')}Blackjack\nBalance: **◈ {d['money']:,}**\n\n"
             f"Get closer to 21 than the dealer without busting.\n"
             f"**Bust = lose your entire bet.**\n\n"
             f"-# Dealer stands on 17 · Blackjack pays ×2.5"
         )
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": content},
+            _gtop(content, "spades_ace"),
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
-                {"type": 2, "style": 3, "label": "🃏 Place Bet & Deal",
+                {"type": 2, "style": 3, "label": "Place Bet & Deal", "emoji": emoji_partial("card_back"),
                  "custom_id": f"gamble:bj:deal:{user_id}"},
                 {"type": 2, "style": 2, "label": "◀ Back",
                  "custom_id": f"gamble:back:{user_id}"},
@@ -10164,7 +10201,7 @@ def build_blackjack_panel(user_id: str) -> list:
     done       = st.get("done", False)
     if not done:
         content = (
-            f"### `🃏` Blackjack · Bet: **◈ {bet:,}**\n\n"
+            f"### {_gi('spades_ace', '`🃏`')}Blackjack · Bet: **◈ {bet:,}**\n\n"
             f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
             f"**Dealer**\n## {_bj_hand_str(st['dealer'], hide_second=True)}\n"
             f"-# Balance: **◈ {d['money']:,}**"
@@ -10179,19 +10216,19 @@ def build_blackjack_panel(user_id: str) -> list:
         net     = st.get("net", 0)
         sign    = "+" if net >= 0 else ""
         content = (
-            f"### `🃏` Blackjack · {outcome}\n\n"
+            f"### {_gi('spades_ace', '`🃏`')}Blackjack · {outcome}\n\n"
             f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
             f"**Dealer** — **{dealer_val}**\n## {_bj_hand_str(st['dealer'])}\n\n"
             f"**{sign}◈ {net:,}** · Balance: **◈ {d['money']:,}**"
         )
         action_row = {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "🃏 Play Again",
+            {"type": 2, "style": 3, "label": "Play Again", "emoji": emoji_partial("card_back"),
              "custom_id": f"gamble:menu:blackjack:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back",
              "custom_id": f"gamble:back:{user_id}"},
         ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "spades_ace"),
         {"type": 14, "divider": True, "spacing": 1},
         action_row,
     ]}]
@@ -10205,11 +10242,11 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
     last_line   = (f"-# Last pick: **{RPS_CHOICES.get(last_pick,'?')} {last_pick.title()}**"
                    if last_pick else "-# Last pick: **None**")
     row_picks = {"type": 1, "components": [
-        {"type": 2, "style": 1, "label": "✊ Rock",
+        {"type": 2, "style": 1, "label": "Rock", "emoji": emoji_partial("raised_fist"),
          "custom_id": f"gamble:rps:rock:{user_id}",     "disabled": no_bet},
-        {"type": 2, "style": 1, "label": "🖐️ Paper",
+        {"type": 2, "style": 1, "label": "Paper", "emoji": emoji_partial("raised_hand_with_fingers_splayed"),
          "custom_id": f"gamble:rps:paper:{user_id}",    "disabled": no_bet},
-        {"type": 2, "style": 1, "label": "✌️ Scissors",
+        {"type": 2, "style": 1, "label": "Scissors", "emoji": emoji_partial("victory_hand"),
          "custom_id": f"gamble:rps:scissors:{user_id}", "disabled": no_bet},
     ]}
     row_util = {"type": 1, "components": [
@@ -10218,7 +10255,7 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
     ]}
     if state == "pick":
         content = (
-            f"### `✊` Rock Paper Scissors\n{last_line}\n{bet_line}\n\n"
+            f"### {_gi('raised_fist', '`✊`')}Rock Paper Scissors\n{last_line}\n{bet_line}\n\n"
             f"Beat the bot to double your bet!\n"
             f"-# Tie = bet refunded · Loss = lose bet"
         )
@@ -10228,27 +10265,27 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
         p_ico = RPS_CHOICES.get(pick, "?"); b_ico = RPS_CHOICES.get(bot_pick, "?")
         if outcome == "win":
             content = (
-                f"### `✊` RPS — {emoji('check_mark')} You won!\n"
+                f"### {_gi('raised_fist', '`✊`')}RPS — {emoji('check_mark')} You won!\n"
                 f"You: **{p_ico} {pick.title()}** vs Bot: **{b_ico} {bot_pick.title()}**\n\n"
                 f"**+◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         elif outcome == "tie":
             content = (
-                f"### `✊` RPS — {emoji('handshake')} Tie!\n"
+                f"### {_gi('raised_fist', '`✊`')}RPS — {emoji('handshake')} Tie!\n"
                 f"You: **{p_ico} {pick.title()}** vs Bot: **{b_ico} {bot_pick.title()}**\n\n"
                 f"Bet refunded · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         else:
             content = (
-                f"### `✊` RPS — {emoji('cross_mark')} You lost!\n"
+                f"### {_gi('raised_fist', '`✊`')}RPS — {emoji('cross_mark')} You lost!\n"
                 f"You: **{p_ico} {pick.title()}** vs Bot: **{b_ico} {bot_pick.title()}**\n\n"
                 f"**-◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": content},
+        _gtop(content, "raised_fist"),
         {"type": 14, "divider": True, "spacing": 1},
         row_picks, row_util,
     ]}]
@@ -14817,7 +14854,7 @@ async def _dispatch_component(interaction: discord.Interaction):
         init_user(owner_id)
 
         no_cd_subs  = {"back", "game_select", "menu", "warn"}
-        no_cd_subs2 = {"setbet", "chances", "biome"}   # views / config, not a wager
+        no_cd_subs2 = {"setbet", "chances"}   # views / config, not a wager
         _sub2      = parts[2] if len(parts) > 2 else ""
         _is_wager  = parts[1] not in no_cd_subs and _sub2 not in no_cd_subs2
         if _is_wager:
@@ -14915,22 +14952,8 @@ async def _dispatch_component(interaction: discord.Interaction):
 
         if parts[1] == "slots":
             sub = parts[2]
-            if sub == "biome":
-                biome_key  = values[0] if values else None
-                user_level = data[owner_id].get("level", 1)
-                if biome_key and biome_key in SLOT_BIOME_CONFIG:
-                    lvl_req = next((lvl for k, lvl in BIOME_LEVELS if k == biome_key), 1)
-                    if user_level < lvl_req:
-                        await send_ephemeral_v2(interaction,
-                            f"{emoji('cross_mark')} {BIOME_NAMES.get(biome_key, biome_key)} unlocks at Level {lvl_req}.",
-                            0xE74C3C)
-                        return
-                    data[owner_id]["_slots_biome"] = biome_key   # NOT the real hunting biome
-                await smart_update_v2(interaction, build_slots_panel(owner_id))
-                return
             if sub == "setbet":
-                cfg = _slots_biome_config(owner_id)
-                await interaction.response.send_modal(SetBetModal(owner_id, "slots", cfg[0], cfg[1]))
+                await interaction.response.send_modal(SetBetModal(owner_id, "slots", _slots_min_bet()))
                 return
             if sub == "chances":
                 await smart_update_v2(interaction, build_slots_chances_panel(owner_id))
@@ -14940,34 +14963,25 @@ async def _dispatch_component(interaction: discord.Interaction):
                 if not bet:
                     await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Set a bet first.", 0xE74C3C)
                     return
-                min_b, max_b, chance, mult = _slots_biome_config(owner_id)
-                if bet < min_b:
+                if bet < _slots_min_bet():
                     await send_ephemeral_v2(interaction,
-                        f"{emoji('cross_mark')} Minimum bet on this table is **◈ {min_b:,}** — raise your bet.", 0xE74C3C)
+                        f"{emoji('cross_mark')} Minimum bet is **◈ {_slots_min_bet():,}** — raise your bet.", 0xE74C3C)
                     return
-                won    = random.randint(1, 100) <= chance
-                payout = int(bet * mult) if won else 0
-                # Make the reels tell the truth: 3-of-a-kind on a win, never on a loss.
-                if won:
-                    s     = random.choice(SLOT_SYMBOLS)
-                    reels = [s, s, s]
-                else:
-                    reels = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
-                    while len(set(reels)) == 1:
-                        reels[random.randint(0, 2)] = random.choice(SLOT_SYMBOLS)
+                reels, kind, mult = _slots_spin()
+                payout = int(bet * mult) if kind != "none" else 0
                 async with user_transaction(owner_id):
                     paid = spend_money(owner_id, bet, "slots bet")
                     if paid:
                         if payout:
                             add_money(owner_id, payout, "slots")
-                        if won:
+                        if payout:
                             data[owner_id]["stats"]["slots_wins"] = data[owner_id]["stats"].get("slots_wins", 0) + 1
                         data[owner_id]["last_gamble"] = time.time()
                 if not paid:
                     await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈ for that bet.", 0xE74C3C)
                     return
 
-                result = {"reels": reels, "bet": bet, "payout": payout, "won": won}
+                result = {"reels": reels, "bet": bet, "payout": payout, "kind": kind}
                 await smart_update_v2(interaction, build_slots_panel(owner_id, "result", result))
                 return
 
@@ -15094,7 +15108,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                 return
 
             if sub == "draw":
-                data[owner_id]["_hl_n"] = random.randint(1, 13)
+                data[owner_id]["_hl_n"] = random.randint(2, 12)   # never A/K first, so both sides can win
                 data[owner_id]["_hl_s"] = random.choice(_HL_SUITS)
                 await smart_update_v2(interaction, build_highlow_panel(owner_id, "guess"))
                 return
@@ -15106,10 +15120,6 @@ async def _dispatch_component(interaction: discord.Interaction):
                     return
                 m_hi, m_lo = _hl_multipliers(n)
                 mlt        = m_hi if sub == "hi" else m_lo
-                if mlt == 0:
-                    await send_ephemeral_v2(interaction,
-                        f"{emoji('cross_mark')} That side isn't a valid bet on this card — re-deal or take the other side.", 0xE74C3C)
-                    return
                 m  = random.randint(1, 13)
                 ms = random.choice(_HL_SUITS)
                 s  = data[owner_id].get("_hl_s", "♠")
