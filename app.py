@@ -3308,13 +3308,49 @@ def next_midnight_ts() -> int:
     nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return int(nxt.timestamp())
 
-def calc_streak(last_date_str: str, current_streak: int) -> int:
+# Bot downtime. The runtime-state file stamps "alive_ts" about once a minute; when
+# the bot starts and finds a gap bigger than OUTAGE_MIN_GAP_SEC since that stamp,
+# it records the gap as an outage. A UTC day with at least OUTAGE_FORGIVE_SEC of
+# recorded downtime is "forgiven": players couldn't have claimed their daily, so
+# missing it never costs streak (calc_streak below skips those days).
+OUTAGE_MIN_GAP_SEC   = 150
+OUTAGE_FORGIVE_SEC   = 3600
+OUTAGE_KEEP_DAYS     = 60
+_outages: list = []          # [[start_ts, end_ts], ...]
+
+def _record_outage(start_ts: float, end_ts: float) -> None:
+    if end_ts - start_ts >= OUTAGE_MIN_GAP_SEC:
+        _outages.append([int(start_ts), int(end_ts)])
+    cutoff = end_ts - OUTAGE_KEEP_DAYS * 86400
+    _outages[:] = [o for o in _outages if o[1] >= cutoff]
+
+def _outage_forgiven_dates() -> set:
+    """UTC dates ('YYYY-MM-DD') that had >= OUTAGE_FORGIVE_SEC of bot downtime."""
+    secs: dict = {}
+    for start, end in _outages:
+        t = start
+        while t < end:
+            day_start = t - (t % 86400)
+            seg_end = min(end, day_start + 86400)
+            key = datetime.fromtimestamp(day_start, timezone.utc).strftime("%Y-%m-%d")
+            secs[key] = secs.get(key, 0) + (seg_end - t)
+            t = seg_end
+    return {k for k, v in secs.items() if v >= OUTAGE_FORGIVE_SEC}
+
+def calc_streak(last_date_str: str, current_streak: int, forgiven: set = None) -> int:
     if not last_date_str:
         return 0
     try:
         last      = datetime.strptime(last_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         today     = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        days_missed = (today - last).days - 1
+        if forgiven is None:
+            forgiven = _outage_forgiven_dates()
+        # Days strictly between the last claim and today that the player could
+        # have claimed on (i.e. the bot was up for them).
+        days_missed = 0
+        for i in range(1, (today - last).days):
+            if (last + timedelta(days=i)).strftime("%Y-%m-%d") not in forgiven:
+                days_missed += 1
         if days_missed <= 0:
             return current_streak
         decay = int(2 ** (days_missed - 1))
@@ -12100,6 +12136,8 @@ def _encode_runtime_state() -> dict:
         "last_condition_announce_ts": _last_condition_announce_ts,
         "event_scheduler":  dict(_event_scheduler),
         "last_weekly_lb_tag": _last_weekly_lb_tag,
+        "alive_ts": int(time.time() // 60 * 60),   # changes once a minute -> rewritten once a minute
+        "outages":  [list(o) for o in _outages],
     }
 
 def load_runtime_state() -> None:
@@ -12143,6 +12181,16 @@ def load_runtime_state() -> None:
     if isinstance(_es, dict):
         _event_scheduler.update(_es)
     _last_weekly_lb_tag = str(raw.get("last_weekly_lb_tag", "") or "")
+    try:
+        _outages[:] = [[int(a), int(b)] for a, b in (raw.get("outages") or [])]
+        _alive = float(raw.get("alive_ts", 0) or 0)
+        if _alive:
+            _record_outage(_alive, time.time())
+            if _outages and _outages[-1][1] >= time.time() - 5:
+                print(f"⏱️ Bot was down ~{int((time.time() - _alive) // 60)} min "
+                      f"(days with >=1h downtime don't break daily streaks)")
+    except (TypeError, ValueError):
+        _outages.clear()
     print(f"✅ Runtime state loaded "
           f"({len(_suggestion_store)} suggestions, {len(_report_store)} reports, "
           f"{len(_appeal_store)} appeals, {len(_bj_state)} blackjack hands)")

@@ -877,6 +877,33 @@ def test_beginner_checklists_use_registry_keys():
         assert spec["emoji"].isascii() and spec["emoji"] in g.EMOJI, spec
 
 
+def test_streak_survives_days_the_bot_was_down():
+    from datetime import datetime, timedelta, timezone
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    d = lambda n: (today - timedelta(days=n)).strftime("%Y-%m-%d")
+    app._outages.clear()
+    # claimed 3 days ago, missed the 2 days in between -> normal decay of 2**(2-1)=2
+    assert app.calc_streak(d(3), 10) == 8
+    # bot was down ~all of the day before yesterday: that day is forgiven -> only 1 missed day
+    start = int((today - timedelta(days=2)).timestamp())
+    app._outages.append([start, start + 86400])
+    assert app.calc_streak(d(3), 10) == 9
+    # both missed days had the bot down -> no loss at all
+    app._outages.append([start + 86400, start + 2 * 86400])
+    assert app.calc_streak(d(3), 10) == 10
+    # a short blip (<1h) forgives nothing
+    app._outages.clear()
+    app._outages.append([start, start + 600])
+    assert app.calc_streak(d(3), 10) == 8
+    # a restart records the gap as an outage (and tiny gaps are ignored)
+    app._outages.clear()
+    now = time.time()
+    app._record_outage(now - 7200, now)
+    app._record_outage(now - 60, now)
+    assert len(app._outages) == 1
+    app._outages.clear()
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
