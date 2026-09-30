@@ -3538,6 +3538,15 @@ async def _raw(interaction: discord.Interaction, payload: dict):
         # interaction" traceback for something nobody can recover from.
         cid = ((getattr(interaction, "data", {}) or {}).get("custom_id", "")) or interaction.type
         logger.warning("interaction expired before initial response (custom_id=%s)", cid)
+    except discord.HTTPException as e:
+        if getattr(e, "code", None) != 40060:
+            raise
+        # Already acknowledged — a second bot instance (or another path) answered
+        # first. Their reply is what the player sees; sending ours too would
+        # double-post, so swallow it. (smart_update_v2 still falls back on other
+        # HTTP errors.)
+        logger.warning("interaction already acknowledged (instance=%s, type=%s)",
+                       INSTANCE_ID, payload.get("type"))
 
 async def update_v2(interaction: discord.Interaction, components: list):
     _clean_components(components)
