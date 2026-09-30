@@ -10199,19 +10199,24 @@ def build_roulette_panel(user_id: str, state: str = "bet", result: dict = None) 
 def build_blackjack_panel(user_id: str) -> list:
     st = _bj_state.get(user_id)
     d  = data[user_id]
+    _std = d.get("_bj_bet", 0)
+    bj_bet_line = f"Bet: **\u25c8 {_std:,}**" if _std else "Bet: *not set \u2014 use Change Bet*"
     if not st:
         content = (
-            f"### {_gi('spades_ace', '`🃏`')}Blackjack\nBalance: **◈ {d['money']:,}**\n\n"
+            f"### {_gi('badge_blackjack_dealer_gold', '`🃏`')}Blackjack\nBalance: **◈ {d['money']:,}**\n\n"
             f"Get closer to 21 than the dealer without busting.\n"
             f"**Bust = lose your entire bet.**\n\n"
+            f"{bj_bet_line}\n"
             f"-# Dealer stands on 17 · Blackjack pays ×2.5"
         )
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            _gtop(content, "spades_ace"),
+            _gtop(content, "badge_blackjack_dealer_gold"),
             {"type": 14, "divider": True, "spacing": 1},
             {"type": 1, "components": [
-                {"type": 2, "style": 3, "label": "Place Bet & Deal", "emoji": emoji_partial("card_back"),
+                {"type": 2, "style": 3, "label": "Deal" if _std else "Place Bet & Deal", "emoji": emoji_partial("card_back"),
                  "custom_id": f"gamble:bj:deal:{user_id}"},
+                {"type": 2, "style": 2, "label": "Change Bet",
+                 "custom_id": f"gamble:bj:setbet:{user_id}"},
                 {"type": 2, "style": 2, "label": "◀ Back",
                  "custom_id": f"gamble:back:{user_id}"},
             ]},
@@ -10222,7 +10227,7 @@ def build_blackjack_panel(user_id: str) -> list:
     done       = st.get("done", False)
     if not done:
         content = (
-            f"### {_gi('spades_ace', '`🃏`')}Blackjack · Bet: **◈ {bet:,}**\n\n"
+            f"### {_gi('badge_blackjack_dealer_gold', '`🃏`')}Blackjack · Bet: **◈ {bet:,}**\n\n"
             f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
             f"**Dealer**\n## {_bj_hand_str(st['dealer'], hide_second=True)}\n"
             f"-# Balance: **◈ {d['money']:,}**"
@@ -10237,19 +10242,21 @@ def build_blackjack_panel(user_id: str) -> list:
         net     = st.get("net", 0)
         sign    = "+" if net >= 0 else ""
         content = (
-            f"### {_gi('spades_ace', '`🃏`')}Blackjack · {outcome}\n\n"
+            f"### {_gi('badge_blackjack_dealer_gold', '`🃏`')}Blackjack · {outcome}\n\n"
             f"**Your hand** — **{player_val}**\n## {_bj_hand_str(st['player'])}\n"
             f"**Dealer** — **{dealer_val}**\n## {_bj_hand_str(st['dealer'])}\n\n"
             f"**{sign}◈ {net:,}** · Balance: **◈ {d['money']:,}**"
         )
         action_row = {"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "Play Again", "emoji": emoji_partial("card_back"),
-             "custom_id": f"gamble:menu:blackjack:{user_id}"},
+            {"type": 2, "style": 3, "label": f"Play Again (\u25c8 {_std:,})" if _std else "Play Again", "emoji": emoji_partial("card_back"),
+             "custom_id": f"gamble:bj:deal:{user_id}"},
+            {"type": 2, "style": 2, "label": "Change Bet",
+             "custom_id": f"gamble:bj:setbet:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Back",
              "custom_id": f"gamble:back:{user_id}"},
         ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        _gtop(content, "spades_ace"),
+        _gtop(content, "badge_blackjack_dealer_gold"),
         {"type": 14, "divider": True, "spacing": 1},
         action_row,
     ]}]
@@ -14880,7 +14887,7 @@ async def _dispatch_component(interaction: discord.Interaction):
         init_user(owner_id)
 
         no_cd_subs  = {"back", "game_select", "menu", "warn"}
-        no_cd_subs2 = {"setbet", "chances"}   # views / config, not a wager
+        no_cd_subs2 = {"setbet", "chances"}   # (bj "setbet" is action=parts[2] too)   # views / config, not a wager
         _sub2      = parts[2] if len(parts) > 2 else ""
         _is_wager  = parts[1] not in no_cd_subs and _sub2 not in no_cd_subs2
         if _is_wager:
@@ -15174,13 +15181,24 @@ async def _dispatch_component(interaction: discord.Interaction):
 
         if parts[1] == "bj":
             action = parts[2]
-            if action == "deal":
+            if action == "setbet":
                 cur = _bj_state.get(owner_id)
                 if cur and not cur.get("done"):
                     await send_ephemeral_v2(interaction,
                         f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
                     return
                 await interaction.response.send_modal(BlackjackBetModal(owner_id))
+                return
+            if action == "deal":
+                cur = _bj_state.get(owner_id)
+                if cur and not cur.get("done"):
+                    await smart_update_v2(interaction, build_blackjack_panel(owner_id))   # resume it
+                    return
+                bet = data[owner_id].get("_bj_bet", 0)
+                if not bet:
+                    await interaction.response.send_modal(BlackjackBetModal(owner_id))   # first time: ask once
+                    return
+                await _bj_deal(interaction, owner_id, bet)
                 return
             # custom_id is gamble:bj:<action>:<hid>:<user_id> — the hand id ties a
             # button to one specific deal; stale buttons from a prior hand miss.
@@ -16046,7 +16064,69 @@ class BanAppealModal(_V2Modal, title="Submit a Ban Appeal"):
         except Exception as e:
             print("Appeal channel send error:", e)
 
-class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
+async def _bj_deal(interaction: discord.Interaction, user_id: str, bet: int) -> None:
+    """Deal a blackjack hand for `bet` (already validated as a positive int).
+    Shared by the Deal / Play Again buttons, which reuse the stored standard bet."""
+    cur = _bj_state.get(user_id)
+    if cur and not cur.get("done"):
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
+        return
+
+    deck   = _bj_deck()
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+    hid    = secrets.token_hex(4)
+
+    busy = False
+    async with user_transaction(user_id):
+        # Re-check under the lock and register the hand in the SAME critical
+        # section: two bets submitted at once used to both pass the check
+        # above, and the second hand silently replaced (and lost) the first.
+        cur = _bj_state.get(user_id)
+        if cur and not cur.get("done"):
+            busy = True
+            paid = False
+        else:
+            paid = spend_money(user_id, bet, "blackjack bet")
+            if paid:
+                data[user_id]["last_gamble"] = time.time()
+                _bj_state[user_id] = {
+                    "hid": hid, "bet": bet, "deck": deck,
+                    "player": player, "dealer": dealer,
+                    "done": False,
+                }
+    if busy:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
+        return
+    if not paid:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈ for that bet.", 0xE74C3C)
+        return
+
+    # Settle natural blackjacks up-front — but check BOTH hands first.
+    p_bj = _bj_hand_value(player) == 21
+    d_bj = _bj_hand_value(dealer) == 21
+    if p_bj or d_bj:
+        async with user_transaction(user_id):
+            st = _bj_state.get(user_id)
+            if st and st.get("hid") == hid and not st.get("done"):
+                if p_bj and d_bj:
+                    add_money(user_id, bet, "blackjack: push (both 21)")
+                    st.update({"done": True, "outcome": f"{emoji('handshake')} Push — both blackjack", "net": 0})
+                elif p_bj:
+                    payout = int(bet * 2.5)
+                    add_money(user_id, payout, "blackjack: 21")
+                    st["dealer"] = dealer
+                    st.update({"done": True, "outcome": "`🃏` Blackjack!", "net": payout - bet})
+                    data[user_id]["stats"]["bj_wins"] = (
+                        data[user_id]["stats"].get("bj_wins", 0) + 1)
+                else:  # dealer blackjack only
+                    st.update({"done": True, "outcome": f"{emoji('cross_mark')} Dealer blackjack", "net": -bet})
+
+    await smart_update_v2(interaction, build_blackjack_panel(user_id))
+
+class BlackjackBetModal(_V2Modal, title="Blackjack — Set Your Bet"):
     bet_input = discord.ui.TextInput(
         label="Bet amount (◈)",
         placeholder="e.g. 1000, 50K, 1M",
@@ -16072,58 +16152,8 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Place Your Bet"):
             await send_ephemeral_v2(interaction,
                 f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
             return
-
-        deck   = _bj_deck()
-        player = [deck.pop(), deck.pop()]
-        dealer = [deck.pop(), deck.pop()]
-        hid    = secrets.token_hex(4)
-
-        busy = False
-        async with user_transaction(self.user_id):
-            # Re-check under the lock and register the hand in the SAME critical
-            # section: two bets submitted at once used to both pass the check
-            # above, and the second hand silently replaced (and lost) the first.
-            cur = _bj_state.get(self.user_id)
-            if cur and not cur.get("done"):
-                busy = True
-                paid = False
-            else:
-                paid = spend_money(self.user_id, parsed, "blackjack bet")
-                if paid:
-                    data[self.user_id]["last_gamble"] = time.time()
-                    _bj_state[self.user_id] = {
-                        "hid": hid, "bet": parsed, "deck": deck,
-                        "player": player, "dealer": dealer,
-                        "done": False,
-                    }
-        if busy:
-            await send_ephemeral_v2(interaction,
-                f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
-            return
-        if not paid:
-            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈ for that bet.", 0xE74C3C)
-            return
-
-        # Settle natural blackjacks up-front — but check BOTH hands first.
-        p_bj = _bj_hand_value(player) == 21
-        d_bj = _bj_hand_value(dealer) == 21
-        if p_bj or d_bj:
-            async with user_transaction(self.user_id):
-                st = _bj_state.get(self.user_id)
-                if st and st.get("hid") == hid and not st.get("done"):
-                    if p_bj and d_bj:
-                        add_money(self.user_id, parsed, "blackjack: push (both 21)")
-                        st.update({"done": True, "outcome": f"{emoji('handshake')} Push — both blackjack", "net": 0})
-                    elif p_bj:
-                        payout = int(parsed * 2.5)
-                        add_money(self.user_id, payout, "blackjack: 21")
-                        st["dealer"] = dealer
-                        st.update({"done": True, "outcome": "`🃏` Blackjack!", "net": payout - parsed})
-                        data[self.user_id]["stats"]["bj_wins"] = (
-                            data[self.user_id]["stats"].get("bj_wins", 0) + 1)
-                    else:  # dealer blackjack only
-                        st.update({"done": True, "outcome": f"{emoji('cross_mark')} Dealer blackjack", "net": -parsed})
-
+        # Standard bet: remembered, so Deal / Play Again never ask again.
+        data[self.user_id]["_bj_bet"] = parsed
         await smart_update_v2(interaction, build_blackjack_panel(self.user_id))
 
 _VERDICT_LABELS = {"agree": f"{emoji('check_mark')} Agreed", "neutral": "`➖` Neutral", "disagree": f"{emoji('cross_mark')} Disagreed"}

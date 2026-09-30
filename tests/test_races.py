@@ -297,12 +297,10 @@ def test_blackjack_second_bet_rejected():
     d = _mk_user(uid, money=5000)
     with Harness() as h:
         async def two():
-            m1, m2 = app.BlackjackBetModal(uid), app.BlackjackBetModal(uid)
-            m1.bet_input._value = m2.bet_input._value = "1000"
             lock = backend.get_user_lock(uid)
             await lock.acquire()
-            a = asyncio.ensure_future(m1.on_submit(FakeInteraction(uid, "x")))
-            b = asyncio.ensure_future(m2.on_submit(FakeInteraction(uid, "x")))
+            a = asyncio.ensure_future(app._bj_deal(FakeInteraction(uid, "x"), uid, 1000))
+            b = asyncio.ensure_future(app._bj_deal(FakeInteraction(uid, "x"), uid, 1000))
             await asyncio.sleep(0.05)
             lock.release()
             await asyncio.gather(a, b)
@@ -313,6 +311,30 @@ def test_blackjack_second_bet_rejected():
     if not st.get("done"):
         assert d["money"] == 4000, d["money"]
     assert any("Finish your current hand" in m for m in h.ephemerals) or st.get("done")
+
+
+def test_blackjack_standard_bet_is_stored_and_reused():
+    _reset()
+    uid = "1009"
+    d = _mk_user(uid, money=5000)
+    app._bj_state.pop(uid, None)
+    with Harness():
+        async def go():
+            m = app.BlackjackBetModal(uid)
+            m.bet_input._value = "500"
+            await m.on_submit(FakeInteraction(uid, "x"))
+        run(go())
+    assert d["_bj_bet"] == 500
+    assert d["money"] == 5000                    # setting the bet must NOT take money or deal
+    assert uid not in app._bj_state
+    def ids(panel):
+        return str(panel)
+    panel = ids(app.build_blackjack_panel(uid))
+    assert f"gamble:bj:deal:{uid}" in panel and f"gamble:bj:setbet:{uid}" in panel and "500" in panel
+    with Harness():
+        run(app._bj_deal(FakeInteraction(uid, "x"), uid, d["_bj_bet"]))   # what Deal / Play Again do
+    st = app._bj_state[uid]
+    assert st["bet"] == 500
 
 
 # ── tribes ────────────────────────────────────────────────────
