@@ -21029,6 +21029,14 @@ async def on_command_error(ctx, error):
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    _orig = getattr(error, "original", None)
+    if isinstance(_orig, discord.HTTPException) and getattr(_orig, "code", None) in (40060, 10062):
+        # "already acknowledged" / "unknown interaction": another bot instance (or
+        # a slow ack) already answered this one — same as on_interaction, not a
+        # bug worth a traceback, a user message, or an owner DM.
+        logger.warning("command %s: interaction already answered (instance=%s): %s",
+                       getattr(interaction.command, "qualified_name", "?"), INSTANCE_ID, _orig)
+        return
     if isinstance(error, app_commands.CheckFailure):
         msg = f"{emoji('lock')} You don't have permission to use that command."
     elif isinstance(error, app_commands.CommandOnCooldown):
