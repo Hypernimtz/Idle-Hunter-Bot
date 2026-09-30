@@ -915,6 +915,26 @@ for _k, _v in list(EMOJI.items()):
 
 _EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]+):(\d+)>$")
 
+# Art uploaded 2026-09-29 (nine item designs + five badges). Explicit ids so they
+# work without waiting on adopt-by-name.
+_UPLOADED_2026_09_29 = {
+    "weather_vane": "<:weather_vane:1554685180445200424>",
+    "war_horn": "<:war_horn:1554685179111669850>",
+    "signal_flare": "<:signal_flare:1554685177660182548>",
+    "scent_lure": "<:scent_lure:1554685175915614238>",
+    "rare_bait": "<:rare_bait:1554685174585892945>",
+    "haul_wagon": "<:haul_wagon:1554685173315014676>",
+    "danger_whistle": "<:danger_whistle:1554685172060913776>",
+    "camp_rations": "<:camp_rations:1554685170702098452>",
+    "badge_recruiter": "<:badge_recruiter:1554685168911122604>",
+    "badge_master_recruiter": "<:badge_master_recruiter:1554685166985941094>",
+    "badge_event_fox": "<:badge_event_fox:1554685154692300880>",
+    "badge_event_duck": "<:badge_event_duck:1554685152246890536>",
+    "badge_event_anchor": "<:badge_event_anchor:1554685150477029566>",
+    "ammo_pouch": "<:ammo_pouch:1554685148837187697>",
+}
+EMOJI.update(_UPLOADED_2026_09_29)
+
 # Keys that only have a unicode placeholder but can reuse existing custom art in
 # the meantime. Unlike _EMOJI_ALIASES these are FALLBACKS: the moment art named
 # after the key itself is uploaded, adopt_named_emojis() replaces the borrowed one.
