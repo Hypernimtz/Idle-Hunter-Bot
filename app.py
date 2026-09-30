@@ -133,7 +133,7 @@ from backend import (
     get_user_lock, tribe_lock, state_lock
 )
 from dotenv import load_dotenv
-import os
+import os, sys
 import functools
 import heapq
 load_dotenv("token.env")
@@ -9242,28 +9242,32 @@ def _crate_shop_sections(user_id: str) -> list:
 
 def _craft_item_recipe_sections(user_id: str) -> list:
     """Instant shard/crystal -> finished item recipes (Iron Plating, etc.) —
-    unlike crystal-fusing, these are one click, no timer, like the crate shop."""
-    sections = []
+    unlike crystal-fusing, these are one click, no timer. Rendered as one text
+    block + one select (3 components) rather than a section+button per recipe
+    (3 EACH): the /craft screen hit Discord's 40-component cap with them."""
+    lines, opts = [], []
     for name, rec in CRAFT_ITEM_RECIPES.items():
         it = ITEMS[name]
         owned = item_count(user_id, name)
         have  = shard_count(user_id, rec["rarity"]) if rec["kind"] == "shard" else crystal_count(user_id, rec["rarity"])
         cost  = rec["cost"]
-        can   = have >= cost and owned < ITEM_STACK_CAP
         mat_icon = SHARD_ICONS[rec["rarity"]] if rec["kind"] == "shard" else CRYSTAL_ICONS[rec["rarity"]]
         mat_word = "Shard" if rec["kind"] == "shard" else "Crystal"
-        content = (
+        lines.append(
             f"{it['emoji']} **{name}** — {mat_icon} {cost} {_rarity_label(rec['rarity'])} "
             f"{mat_word}{'s' if cost != 1 else ''} (you have **{have}**) · Owned: **{owned}/{ITEM_STACK_CAP}**\n"
             f"-# {it['description']}"
         )
-        sections.append({
-            "type": 9,
-            "components": [{"type": 10, "content": content}],
-            "accessory": {"type": 2, "style": 1 if can else 2, "label": "Craft",
-                "custom_id": f"craft:item:{name}:{user_id}", "disabled": not can},
-        })
-    return sections
+        if have >= cost and owned < ITEM_STACK_CAP:
+            opts.append({"label": name[:100], "value": name,
+                         "description": f"{cost} {_rarity_label(rec['rarity'])} {mat_word}{'s' if cost != 1 else ''}"[:100]})
+    out = [{"type": 10, "content": "\n".join(lines)}]
+    if opts:
+        out.append({"type": 1, "components": [{"type": 3,
+            "custom_id": f"craft:pick:{user_id}",
+            "placeholder": "Craft an item…",
+            "min_values": 1, "max_values": 1, "options": opts[:25]}]})
+    return out
 
 def build_crate_shop_components(user_id: str) -> list:
     # The crate shop now lives inside the /craft screen. Kept as a thin alias so
@@ -12149,6 +12153,34 @@ def _already_handled(interaction_id: int) -> bool:
     return False
 
 
+_owner_err_last: dict = {}   # signature -> last DM time (throttle)
+
+async def report_error_to_owner(where: str, error: BaseException, interaction=None) -> None:
+    """DM the bot owner a short traceback. Throttled per error signature (10 min)
+    so a broken command hit by many players can't flood the owner's DMs."""
+    try:
+        import traceback
+        err = getattr(error, "original", None) or error
+        sig = f"{where}|{type(err).__name__}|{str(err)[:120]}"
+        now = time.time()
+        if now - _owner_err_last.get(sig, 0) < 600:
+            return
+        _owner_err_last[sig] = now
+        if len(_owner_err_last) > 200:
+            for k in [k for k, t in _owner_err_last.items() if now - t > 600]:
+                _owner_err_last.pop(k, None)
+        who = ""
+        if interaction is not None:
+            u = getattr(interaction, "user", None)
+            who = f"\nUser: {u} ({getattr(u, 'id', '?')})"
+        tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+        text = f"**Idle Hunter error** in `{where}`{who}\nInstance: `{INSTANCE_ID}`\n```py\n{tb[-1500:]}\n```"
+        for oid in BOT_OWNER_ID:
+            user = bot.get_user(int(oid)) or await bot.fetch_user(int(oid))
+            await user.send(text[:1990])
+    except Exception:
+        logger.warning("could not DM owner about error", exc_info=True)
+
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     try:
@@ -12160,9 +12192,12 @@ async def on_interaction(interaction: discord.Interaction):
         # scary ephemeral at the user: someone else's response is already there.
         cid = ((getattr(interaction, "data", {}) or {}).get("custom_id", "")) or "?"
         logger.warning("interaction response failed (custom_id=%s, instance=%s): %s", cid, INSTANCE_ID, e)
+        if getattr(e, "code", None) == 50035:   # invalid payload = our bug, not a duplicate instance
+            await report_error_to_owner(f"component {cid}", e, interaction)
     except Exception:
         cid = ((getattr(interaction, "data", {}) or {}).get("custom_id", "")) or "?"
         logger.exception("component handler crashed (custom_id=%s)", cid)
+        await report_error_to_owner(f"component {cid}", sys.exc_info()[1], interaction)
         if interaction.type == discord.InteractionType.component:
             try:
                 await send_ephemeral_v2(
@@ -12768,8 +12803,8 @@ async def _dispatch_component(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_craft_components(owner_id, notice))
             return
 
-        if parts[1] == "item":
-            item_name = parts[2]
+        if parts[1] == "pick":
+            item_name = values[0] if values else ""
             rec = CRAFT_ITEM_RECIPES.get(item_name)
             if not rec:
                 return
@@ -15555,6 +15590,7 @@ class _V2Modal(discord.ui.Modal):
             logger.warning("modal response failed (%s): %s", type(self).__name__, error)
             return
         logger.exception("modal crashed (%s)", type(self).__name__, exc_info=error)
+        await report_error_to_owner(f"modal {type(self).__name__}", error, interaction)
         try:
             await send_ephemeral_v2(
                 interaction,
@@ -20999,6 +21035,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         msg = f"{emoji('cooldown')} That command is on cooldown — try again in {error.retry_after:.0f}s."
     else:
         logger.exception("app command error", exc_info=error)
+        cmd = getattr(interaction.command, "qualified_name", "?")
+        await report_error_to_owner(f"/{cmd}", error, interaction)
         msg = f"{emoji('warning')} Something went wrong running that command. Please try again."
     try:
         await send_ephemeral_v2(interaction, msg, 0xE74C3C)

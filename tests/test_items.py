@@ -104,6 +104,28 @@ def test_craft_item_recipe_deducts_materials_and_grants_item():
     assert app.item_count(uid, "Iron Plating") == 1
 
 
+def _count_components(node):
+    if isinstance(node, list):
+        return sum(_count_components(n) for n in node)
+    n = 1
+    for k in ("components", "options_unused"):
+        n += _count_components(node.get(k, [])) if isinstance(node.get(k), list) else 0
+    if isinstance(node.get("accessory"), dict):
+        n += 1
+    return n
+
+
+def test_craft_panel_stays_under_discord_component_cap():
+    _reset()
+    uid = "9010"
+    _mk_user(uid)
+    for r in app.RARITY_KEYS:
+        app.add_crystal(uid, r, 20)
+        app.data[uid].setdefault("shards", {})[r] = 50
+    comps = app.build_craft_components(uid, notice="x")
+    assert _count_components(comps) <= 40, _count_components(comps)
+
+
 def test_crate_item_reward_resolves_and_applies():
     _reset()
     uid = "9003"
