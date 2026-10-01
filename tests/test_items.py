@@ -345,6 +345,31 @@ def test_field_medkit_maps_to_existing_potion_bottle_key():
     assert game_data.ITEM_EMOJI_KEYS["Field Medkit"] == "potion_bottle"
 
 
+def test_maintenance_pause_extends_running_timers_only():
+    import time
+    _reset()
+    uid = "9002"
+    now = time.time()
+    since = now - 600                       # maintenance lasted 10 minutes
+    d = _mk_user(uid)
+    d["temp_boosts"] = [
+        {"stat": "luck", "amount": 10, "expires_at": now + 100},    # still running -> shifts
+        {"stat": "xp",   "amount": 10, "expires_at": since - 50},   # already expired -> stays
+    ]
+    d["trophy_active"] = {"Hydra Scale": now + 500}
+    app.tribe_data["T"] = {"temp_boosts": [{"stat": "sell", "amount": 5, "expires_at": now + 50}],
+                           "expedition": {"ends_ts": now + 900, "done": False}}
+    moved = run(app.pause_timers_for_maintenance(since, 600))
+    assert moved >= 2
+    assert d["temp_boosts"][0]["expires_at"] == now + 700
+    assert d["temp_boosts"][1]["expires_at"] == since - 50
+    assert d["trophy_active"]["Hydra Scale"] == now + 1100
+    assert app.tribe_data["T"]["temp_boosts"][0]["expires_at"] == now + 650
+    assert app.tribe_data["T"]["expedition"]["ends_ts"] == now + 1500
+    assert uid in app._dirty_users
+    assert run(app.pause_timers_for_maintenance(since, 0)) == 0
+
+
 # ─────────────────────────────────────────────────────────────
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))

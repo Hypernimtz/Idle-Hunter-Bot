@@ -1494,6 +1494,7 @@ def save_config():
             "message":  maintenance_message,
             "channels": list(maintenance_channels),
             "warned":   list(_maintenance_warned),
+            "since":    maintenance_since,
         },
         "updates": UPDATE
     })
@@ -1571,6 +1572,67 @@ maintenance_message = _m.get("message", "")
 maintenance_channels: set[int] = set(_m.get("channels", []))
 _maintenance_warned: set[str] = set(_m.get("warned", []))
 maintenance_time = 0
+maintenance_since = float(_m.get("since", 0) or 0)   # ts maintenance began; 0 = not in maintenance
+
+def _shift_expiry(obj, key: str, since: float, secs: float) -> bool:
+    """Push obj[key] back by `secs` — but only if it was still running when
+    maintenance began (`since`); a timer that had already run out stays expired."""
+    try:
+        if isinstance(obj, dict) and obj.get(key, 0) > since:
+            obj[key] = obj[key] + secs
+            return True
+    except TypeError:
+        pass
+    return False
+
+async def pause_timers_for_maintenance(since: float, secs: float) -> int:
+    """Maintenance must not eat anyone's timed buffs: when it ends, push every
+    still-running expiry (boosts, trophy effects, loaner tool, tracking, tribe
+    boosts / expeditions, the live event / conditions / sighting, market
+    listings) forward by the time maintenance lasted. Returns how many timers
+    moved. Runs with no await between mutations, so it is atomic on the loop."""
+    if secs <= 0:
+        return 0
+    moved = 0
+    for uid, d in list(data.items()):
+        hit = False
+        for b in d.get("temp_boosts") or []:
+            hit |= _shift_expiry(b, "expires_at", since, secs)
+        act = d.get("trophy_active")
+        if isinstance(act, dict):
+            for t in list(act):
+                if isinstance(act[t], (int, float)) and act[t] > since:
+                    act[t] += secs
+                    hit = True
+        hit |= _shift_expiry(d.get("trial_tool"), "expires_at", since, secs)
+        hit |= _shift_expiry(d.get("tracking"), "expires_ts", since, secs)
+        if hit:
+            moved += 1
+            mark_user_dirty(uid)
+    for name, td in list(tribe_data.items()):
+        hit = False
+        for b in td.get("temp_boosts") or []:
+            hit |= _shift_expiry(b, "expires_at", since, secs)
+        exp = td.get("expedition")
+        if isinstance(exp, dict) and not exp.get("done"):
+            hit |= _shift_expiry(exp, "ends_ts", since, secs)
+        if hit:
+            moved += 1
+            backend.mark_tribes_dirty(name)
+    if _active_event:
+        moved += _shift_expiry(_active_event, "ends_ts", since, secs)
+    for c in list(_world_conditions.values()):
+        moved += _shift_expiry(c, "ends_ts", since, secs)
+    if _active_sighting:
+        moved += _shift_expiry(_active_sighting, "ends_ts", since, secs)
+    for lst in list(_market.values()):
+        if _shift_expiry(lst, "expires_ts", since, secs):
+            moved += 1
+            try:
+                await backend.market_save(lst)
+            except Exception:
+                logger.exception("market listing expiry shift not persisted (%s)", lst.get("id"))
+    return moved
 
 # Register save callbacks (will be re-registered in on_ready after DB init).
 # Placeholders that do nothing until the real ones are set — must be async,
@@ -19997,14 +20059,24 @@ async def _admin_apply(op: str, params: dict, admin_id: str) -> tuple[str, str]:
     if op == "maint_toggle":
         # Only ever reached to disable now — enabling goes through the
         # maint_enable modal below, since it needs a reason.
-        global maintenance_mode, maintenance_warning, maintenance_message
+        global maintenance_mode, maintenance_warning, maintenance_message, maintenance_since
+        # Boosts & other running timers were frozen for the whole maintenance
+        # window: push their expiries forward by exactly how long it lasted.
+        now = time.time()
+        paused, moved = 0, 0
+        if maintenance_mode and maintenance_since > 0:
+            paused = max(0.0, now - maintenance_since)
+            moved = await pause_timers_for_maintenance(maintenance_since, paused)
         maintenance_mode    = False
         maintenance_warning = False
         maintenance_message = ""
+        maintenance_since   = 0.0
         save_config()
-        admin_audit(admin_id, "maint_toggle", "mode=False")
+        admin_audit(admin_id, "maint_toggle", f"mode=False paused={int(paused)}s timers_moved={moved}")
         bot.loop.create_task(_broadcast_maintenance(False))
-        return "maint", f"{emoji('green_ball')} Maintenance mode **disabled** — the bot is open again."
+        extra = (f" Timers were paused for **{int(paused // 60)} min** ({moved:,} boosts / effects extended)."
+                 if moved else "")
+        return "maint", f"{emoji('green_ball')} Maintenance mode **disabled** — the bot is open again.{extra}"
 
     return _admin_section_for(op), f"{emoji('cross_mark')} Unknown action."
 
@@ -20212,8 +20284,10 @@ class AdminMaintEnableModal(_V2Modal, title="🔧 Enable Maintenance"):
         self.admin_id = str(admin_id)
 
     async def on_submit(self, interaction: discord.Interaction):
-        global maintenance_mode, maintenance_message, maintenance_warning
+        global maintenance_mode, maintenance_message, maintenance_warning, maintenance_since
         maintenance_message = self.msg_in.value.strip()
+        if not maintenance_mode or maintenance_since <= 0:
+            maintenance_since = time.time()      # start of the timer-freeze window
         maintenance_mode    = True
         maintenance_warning = False
         save_config()
