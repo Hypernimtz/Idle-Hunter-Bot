@@ -9242,24 +9242,29 @@ def build_lottery_components(user_id: str) -> list:
 # CRATE PANEL
 # ─────────────────────────────────────────────
 
-def _fmt_reward(reward: dict) -> str:
+def _fmt_reward(reward: dict, bold: bool = False) -> str:
+    """One-line reward text. Never embeds its own ``**`` — pass ``bold=True`` to
+    bold the whole line (nesting ``**`` inside a caller's ``**…**`` breaks Discord's
+    markdown, which is what mangled title / boost crate rewards)."""
     t = reward["type"]
     if t == "money":
-        return f"◈ {reward['amount']:,}"
-    if t == "gems":
-        return f"{emoji('gem')} {reward['amount']:,}"
-    if t == "perm_boost":
+        out = f"◈ {reward['amount']:,}"
+    elif t == "gems":
+        out = f"{emoji('gem')} {reward['amount']:,}"
+    elif t == "perm_boost":
         stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
-        return f"{emoji('sparkles')} **+{reward['amount']}% {stat_label}** (permanent!)"
-    if t == "temp_boost":
+        out = f"{emoji('sparkles')} +{reward['amount']}% {stat_label} (permanent!)"
+    elif t == "temp_boost":
         stat_label = {"luck": "Luck", "sell": "Sell", "xp": "XP"}.get(reward["stat"], reward["stat"])
-        return f"{emoji('clock')} **+{reward['amount']}% {stat_label}** for {reward['minutes']} min"
-    if t == "title":
-        return f'`🏷️` Title: **"{reward["title"]}"**'
-    if t == "item":
+        out = f"{emoji('clock')} +{reward['amount']}% {stat_label} for {reward['minutes']} min"
+    elif t == "title":
+        out = f'{emoji("label") or "🏷️"} Title: "{reward["title"]}"'
+    elif t == "item":
         it = ITEMS.get(reward["name"]) or HEALING_ITEMS.get(reward["name"], {})
-        return f"{it.get('emoji', '')} {reward['name']}"
-    return "???"
+        out = f"{it.get('emoji', '')} {reward['name']}"
+    else:
+        return "???"
+    return f"**{out}**" if bold else out
 
 def _crystals_owned_line(user_id: str) -> str:
     have = [f"{CRYSTAL_ICONS[r]} {crystal_count(user_id, r)}"
@@ -9367,7 +9372,7 @@ def build_crate_open_menu_components(user_id: str) -> list:
 def build_crate_result_components(user_id: str, crate_name: str, reward: dict,
                                   extras: dict | None = None) -> list:
     crate = CRATE_TIERS[crate_name]
-    reward_str = _fmt_reward(reward)
+    reward_str = _fmt_reward(reward, bold=True)
     remaining = data[user_id].get("crate_inv", {}).get(crate_name, 0)
     extras = extras or {}
 
@@ -9378,7 +9383,7 @@ def build_crate_result_components(user_id: str, crate_name: str, reward: dict,
 
     content = (
         f"### {crate['emoji']} {crate_name} Opened!\n\n"
-        f"You received:\n**{reward_str}**{bonus}\n\n"
+        f"You received:\n{reward_str}{bonus}\n\n"
         f"-# {crate_name} remaining: **{remaining}**"
     )
 
@@ -12047,7 +12052,7 @@ def build_scratch_pad_components(user_id: str, last: dict | None = None) -> list
     last_line = ""
     if last and last.get("kind") != "none":
         if last["prize"] is not None:
-            last_line = f"\n-# Just revealed: **{_fmt_reward(last['prize'])}**!"
+            last_line = f"\n-# Just revealed: {_fmt_reward(last['prize'], bold=True)}!"
         else:
             last_line = "\n-# Just revealed: nothing this time."
 
