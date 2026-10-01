@@ -359,7 +359,7 @@ def test_maintenance_pause_extends_running_timers_only():
     d["trophy_active"] = {"Hydra Scale": now + 500}
     app.tribe_data["T"] = {"temp_boosts": [{"stat": "sell", "amount": 5, "expires_at": now + 50}],
                            "expedition": {"ends_ts": now + 900, "done": False}}
-    moved = run(app.pause_timers_for_maintenance(since, 600))
+    moved = run(app.pause_running_timers(since, 600))
     assert moved >= 2
     assert d["temp_boosts"][0]["expires_at"] == now + 700
     assert d["temp_boosts"][1]["expires_at"] == since - 50
@@ -367,7 +367,54 @@ def test_maintenance_pause_extends_running_timers_only():
     assert app.tribe_data["T"]["temp_boosts"][0]["expires_at"] == now + 650
     assert app.tribe_data["T"]["expedition"]["ends_ts"] == now + 1500
     assert uid in app._dirty_users
-    assert run(app.pause_timers_for_maintenance(since, 0)) == 0
+    assert run(app.pause_running_timers(since, 0)) == 0
+
+
+def test_outage_pause_extends_timers_that_were_running_at_shutdown():
+    import json, time
+    _reset()
+    uid = "9003"
+    now = time.time()
+    alive = int(now // 60 * 60) - 1200          # bot last alive 20 min ago
+    d = _mk_user(uid)
+    d["temp_boosts"] = [{"stat": "luck", "amount": 10, "expires_at": alive + 300},   # was running -> shifted
+                        {"stat": "xp",   "amount": 10, "expires_at": alive - 300}]   # already over -> stays
+    path = os.path.join(tempfile.gettempdir(), "ih_runtime_outage_test.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"alive_ts": alive,
+                   "event": {"key": "admin_buff", "name": "X", "started_ts": alive - 100,
+                             "ends_ts": alive + 300, "by": "1"}}, f)
+    old = (app.RUNTIME_STATE_FILE, app.maintenance_mode, app.maintenance_since,
+           app._active_event, app._pending_pause)
+    saved_outages = list(app._outages)
+    try:
+        app.RUNTIME_STATE_FILE = path
+        app.maintenance_mode, app.maintenance_since = False, 0.0
+        app._active_event, app._pending_pause = None, None
+        app.load_runtime_state()
+        assert app._active_event is not None          # ended mid-outage, but was live at shutdown
+        assert app._pending_pause and app._pending_pause[0] == alive
+        run(app.apply_outage_pause())
+        gap = app._pending_pause  # cleared
+        assert gap is None
+        shifted = d["temp_boosts"][0]["expires_at"]
+        assert abs(shifted - (now + 300)) < 5           # 5 min were left at shutdown -> ~5 min left now
+        assert d["temp_boosts"][1]["expires_at"] == alive - 300
+        assert abs(app._active_event["ends_ts"] - (now + 300)) < 5
+        # inside a maintenance window the outage is NOT shifted twice
+        app._pending_pause = (alive, now)
+        app.maintenance_mode, app.maintenance_since = True, alive
+        before = d["temp_boosts"][0]["expires_at"]
+        run(app.apply_outage_pause())
+        assert d["temp_boosts"][0]["expires_at"] == before
+    finally:
+        (app.RUNTIME_STATE_FILE, app.maintenance_mode, app.maintenance_since,
+         app._active_event, app._pending_pause) = old
+        app._outages[:] = saved_outages
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────

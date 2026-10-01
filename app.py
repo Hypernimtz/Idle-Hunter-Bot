@@ -1585,7 +1585,7 @@ def _shift_expiry(obj, key: str, since: float, secs: float) -> bool:
         pass
     return False
 
-async def pause_timers_for_maintenance(since: float, secs: float) -> int:
+async def pause_running_timers(since: float, secs: float) -> int:
     """Maintenance must not eat anyone's timed buffs: when it ends, push every
     still-running expiry (boosts, trophy effects, loaner tool, tracking, tribe
     boosts / expeditions, the live event / conditions / sighting, market
@@ -12207,6 +12207,30 @@ def _encode_runtime_state() -> dict:
         "outages":  [list(o) for o in _outages],
     }
 
+_pending_pause: tuple[float, float] | None = None   # (last-alive ts, boot ts) of an outage to pause timers for
+
+async def apply_outage_pause() -> None:
+    """After a crash / restart / host outage, push every timer that was still
+    running when the bot went down forward by the downtime (boosts, trophy
+    effects, tribe buffs, events...). No-op when the outage was inside a
+    maintenance window — turning maintenance off already covers that span."""
+    global _pending_pause
+    pend, _pending_pause = _pending_pause, None
+    if not pend or (maintenance_mode and maintenance_since > 0):
+        return
+    since, now = pend
+    moved = await pause_running_timers(since, now - since)
+    if not moved:
+        return
+    print(f"⏸️ Outage of ~{int((now - since) // 60)} min: extended {moved:,} running timer(s)")
+    try:    # persist the shift before the next alive stamp so a crash-loop can't lose or repeat it
+        await bulk_save_users(data)
+        if tribe_data:
+            await bulk_save_tribes(tribe_data)
+        _dirty_users.clear()
+    except Exception as e:
+        print(f"  outage-pause save failed (autosave will retry): {e}")
+
 def load_runtime_state() -> None:
     try:
         with open(RUNTIME_STATE_FILE, "r", encoding="utf-8") as f:
@@ -12226,15 +12250,30 @@ def load_runtime_state() -> None:
     _saved_map = (raw.get("world_map") or {}).get("url", "")
     if _saved_map and not _cdn_url_expiring(_saved_map, skew_seconds=0):
         _world_map_url = _saved_map
+    now = time.time()
+    try:
+        _alive = float(raw.get("alive_ts", 0) or 0)
+    except (TypeError, ValueError):
+        _alive = 0.0
+    # Timers still running when the bot last went down must survive the outage
+    # (they get pushed forward by apply_outage_pause()), so keep them by that
+    # cutoff rather than by "now".
+    global _pending_pause
+    if maintenance_mode and maintenance_since > 0:
+        cutoff = maintenance_since            # the maintenance toggle extends them on reopen
+    elif _alive and now - _alive >= OUTAGE_MIN_GAP_SEC:
+        cutoff = _alive
+        _pending_pause = (_alive, now)
+    else:
+        cutoff = now
     _saved_ev = raw.get("event")
-    if _saved_ev and _saved_ev.get("ends_ts", 0) > time.time():
+    if _saved_ev and _saved_ev.get("ends_ts", 0) > cutoff:
         _active_event = _saved_ev
     _wc = raw.get("world_conditions") or {}
-    now = time.time()
     _world_conditions = {b: c for b, c in _wc.items()
-                         if isinstance(c, dict) and c.get("ends_ts", 0) > now}
+                         if isinstance(c, dict) and c.get("ends_ts", 0) > cutoff}
     _sg = raw.get("world_sighting")
-    if _sg and _sg.get("ends_ts", 0) > now:
+    if _sg and _sg.get("ends_ts", 0) > cutoff:
         _active_sighting = _sg
     try:
         _last_sighting_end = float(raw.get("last_sighting_end", 0) or 0)
@@ -12250,7 +12289,6 @@ def load_runtime_state() -> None:
     _last_weekly_lb_tag = str(raw.get("last_weekly_lb_tag", "") or "")
     try:
         _outages[:] = [[int(a), int(b)] for a, b in (raw.get("outages") or [])]
-        _alive = float(raw.get("alive_ts", 0) or 0)
         if _alive:
             _record_outage(_alive, time.time())
             if _outages and _outages[-1][1] >= time.time() - 5:
@@ -20066,7 +20104,7 @@ async def _admin_apply(op: str, params: dict, admin_id: str) -> tuple[str, str]:
         paused, moved = 0, 0
         if maintenance_mode and maintenance_since > 0:
             paused = max(0.0, now - maintenance_since)
-            moved = await pause_timers_for_maintenance(maintenance_since, paused)
+            moved = await pause_running_timers(maintenance_since, paused)
         maintenance_mode    = False
         maintenance_warning = False
         maintenance_message = ""
@@ -21056,6 +21094,11 @@ async def on_ready():
         print(f"✅ Market loaded ({len(_market)} listings)")
     except Exception as e:
         print("market load failed:", e)
+
+    try:
+        await apply_outage_pause()
+    except Exception as e:
+        print("outage timer pause failed:", e)
 
     # Make sure the world is never empty on boot (Idle Hunter V2).
     if FEATURE_WORLD_CONDITIONS:
