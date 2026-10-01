@@ -3622,6 +3622,32 @@ def _clean_components(node):
     opt-in per panel via _gtop(), e.g. the gamble games — never applied globally.)"""
     return _clean_node(node)
 
+# A dropped / reset connection to Discord (host network blips: "Connection reset
+# by peer", DNS hiccups, timeouts). These are not bugs in a handler — retry the
+# call, and never report them as errors.
+_TRANSIENT_NET_ERRORS = (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError,
+                         asyncio.TimeoutError, ConnectionError)
+
+def _is_transient_net_error(err: BaseException) -> bool:
+    err = getattr(err, "original", None) or err
+    return isinstance(err, _TRANSIENT_NET_ERRORS)
+
+async def _http_retry(interaction, route, payload: dict, tries: int = 3):
+    """interaction.client.http.request with a couple of fast retries on a dropped
+    connection. Only used for calls that are safe to repeat: the initial callback
+    (a second delivery just gets "already acknowledged", which callers swallow)
+    and the @original PATCH (idempotent). NOT for followup POSTs, which could
+    double-post if the first one actually landed."""
+    for attempt in range(tries):
+        try:
+            return await interaction.client.http.request(route, json=payload)
+        except _TRANSIENT_NET_ERRORS as e:
+            if attempt == tries - 1:
+                raise
+            logger.warning("Discord connection dropped (%s); retrying %d/%d",
+                           type(e).__name__, attempt + 1, tries - 1)
+            await asyncio.sleep(0.4 * (attempt + 1))
+
 async def _raw(interaction: discord.Interaction, payload: dict):
     try:
         _clean_components((payload.get("data") or {}).get("components"))
@@ -3632,7 +3658,7 @@ async def _raw(interaction: discord.Interaction, payload: dict):
         interaction_id=interaction.id, interaction_token=interaction.token,
     )
     try:
-        await interaction.client.http.request(route, json=payload)
+        await _http_retry(interaction, route, payload)
     except discord.NotFound:
         # Discord already discarded this interaction (too much time passed
         # before we could ack — event-loop lag or a slow network hop) before
@@ -3667,7 +3693,7 @@ async def edit_v2(interaction: discord.Interaction, components: list):
         token=interaction.token,
     )
 
-    await interaction.client.http.request(route, json={
+    await _http_retry(interaction, route, {
         "flags": V2_FLAGS,
         "components": components,
         "allowed_mentions": {"parse": []},
@@ -12381,6 +12407,9 @@ async def report_error_to_owner(where: str, error: BaseException, interaction=No
     try:
         import traceback
         err = getattr(error, "original", None) or error
+        if _is_transient_net_error(err):
+            logger.warning("network error in %s (%s) — not reported", where, type(err).__name__)
+            return
         sig = f"{where}|{type(err).__name__}|{str(err)[:120]}"
         now = time.time()
         if now - _owner_err_last.get(sig, 0) < 600:
@@ -12416,7 +12445,11 @@ async def on_interaction(interaction: discord.Interaction):
             await report_error_to_owner(f"component {cid}", e, interaction)
     except Exception:
         cid = ((getattr(interaction, "data", {}) or {}).get("custom_id", "")) or "?"
-        logger.exception("component handler crashed (custom_id=%s)", cid)
+        if _is_transient_net_error(sys.exc_info()[1]):
+            logger.warning("component %s lost its connection to Discord (%s)", cid,
+                           type(sys.exc_info()[1]).__name__)
+        else:
+            logger.exception("component handler crashed (custom_id=%s)", cid)
         await report_error_to_owner(f"component {cid}", sys.exc_info()[1], interaction)
         if interaction.type == discord.InteractionType.component:
             try:

@@ -417,6 +417,40 @@ def test_outage_pause_extends_timers_that_were_running_at_shutdown():
             pass
 
 
+def test_http_retry_survives_a_connection_reset_but_not_a_real_error():
+    import aiohttp
+
+    class _Http:
+        def __init__(self, fails, exc):
+            self.calls, self.fails, self.exc = 0, fails, exc
+        async def request(self, route, json=None):
+            self.calls += 1
+            if self.calls <= self.fails:
+                raise self.exc
+            return "ok"
+
+    class _It:
+        def __init__(self, http):
+            self.client = type("C", (), {"http": http})()
+
+    http = _Http(2, aiohttp.ClientOSError(104, "Connection reset by peer"))
+    assert run(app._http_retry(_It(http), None, {})) == "ok" and http.calls == 3
+    http = _Http(5, aiohttp.ClientOSError(104, "Connection reset by peer"))
+    try:
+        run(app._http_retry(_It(http), None, {}))
+        raise AssertionError("should have given up")
+    except aiohttp.ClientOSError:
+        assert http.calls == 3
+    http = _Http(1, ValueError("bug"))
+    try:
+        run(app._http_retry(_It(http), None, {}))
+        raise AssertionError("non-network errors must not be retried")
+    except ValueError:
+        assert http.calls == 1
+    assert app._is_transient_net_error(aiohttp.ClientOSError(104, "x"))
+    assert not app._is_transient_net_error(ValueError("x"))
+
+
 # ─────────────────────────────────────────────────────────────
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
