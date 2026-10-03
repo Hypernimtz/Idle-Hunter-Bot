@@ -11860,7 +11860,34 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
         except Exception:
             pass
 
+    await maybe_notify_event_start(interaction, user_id)
     return user_id
+
+
+async def maybe_notify_event_start(interaction: discord.Interaction, user_id: str) -> None:
+    """Tell a player about the running global event the first time they use the
+    bot after it started — once per event, whichever command or button they hit.
+    (The "Admin's Day Off" buff is skipped: its welcome-bonus card is the notice.)"""
+    ev = get_active_event()
+    if not ev or ev.get("key") == "admin_buff" or not interaction.response.is_done():
+        return
+    d = data.get(user_id)
+    if not d or d.get("_event_seen") == ev["started_ts"]:
+        return
+    d["_event_seen"] = ev["started_ts"]
+    mark_user_dirty(user_id)
+    spec = EVENTS.get(ev.get("key", ""), {})
+    lines = [f"### {spec.get('emoji', emoji('party_popper'))} {ev['name']} has started!"]
+    if spec.get("blurb"):
+        lines.append(spec["blurb"])
+    if spec.get("actions"):
+        lines.append("\n".join(f"- {a}" for a in spec["actions"]))
+    lines.append(f"\nOpen </events:{COMMAND_ID.get('events', '0')}> to join in.")
+    lines.append(f"-# Ends <t:{int(ev['ends_ts'])}:R> · you'll only see this once.")
+    try:
+        await send_ephemeral_v2(interaction, "\n".join(lines), 0xF1C40F)
+    except Exception:
+        pass
 
 
 async def _modal_gate(interaction: discord.Interaction, user_id: str | None = None) -> bool:
