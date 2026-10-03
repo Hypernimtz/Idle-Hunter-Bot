@@ -12670,10 +12670,17 @@ async def _dispatch_component(interaction: discord.Interaction):
                     return
                 admin_audit(admin_id, "event_start", f"{ekey} until {int(ev['ends_ts'])}")
                 spec = EVENTS[ekey]
-                bot.loop.create_task(_broadcast_event_start(ev))
-                await smart_update_v2(interaction, build_admin_panel(
-                    admin_id, "events",
-                    f"{spec['emoji']} **{spec['name']}** started & announced — ends <t:{int(ev['ends_ts'])}:R>."))
+                try:
+                    announced = await _broadcast_event_start(ev)
+                except Exception as e:
+                    announced = False
+                    logger.exception("event broadcast error: %s", e)
+                if announced:
+                    note = f"{spec['emoji']} **{spec['name']}** started & announced — ends <t:{int(ev['ends_ts'])}:R>."
+                else:
+                    note = (f"{spec['emoji']} **{spec['name']}** started (ends <t:{int(ev['ends_ts'])}:R>) but the "
+                            f"**announcement failed to post**: `{_announce_last_error or 'unknown error'}`")
+                await smart_update_v2(interaction, build_admin_panel(admin_id, "events", note))
                 return
             if arg == "stop":
                 stop_active_event()
@@ -18727,6 +18734,8 @@ def _announce_card_components(body_md: str, color: int, buttons: list[dict] | No
         comps.append({"type": 1, "components": buttons})
     return comps
 
+_announce_last_error = ""   # why the most recent _announce() failed ("" = it didn't)
+
 async def _announce(body_md: str, *, channel_id: int = ANNOUNCE_CHANNEL_ID,
                      role_id: int = ANNOUNCE_ROLE_ID, color: int = 0x2ECC71, ping: bool = True,
                      buttons: list[dict] | None = None, thumb_url: str | None = None) -> dict | None:
@@ -18741,11 +18750,15 @@ async def _announce(body_md: str, *, channel_id: int = ANNOUNCE_CHANNEL_ID,
     Returns the created message's raw payload (so a caller — e.g. the
     sighting tracker — can edit it in place later), or None on failure.
     """
+    global _announce_last_error
+    _announce_last_error = ""
     ch = bot.get_channel(channel_id)
     if ch is None:
         try:
             ch = await bot.fetch_channel(channel_id)
-        except Exception:
+        except Exception as e:
+            _announce_last_error = f"can't reach channel {channel_id}: {e}"[:300]
+            print("announce failed:", _announce_last_error)
             return None
     components = []
     if ping:
@@ -18759,6 +18772,7 @@ async def _announce(body_md: str, *, channel_id: int = ANNOUNCE_CHANNEL_ID,
             "allowed_mentions": {"roles": [str(role_id)]} if ping else {"parse": []},
         })
     except Exception as e:
+        _announce_last_error = str(e)[:300]
         print("announce failed:", e)
         return None
 
@@ -18814,7 +18828,7 @@ async def _broadcast_expedition_result(tname: str, success: bool) -> None:
         color = 0x7F8C8D
     await _announce(body, color=color)
 
-async def _broadcast_event_start(ev: dict) -> None:
+async def _broadcast_event_start(ev: dict) -> bool:
     """Post an event-launch announcement when an admin starts a global event.
     Redesigned 2026-09-15 onto the shared announce_card formula — a real
     button instead of a raw '/events' instruction, and no more 'Runs until
@@ -18842,7 +18856,12 @@ async def _broadcast_event_start(ev: dict) -> None:
     if kind != "buff":
         buttons.append({"type": 2, "style": 3, "label": "Hunt",
                          "emoji": emoji_partial('bow'), "custom_id": "announce:hunt:go"})
-    await _announce(body, color=0xF1C40F, buttons=buttons)
+    # If Discord rejects the card with its buttons, still get the news out
+    # without them rather than posting nothing.
+    posted = await _announce(body, color=0xF1C40F, buttons=buttons)
+    if posted is None:
+        posted = await _announce(body, color=0xF1C40F)
+    return posted is not None
 
 class UpdateAddModal(_V2Modal, title="📢 Add Update"):
     title_in = discord.ui.TextInput(

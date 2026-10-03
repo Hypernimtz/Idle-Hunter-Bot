@@ -56,6 +56,27 @@ def test_notified_once_per_event():
     assert len(sent) == 2                             # buff has its own welcome card
 
 
+def test_broadcast_reports_failure_and_retries_without_buttons():
+    calls = []
+
+    async def fake_announce(body, **kw):
+        calls.append(kw.get("buttons"))
+        return None if kw.get("buttons") else {"id": 1}
+
+    app._announce = fake_announce
+    app.stop_active_event()
+    ev = app.start_event("admin_buff", "x")
+    assert asyncio.run(app._broadcast_event_start(ev)) is True   # retry w/o buttons worked
+    assert calls[0] and calls[1] is None
+
+    async def always_fail(body, **kw):
+        return None
+
+    app._announce = always_fail
+    assert asyncio.run(app._broadcast_event_start(ev)) is False
+
+
 if __name__ == "__main__":
     test_notified_once_per_event()
+    test_broadcast_reports_failure_and_retries_without_buttons()
     print("ok")
