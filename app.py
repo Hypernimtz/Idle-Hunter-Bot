@@ -4552,6 +4552,11 @@ def sell_all_inv(user_id: str) -> dict:
     add_money(user_id, total, "sell all")
 
     # Don't re-add to total_money_earned — run_hunt already counted it
+    # "Earn ◈ X from selling animals" / "Sell N animals" quests (daily + weekly)
+    # only advance here, since selling is the one place animals turn into money.
+    quest_progress(user_id, "animals_sold_quest", count)
+    quest_progress(user_id, "money_earned_quest", total)
+    mark_user_dirty(user_id)
     return {"total": total, "count": count}
 
 
