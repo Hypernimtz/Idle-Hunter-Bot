@@ -11096,9 +11096,41 @@ def _lb_period_value(uid: str, stat: str, period: str) -> int:
     tag    = _lb_period_tag(period)
     snap   = snaps.get(period)
     if not snap or snap.get("tag") != tag:
-        snap = {"tag": tag, **{s: fn(uid) for s, fn in HUNTER_LB_STATS.items()}}
+        snap = _lb_make_snapshot(uid, period, tag)
         snaps[period] = snap
     return max(0, current - snap.get(stat, current))
+
+# What a brand-new account holds (init_user) — the baseline for anyone who joined mid-period.
+_LB_NEW_PLAYER_BASELINE = {s: 0 for s in HUNTER_LB_STATS} | {"Level": 1, "Money": 150}
+
+def _lb_make_snapshot(uid: str, period: str, tag: str) -> dict:
+    """Baseline for a player's daily/weekly gains. A player who joined during this
+    period started from scratch, so everything they have is a gain; anyone else's
+    baseline is what they hold right now."""
+    if data[uid].get("joined_date", "") >= _lb_period_start_date(period):
+        return {"tag": tag, **_LB_NEW_PLAYER_BASELINE}
+    return {"tag": tag, **{s: fn(uid) for s, fn in HUNTER_LB_STATS.items()}}
+
+def _lb_period_start_date(period: str) -> str:
+    """UTC date (YYYY-MM-DD) the current daily/weekly period began."""
+    now = datetime.now(timezone.utc)
+    if period == "weekly":
+        now -= timedelta(days=now.weekday())
+    return now.strftime("%Y-%m-%d")
+
+def _lb_rebase_daily(tag: str) -> int:
+    """Seed the daily baseline for every player whose snapshot is from an earlier
+    day, right at the UTC rollover. Without this the baseline was only taken when
+    somebody first opened the leaderboard, wiping all gains made before that."""
+    n = 0
+    for uid, d in data.items():
+        snap = d.get("lb_snap", {}).get("daily")
+        if snap and snap.get("tag") == tag:
+            continue
+        d.setdefault("lb_snap", {})["daily"] = _lb_make_snapshot(uid, "daily", tag)
+        mark_user_dirty(uid)
+        n += 1
+    return n
 
 def get_server_user_ids(guild) -> list:
     if guild is None:
@@ -20996,9 +21028,7 @@ async def weekly_leaderboard_task():
             return
         text = _weekly_leaderboard_recap_text(tag)
         for uid, d in data.items():
-            d.setdefault("lb_snap", {})["weekly"] = {
-                "tag": tag, **{s: fn(uid) for s, fn in HUNTER_LB_STATS.items()}
-            }
+            d.setdefault("lb_snap", {})["weekly"] = _lb_make_snapshot(uid, "weekly", tag)
             mark_user_dirty(uid)
         _last_weekly_lb_tag = tag
         await _announce(text, channel_id=COMPETITIVE_CHANNEL_ID, role_id=COMPETITIVE_ROLE_ID, color=0xF1C40F,
@@ -21009,6 +21039,18 @@ async def weekly_leaderboard_task():
 
 @weekly_leaderboard_task.error
 async def _wlte(error): print("Weekly leaderboard task error:", error)
+
+@tasks.loop(minutes=2)
+async def daily_leaderboard_task():
+    """Re-seed every player's daily snapshot at the UTC day rollover (and once on
+    boot — idempotent, it only touches stale snapshots)."""
+    try:
+        _lb_rebase_daily(_lb_period_tag("daily"))
+    except Exception as e:
+        print("daily_leaderboard_task error:", e)
+
+@daily_leaderboard_task.error
+async def _dlte(error): print("Daily leaderboard task error:", error)
 
 @tasks.loop(minutes=15)
 async def automatic_event_scheduler():
@@ -21050,6 +21092,7 @@ if FEATURE_WORLD_SIGHTINGS:
 if FEATURE_AUTO_EVENTS:
     _V2_BACKGROUND_TASKS.append(automatic_event_scheduler)
 _V2_BACKGROUND_TASKS.append(weekly_leaderboard_task)
+_V2_BACKGROUND_TASKS.append(daily_leaderboard_task)
 
 @tasks.loop(hours=24)
 async def analytics_prune_task():

@@ -694,6 +694,22 @@ def test_leaderboard_ranking_cached_and_disbanded_tribes_dropped():
     app.build_leaderboard_v2_components("E1", None, "tribe", "global")   # cached ranking, tribe gone: must not KeyError
 
 
+def test_daily_leaderboard_baseline_is_period_start_not_first_view():
+    _reset()
+    _mk_user("old1", level=5)
+    _mk_user("new1", level=3)
+    app.data["old1"]["joined_date"] = "2000-01-01"
+    app.data["new1"]["joined_date"] = app.today_utc()
+    tag = app._lb_period_tag("daily")
+    app.data["old1"]["lb_snap"] = {"daily": {"tag": "1999-01-01", "Level": 1}}   # yesterday's
+    app._lb_rebase_daily(tag)                                  # midnight rollover
+    app.data["old1"]["level"] = 9                              # gains BEFORE anyone opens the board
+    assert app._lb_period_value("old1", "Level", "daily") == 4
+    # a mid-period joiner's whole account counts as gains, not zero
+    assert app._lb_period_value("new1", "Level", "daily") == 2
+    assert app._lb_period_value("new1", "Money", "daily") == max(0, app.data["new1"].get("money", 0) - 150)
+
+
 def test_modal_watchdog_defers_slow_submit():
     _reset()
     uid = "1601"
