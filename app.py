@@ -242,15 +242,33 @@ MYTH_ENCOUNTER_BASE   = 0.005   # base per-hunt chance to meet a cryptid (before
 MYTH_ENCOUNTER_LUCK   = 0.02    # extra chance approached asymptotically with luck
 MYTH_ENCOUNTER_MAX    = 0.05    # hard cap after luck + event multiplier
 MYTH_KILL_BASE        = 25      # base KILL success % (before tool tier / luck / difficulty)
-MYTH_RUN_BASE         = 60      # base clean-getaway % on flee
-MYTH_DEATH_LOSS_CASH  = 0.02    # losing the fight costs min(2% of cash, 3% of the bounty)
-MYTH_DEATH_LOSS_VALUE = 0.03
+MYTH_RUN_BASE         = 50      # base clean-getaway % on flee
+MYTH_DEATH_LOSS_CASH  = 0.04    # losing the fight costs min(4% of cash, 5% of the bounty)
+MYTH_DEATH_LOSS_VALUE = 0.05
 
 # ── Mythic boss fight (turn-based) ──────────────────────────
+# 2026-10-04 "make it hard": kick/punch-spamming used to win ~90% of fights and a
+# shooter won ~100%. Tuned with a Monte-Carlo of this exact turn loop (full-HP player,
+# tool tier == biome tier): shooting wins ~90% in the village falling to ~40% in the
+# deepest biome, arriving hurt (60 HP) cuts that to ~40% / ~4%, and spamming kick or
+# punch wins ~1-2%. Change these together, not one at a time.
 FIGHT_PLAYER_HP        = 100
-FIGHT_MONSTER_HP_BASE  = 74      # + biome tool-tier * FIGHT_MONSTER_HP_TIER
-FIGHT_MONSTER_HP_TIER  = 4
+FIGHT_MONSTER_HP_BASE  = 200     # + biome tool-tier * FIGHT_MONSTER_HP_TIER
+FIGHT_MONSTER_HP_TIER  = 5
 FIGHT_SHOOT_AMMO       = 100     # rounds burned per Shoot (needs this many to fire)
+FIGHT_PUNCH_ACC        = 84      # % to land a punch (was 92)
+FIGHT_KICK_ACC         = 52      # % to land a kick (was 64)
+FIGHT_SHOOT_ACC        = 82      # % for a volley to land (was 88)
+FIGHT_KICK_FALL        = 50      # % a MISSED kick leaves you on the ground (was 35)
+FIGHT_KICK_RECOIL      = (5, 10) # HP you lose on EVERY missed kick, + tier // 2
+FIGHT_SHOOT_EXPOSED    = 6       # monster accuracy bonus after you shoot (no guard, in the open)
+FIGHT_DEFEND_HEAL      = (6, 12) # HP recovered by Defend ...
+FIGHT_DEFEND_HEAL_CAP  = 3       # ... but only for the first N defends of a fight (no stalling)
+FIGHT_GUARD_MULT       = 0.4     # damage taken through a guard
+FIGHT_MONSTER_ACC      = 84      # base monster hit % (- tier // 3)
+FIGHT_MONSTER_SPECIAL  = 0.18    # chance a hit is a 1.6x special
+FIGHT_DESPERATE_BELOW  = 0.30    # monster below this HP fraction hits harder ...
+FIGHT_DESPERATE_MULT   = 1.2     # ... by this much
 
 # Bounties scale with the creature's own `value` (village ~22.5K … celestial
 # 10M), so a kill is worth a few minutes of hunting in THAT biome. 2026-09-27:
@@ -6253,7 +6271,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
         b["fallen"] = False
         log.append("You're still scrambling up — no attack this turn.")
     elif action == "punch":
-        if R(1, 100) <= 92 + acc_b + pk_acc_b:
+        if R(1, 100) <= FIGHT_PUNCH_ACC + acc_b + pk_acc_b:
             dealt = R(7, 13) + tier // 2
             if b.pop("enrage", False):
                 dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
@@ -6262,22 +6280,32 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
         else:
             log.append(f"{_fa_icon('punch')} Your jab glances off.")
     elif action == "kick":
-        if R(1, 100) <= 64 + acc_b + pk_acc_b:
+        if R(1, 100) <= FIGHT_KICK_ACC + acc_b + pk_acc_b:
             dealt = R(17, 27) + tier
             if b.pop("enrage", False):
                 dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
             dealt = _land_hit(dealt)
             log.append(f"{_fa_icon('kick')} A crushing kick lands — **{dealt}**!")
-        elif R(1, 100) <= 35:
-            b["fallen"] = True
-            log.append(f"{_fa_icon('kick')} You overreach, slip, and go down hard.")
         else:
-            log.append(f"{_fa_icon('kick')} The {name} reads the kick and steps clear.")
+            # A whiffed kick throws your whole body — it always costs HP, and
+            # half the time it also puts you on the ground.
+            recoil = R(*FIGHT_KICK_RECOIL) + diff // 2
+            h["hp"] = max(0, h["hp"] - recoil)
+            if R(1, 100) <= FIGHT_KICK_FALL:
+                b["fallen"] = True
+                log.append(f"{_fa_icon('kick')} You overreach, slip, and go down hard — **-{recoil} HP**.")
+            else:
+                log.append(f"{_fa_icon('kick')} The {name} reads the kick and steps clear; you wrench "
+                           f"something swinging at air — **-{recoil} HP**.")
     elif action == "defend":
         b["guard"] = True
-        heal = R(5, 10)
-        h["hp"] = min(effective_max_hp(user_id), h["hp"] + heal)
-        log.append(f"{_fa_icon('defend')} You plant your feet and steady up (+{heal} HP).")
+        if b.get("heals", 0) < FIGHT_DEFEND_HEAL_CAP:
+            b["heals"] = b.get("heals", 0) + 1
+            heal = R(*FIGHT_DEFEND_HEAL)
+            h["hp"] = min(effective_max_hp(user_id), h["hp"] + heal)
+            log.append(f"{_fa_icon('defend')} You plant your feet and steady up (+{heal} HP).")
+        else:
+            log.append(f"{_fa_icon('defend')} You brace, but you're too winded to recover anything more.")
     elif action == "shoot":
         if not tool_needs_ammo(tool):
             log.append(f"{_fa_icon('shoot')} Your {tool} takes no ammo — close the distance instead.")
@@ -6290,7 +6318,8 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
                 consume_ammo(user_id, an, FIGHT_SHOOT_AMMO)
                 if get_ammo_count(user_id, an) == 0:
                     data[user_id]["equipped_ammo"] = None
-            if R(1, 100) <= 88 + acc_b:
+            b["exposed"] = True    # firing from the open: it's harder to dodge what comes back
+            if R(1, 100) <= FIGHT_SHOOT_ACC + acc_b:
                 dealt = R(24, 42) + tier
                 if b.pop("enrage", False):
                     dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
@@ -6315,13 +6344,17 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
     if b.pop("stun", False):
         b.pop("guard", False)   # a skipped attack still "used up" this round's defend
         b.pop("mdebuff", False)
+        b.pop("exposed", None)
         log.append(f"{ico} Still reeling — it can't attack this turn.")
     else:
-        macc = 80 - diff // 2 - (25 if b.pop("mdebuff", False) else 0)
+        macc = (FIGHT_MONSTER_ACC - diff // 3 - (25 if b.pop("mdebuff", False) else 0)
+                + (FIGHT_SHOOT_EXPOSED if b.pop("exposed", False) else 0))
         if b.get("fallen") or R(1, 100) <= macc:
-            base    = R(6 + diff // 3, 12 + diff)
-            special = random.random() < 0.15
+            base    = R(6 + diff // 3, 13 + int(0.6 * diff))
+            special = random.random() < FIGHT_MONSTER_SPECIAL
             mdmg    = int(base * 1.6) if special else base
+            if b["mhp"] < b.get("mhp_max", b["mhp"]) * FIGHT_DESPERATE_BELOW:
+                mdmg = int(mdmg * FIGHT_DESPERATE_MULT)     # cornered and desperate
             mdmg    = int(mdmg * (1 - trophy_effect_value(user_id, "incoming_dmg_pct") / 100))  # Sea Serpent
             mdmg    = max(1, int(mdmg * (1 - item_buff_value(user_id, "iron_plating") / 100)))  # Iron Plating
             if not b.get("first_enemy_hit_done"):
@@ -6330,7 +6363,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
                     mdmg = max(1, int(mdmg * (1 - red / 100)))
                 b["first_enemy_hit_done"] = True
             if b.pop("guard", False):
-                mdmg = max(1, int(mdmg * 0.4))
+                mdmg = max(1, int(mdmg * FIGHT_GUARD_MULT))
                 log.append(f"{ico} It slams into your guard — you eat **{mdmg}**.")
             elif special:
                 log.append(f"{ico} **{name}** — *{c.get('call', 'a savage strike')}* — **{mdmg}**!")
@@ -18700,7 +18733,9 @@ def _info_render_myth(key: str):
         f"{TROPHY_EFFECTS.get(c['drop'], {}).get('desc', '')} (tradeable on `/market`)",
         f"-# **The fight:** turn-based brawl — you at {FIGHT_PLAYER_HP} HP vs it at "
         f"{FIGHT_MONSTER_HP_BASE + BIOME_TOOL_TIER.get(biome,1)*FIGHT_MONSTER_HP_TIER} HP. "
-        f"Punch, Kick (big, risky), Defend, Shoot (**{FIGHT_SHOOT_AMMO} rounds** a volley), Taunt, or Flee. "
+        f"Punch, Kick (big, but a miss costs you HP), Defend (only the first {FIGHT_DEFEND_HEAL_CAP} heal), "
+        f"Shoot (**{FIGHT_SHOOT_AMMO} rounds** a volley — still no guarantee, and it leaves you exposed), "
+        f"Taunt, or Flee. It hits harder once it's cornered. "
         f"Lose and it costs at most **{int(MYTH_DEATH_LOSS_CASH*100)}%** of your cash.",
     ]
     return (f"# {ico} {key}", f"-# {c['blurb']}", "\n".join(lines),

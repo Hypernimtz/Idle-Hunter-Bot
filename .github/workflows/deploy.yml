@@ -41,6 +41,7 @@ jobs:
       - run: python tests/test_v2.py
       - run: python tests/test_races.py
       - run: python tests/test_tribe_treasury.py
+      - run: python tests/test_myth_fight.py
 
   deploy:
     needs: test
