@@ -9151,22 +9151,48 @@ def build_update_admin_components(admin_id: str, page: int = 0, note: str = "") 
 
     return [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False, "components": blocks}]
 
-def _apply_update_add(admin_id: str, title: str, message: str) -> dict:
+def _apply_update_add(admin_id: str, title: str, message: str, key: str = "") -> dict:
     """Append a new update, persist, and fire the channel broadcast. Returns the entry."""
     global UPDATE, LATEST_UPDATE
     entry = {"title": title.strip(), "message": message.strip(),
              "moderator": str(admin_id), "date": int(time.time()), "id": len(UPDATE) + 1}
+    if key:
+        entry["key"] = key
     UPDATE.append(entry)
     LATEST_UPDATE = UPDATE[-1]
     save_config()
-    bot.loop.create_task(_broadcast_update(entry))
+    asyncio.ensure_future(_broadcast_update(entry))
     return entry
+
+PENDING_UPDATES_FILE = "pending_updates.json"
+
+def post_pending_updates() -> list[dict]:
+    """Add (and announce) every entry in pending_updates.json that the update log
+    doesn't already hold, matched by its stable `key`. Lets a deploy ship its own
+    changelog entry: the file travels with the code, the bot posts it once on
+    boot, and the key stops a restart from posting it again."""
+    try:
+        with open(PENDING_UPDATES_FILE, "r", encoding="utf-8") as f:
+            pending = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    have = {u.get("key") for u in UPDATE if u.get("key")}
+    posted = []
+    for p in pending if isinstance(pending, list) else []:
+        key = str(p.get("key", "")).strip()
+        title, message = str(p.get("title", "")).strip(), str(p.get("message", "")).strip()
+        if not key or key in have or not (title and message):
+            continue
+        posted.append(_apply_update_add(BOT_OWNER_ID[0], title, message, key=key))
+        have.add(key)
+    return posted
 
 def _apply_update_edit(admin_id: str, idx: int, title: str, message: str) -> None:
     global UPDATE, LATEST_UPDATE
     UPDATE[idx] = {"title": title.strip(), "message": message.strip(),
                    "moderator": str(admin_id), "date": int(time.time()), "id": idx + 1,
-                   "version": UPDATE[idx].get("version", "")}
+                   "version": UPDATE[idx].get("version", ""),
+                   **({"key": UPDATE[idx]["key"]} if UPDATE[idx].get("key") else {})}
     LATEST_UPDATE = UPDATE[-1]
     save_config()
 
@@ -22051,6 +22077,14 @@ async def on_ready():
     if not _username_sweep_started:
         _username_sweep_started = True
         bot.loop.create_task(_username_backfill_sweep())
+
+    # Changelog entries shipped with this deploy (idempotent — keyed, so a reconnect
+    # or restart never posts the same one twice).
+    try:
+        for _pu in post_pending_updates():
+            print(f"📣 Posted shipped update {_pu.get('key')} (v{_pu.get('version', '?')}).")
+    except Exception as e:
+        print("pending updates failed:", e)
 
     print("Autosave started.")
 

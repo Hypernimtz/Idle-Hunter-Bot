@@ -1,0 +1,7 @@
+[
+  {
+    "key": "2026-10-04-tribe-treasury-boss",
+    "title": "Tribe Treasury, Tribe Boss & Emblems",
+    "message": "Tribes level 3+ get a shared **Treasury**: deposit money or gems (it can't be withdrawn), then officers propose upgrades and members vote. Buy boosts, member slots, a War Banner (+10% tribe XP), extra contract rerolls and more.\n\nTribes level 10+ face a **Tribe Boss** every week: hunt, kill mythics and finish quests to damage it, and everyone who helps gets a crate.\n\nPick a tribe **emblem and banner colour** from the new Emblems tab in `/tribe`.\n\nAlso: daily and weekly leaderboards now count everything you earn since the period started, and every update now has a version number (YY.MM.DD.N) in `/update`."
+  }
+]

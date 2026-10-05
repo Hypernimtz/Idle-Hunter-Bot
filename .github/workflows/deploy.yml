@@ -10,6 +10,7 @@ on:
     paths:
       - "**.py"
       - "requirements.txt"
+      - "pending_updates.json"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
@@ -91,7 +92,7 @@ jobs:
 
       - name: Upload source files
         run: |
-          for f in app.py backend.py game_data.py leaderboard_push.py requirements.txt; do
+          for f in app.py backend.py game_data.py leaderboard_push.py pending_updates.json requirements.txt; do
             path="${TARGET_DIR%/}/$f"
             echo "Uploading $f -> $path"
             curl -sS --fail-with-body -X POST \

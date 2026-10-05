@@ -388,6 +388,43 @@ def test_update_versions_backfill_and_stay_stable():
         app.UPDATE[:] = saved
 
 
+def test_pending_updates_post_once_per_key():
+    saved, old_file = list(app.UPDATE), app.PENDING_UPDATES_FILE
+    posted_to_channel = []
+    async def fake_broadcast(u):
+        posted_to_channel.append(u["key"])
+    old_bc, old_save = app._broadcast_update, app.save_config
+    tmp = os.path.join(tempfile.gettempdir(), "ih_pending_updates_test.json")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump([{"key": "k1", "title": "T1", "message": "M1"},
+                       {"key": "k2", "title": "", "message": "no title -> skipped"},
+                       {"title": "no key", "message": "skipped"}], f)
+        app.PENDING_UPDATES_FILE = tmp
+        app.UPDATE[:] = []
+        app._broadcast_update, app.save_config = fake_broadcast, lambda: app._ensure_update_versions()
+        async def go():
+            first = app.post_pending_updates()
+            await asyncio.sleep(0)
+            second = app.post_pending_updates()      # a restart / reconnect
+            await asyncio.sleep(0)
+            return first, second
+        first, second = run(go())
+        assert [u["key"] for u in first] == ["k1"] and second == []
+        assert len(app.UPDATE) == 1 and app.UPDATE[0]["version"].count(".") == 3
+        assert posted_to_channel == ["k1"]
+        app.PENDING_UPDATES_FILE = os.path.join(tempfile.gettempdir(), "does_not_exist.json")
+        assert app.post_pending_updates() == []
+    finally:
+        app.UPDATE[:] = saved
+        app.PENDING_UPDATES_FILE = old_file
+        app._broadcast_update, app.save_config = old_bc, old_save
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def test_changelog_payload_is_public_sorted_and_sanitised():
     entries = [
         {"title": "Old", "message": "m", "date": _ts(2026, 9, 28), "version": "26.09.28.1", "moderator": "123456789"},
