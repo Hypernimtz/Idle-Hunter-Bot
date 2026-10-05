@@ -8,5 +8,10 @@
     "key": "2026-10-04-mythic-fights-harder",
     "title": "Mythic fights are MUCH harder",
     "message": "Spamming Kick or Punch will no longer win you a mythic fight, and Shoot is no longer a guaranteed win.\n\n- Mythic creatures have far more HP and hit more accurately\n- A **missed Kick now costs you HP**, and you're more likely to fall and eat a free hit\n- **Shooting** leaves you exposed to its counterattack, and volleys miss more often\n- **Defend** only heals the first 3 times in a fight, so you can't stall\n- Cornered mythics (under 30% HP) hit harder\n- Losing costs more cash and fleeing is less reliable\n\nArrive with full HP, bring healing, and pick your moments."
+  },
+  {
+    "key": "2026-10-04-hunt-message-setting",
+    "title": "New setting: Hunt messages",
+    "message": "Choose how the **Hunt** button behaves in `/settings` → **New Message Per Hunt**.\n\n- **OFF** (default): Hunt updates the same message in place\n- **ON**: every Hunt posts a fresh message and keeps the old ones, so you can scroll back through your catches\n\n`/hunt` always posts a new message."
   }
 ]

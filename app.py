@@ -4178,6 +4178,24 @@ async def send_v2_followup(interaction: discord.Interaction, components: list, *
         json={"flags": flags, "components": components, "allowed_mentions": {"parse": []}}
     )
 
+def hunt_new_message(user_id: str) -> bool:
+    """Setting "Hunt Messages": False (default) = the Hunt button updates the same
+    panel in place; True = every hunt posts a fresh message."""
+    return bool(data.get(str(user_id), {}).get("hunt_new_message", False))
+
+async def hunt_reply(interaction: discord.Interaction, components: list, user_id: str, *, owner: bool = True):
+    """Show a hunt-flow panel the way the clicker wants it. A stranger clicking
+    someone else's Hunt button always gets a new (public) message so the owner's
+    panel is left alone. The owner gets the same message edited in place, or —
+    with the "new message" setting — a fresh message that keeps the clicked
+    one's privacy (a private panel gets a private follow-up)."""
+    if owner and not hunt_new_message(user_id):
+        await smart_update_v2(interaction, components)
+        return
+    msg = getattr(interaction, "message", None)
+    private = bool(owner and msg is not None and getattr(getattr(msg, "flags", None), "ephemeral", False))
+    await send_v2_followup(interaction, components, ephemeral=private)
+
 async def send_ephemeral_v2(interaction: discord.Interaction, content: str, color: int = 0xE74C3C):
     """Send a quick ephemeral v2 container.
 
@@ -8958,6 +8976,10 @@ def build_settings_components(user_id: str) -> list:
         _setting_section("auto_open_crates", emoji('crate_sample'), "Auto-Open Crates",
                           "Instantly open crates you find while hunting instead of stacking them in your inventory.",
                           auto_open_on),
+        _setting_section("hunt_new_message", emoji('bow'), "New Message Per Hunt",
+                          "ON: every press of Hunt posts a fresh message (and keeps the old ones). "
+                          "OFF: Hunt updates the same message in place. `/hunt` always posts a new one.",
+                          hunt_new_message(user_id)),
     ]
 
     comps = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
@@ -13882,6 +13904,9 @@ async def _dispatch_component(interaction: discord.Interaction):
                 data[owner_id]["tips_enabled"] = not data[owner_id].get("tips_enabled", True)
             elif key == "auto_open_crates":
                 data[owner_id]["auto_open_crates"] = not data[owner_id].get("auto_open_crates", False)
+            elif key == "hunt_new_message":
+                data[owner_id]["hunt_new_message"] = not data[owner_id].get("hunt_new_message", False)
+            mark_user_dirty(owner_id)
             await smart_update_v2(interaction, build_settings_components(owner_id))
             return
 
@@ -14029,24 +14054,15 @@ async def _dispatch_component(interaction: discord.Interaction):
                 return
             if result.get("boss_pending"):
                 comps = build_myth_encounter_components(actor, result["creature"])
-                if is_owner:
-                    await smart_update_v2(interaction, comps)
-                else:
-                    await send_v2_followup(interaction, comps)
+                await hunt_reply(interaction, comps, actor, owner=is_owner)
                 return
             if result.get("tracking_pending") or result.get("tracking_encounter") or tracking_active(actor):
                 comps = build_tracking_components(actor)
-                if is_owner:
-                    await smart_update_v2(interaction, comps)
-                else:
-                    await send_v2_followup(interaction, comps)
+                await hunt_reply(interaction, comps, actor, owner=is_owner)
                 return
             if result.get("animal_fight_pending") or animal_fight_active(actor):
                 comps = build_animal_fight_components(actor)
-                if is_owner:
-                    await smart_update_v2(interaction, comps)
-                else:
-                    await send_v2_followup(interaction, comps)
+                await hunt_reply(interaction, comps, actor, owner=is_owner)
                 return
             if not result["ok"]:
                 await send_ephemeral_v2(interaction,
@@ -14054,10 +14070,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                     0xE67E22)
                 return
             data[actor]["_display_name"] = interaction.user.display_name
-            if is_owner:
-                await smart_update_v2(interaction, build_hunt_components(actor, result))
-            else:
-                await send_v2_followup(interaction, build_hunt_components(actor, result))
+            await hunt_reply(interaction, build_hunt_components(actor, result), actor, owner=is_owner)
             await maybe_send_hunt_tip(interaction, result)
             await _hunters_path_notify(interaction, actor, result.get("hunters_path_result"))
             return
@@ -14238,14 +14251,14 @@ async def _dispatch_component(interaction: discord.Interaction):
                         f"arrives <t:{result['arrive_ts']}:R>.", 0xE67E22)
                     return
                 if result.get("boss_pending"):
-                    await smart_update_v2(interaction,
-                        build_myth_encounter_components(owner_id, result["creature"]))
+                    await hunt_reply(interaction,
+                        build_myth_encounter_components(owner_id, result["creature"]), owner_id)
                     return
                 if result.get("tracking_pending") or result.get("tracking_encounter") or tracking_active(owner_id):
-                    await smart_update_v2(interaction, build_tracking_components(owner_id))
+                    await hunt_reply(interaction, build_tracking_components(owner_id), owner_id)
                     return
                 if result.get("animal_fight_pending") or animal_fight_active(owner_id):
-                    await smart_update_v2(interaction, build_animal_fight_components(owner_id))
+                    await hunt_reply(interaction, build_animal_fight_components(owner_id), owner_id)
                     return
                 if not result["ok"]:
                     await send_ephemeral_v2(interaction,
@@ -14254,7 +14267,7 @@ async def _dispatch_component(interaction: discord.Interaction):
                     return
 
                 data[owner_id]["_display_name"] = interaction.user.display_name
-                await smart_update_v2(interaction, build_hunt_components(owner_id, result))
+                await hunt_reply(interaction, build_hunt_components(owner_id, result), owner_id)
                 await maybe_send_hunt_tip(interaction, result)
                 await _hunters_path_notify(interaction, owner_id, result.get("hunters_path_result"))
                 return
