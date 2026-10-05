@@ -101,6 +101,32 @@ def test_toggle_flips_and_shows_in_settings_panel():
     assert "6" in app._dirty_users
 
 
+def test_auto_opened_crate_is_a_bullet_list():
+    import json
+    d = _fresh("7", auto_open_crates=True)
+    real = app.roll_catch_drops
+    app.roll_catch_drops = lambda *a, **k: {"shard": None, "crate": "Epic Crate"}
+    try:
+        async def go():
+            async with app.user_transaction("7"):
+                return app.run_hunt("7")
+        result = run(go())
+    finally:
+        app.roll_catch_drops = real
+    assert result.get("ok") and result["catches"], result
+    assert result["auto_opened"] and not result["crate_drops"]
+    comps = app.build_hunt_components("7", result)
+    blocks = [c["content"] for c in comps[0]["components"] if c.get("type") == 10]
+    block = next(b for b in blocks if "Auto-opened:" in b)
+    # one block per crate: "Auto-opened: <crate name>" then a "* " bullet per thing it gave
+    first, *bullets = block.split("\n")[:3]
+    assert first.endswith("Epic Crate"), first
+    assert bullets and bullets[0].startswith("* "), block
+    assert "→" not in block and " · " not in block.split("Auto-opened:")[1].split("\n")[0]
+    n = len(result["catches"])
+    assert block.count("Auto-opened:") == n and n == len(result["auto_opened"])
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

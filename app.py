@@ -4916,8 +4916,11 @@ def run_hunt(user_id: str) -> dict:
         if roll["crate"]:
             if auto_open:
                 reward, extras, _ = _resolve_crate_reward(user_id, roll["crate"])
-                bonus = f" +{GEMSTONE_ICONS.get(extras['gemstone'], emoji('gem'))}" if extras.get("gemstone") else ""
-                auto_opened.append(f"{CRATE_TIERS[roll['crate']]['emoji']} {roll['crate']} → {_fmt_reward(reward)}{bonus}")
+                # crate name, then one bullet per thing it gave (shown by build_hunt_components)
+                lines = [f"{CRATE_TIERS[roll['crate']]['emoji']} {roll['crate']}", f"* {_fmt_reward(reward)}"]
+                if extras.get("gemstone"):
+                    lines.append(f"* {GEMSTONE_ICONS.get(extras['gemstone'], emoji('gem'))}")
+                auto_opened.append("\n".join(lines))
             else:
                 ci = data[user_id].setdefault("crate_inv", {})
                 ci[roll["crate"]] = ci.get(roll["crate"], 0) + 1
@@ -7451,8 +7454,8 @@ def build_hunt_components(user_id: str, result: dict) -> list:
                          for n, cnt in crate_drops.items())
         drop_bits.append(f"{emoji('crate_sample')} **Crate drop:** {got}")
     auto_opened = result.get("auto_opened") or []
-    if auto_opened:
-        drop_bits.append(f"{emoji('crate_sample')} **Auto-opened:** " + " · ".join(auto_opened))
+    for _ao in auto_opened:   # one block per crate: name on the first line, a bullet per reward
+        drop_bits.append(f"{emoji('crate_sample')} **Auto-opened:** {_ao}")
     _ae = result.get("animal_encounter")
     if _ae and _ae.get("kind") == "fled":
         extra_bits.append(f"-# `💨` A **{_ae['animal']}** caught your scent and bolted before you got close.")
