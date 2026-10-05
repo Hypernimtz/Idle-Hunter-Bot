@@ -3223,6 +3223,106 @@ TRIBE_CONTRACTS = [
 
 
 # ─────────────────────────────────────────────
+# TRIBE TREASURY  ·  pooled funds + member-voted upgrades   (all values to tune)
+# ─────────────────────────────────────────────
+# Members deposit ◈ / 💎. There is NO withdrawal — the pool can only be spent on
+# tribe upgrades, so it can't be used to move money between accounts. A leader or
+# officer proposes an upgrade; full members (not Recruits) vote; a strict majority
+# of them buys it. Deposits never earn tribe XP (same rule as gambling/gifts).
+TRIBE_DEPOSIT_MIN_MONEY = 1_000
+TRIBE_PROPOSAL_HOURS    = 24          # an unresolved proposal expires after this
+TRIBE_UPGRADE_HISTORY   = 8           # resolved proposals kept for the Treasury page
+
+# kind: "boost" (+step to a td field, capped by MAX_TRIBE_BOOST) · "slot" (+1 member cap)
+#       "level" (td["upgrades"][key] = 0..max). `costs` for "level" is per next-level.
+TRIBE_TREASURY_UPGRADES = {
+    "luck_boost":       {"label": "Luck Boost +5%",  "kind": "boost", "field": "luck_boost",
+                         "step": 5, "currency": "money", "base": 50_000,  "unlock": 3, "emoji": "🍀"},
+    "sell_price_boost": {"label": "Sell Boost +5%",  "kind": "boost", "field": "sell_price_boost",
+                         "step": 5, "currency": "money", "base": 50_000,  "unlock": 3, "emoji": "💰"},
+    "xp_boost":         {"label": "XP Boost +5%",    "kind": "boost", "field": "xp_boost",
+                         "step": 5, "currency": "money", "base": 50_000,  "unlock": 3, "emoji": "⭐"},
+    "max_members":      {"label": "+1 Member Slot",  "kind": "slot",  "currency": "gems",
+                         "base": 100, "unlock": 3, "emoji": "🧑"},
+    "war_banner":       {"label": "War Banner",      "kind": "level", "currency": "money",
+                         "costs": (500_000, 1_500_000, 4_000_000), "unlock": 4, "emoji": "🚩",
+                         "desc": "+10% tribe XP per level"},
+    "contract_board":   {"label": "Contract Board",  "kind": "level", "currency": "gems",
+                         "costs": (150, 300), "unlock": 4, "emoji": "📜",
+                         "desc": "+1 weekly contract reroll per level"},
+    "trophy_hall":      {"label": "Trophy Hall",     "kind": "level", "currency": "money",
+                         "costs": (750_000, 2_000_000, 5_000_000), "unlock": 10, "emoji": "🏆",
+                         "desc": "+20% tribe-boss rewards per level"},
+}
+
+def tribe_upgrade_cost(key: str, current: int) -> int:
+    """Price of the NEXT purchase of `key` given its current state: a boost's
+    current % (e.g. 15), a slot upgrade's 0, or a leveled upgrade's current level.
+    0 = nothing left to buy."""
+    spec = TRIBE_TREASURY_UPGRADES.get(key)
+    if not spec:
+        return 0
+    if spec["kind"] == "boost":
+        if current >= MAX_TRIBE_BOOST:
+            return 0
+        return spec["base"] * (current // spec["step"] + 1)
+    if spec["kind"] == "slot":
+        return spec["base"]
+    costs = spec["costs"]
+    return costs[current] if 0 <= current < len(costs) else 0
+
+# Tribe emblems — bought from the treasury by a leader/officer, shown beside the
+# tribe's name on its panel, in /tribe info and on the tribe leaderboard.
+TRIBE_EMBLEMS = {
+    "wolf":     {"emoji": "🐺", "label": "Wolf",     "price": 100_000,   "unlock": 3},
+    "bear":     {"emoji": "🐻", "label": "Bear",     "price": 100_000,   "unlock": 3},
+    "eagle":    {"emoji": "🦅", "label": "Eagle",    "price": 150_000,   "unlock": 5},
+    "boar":     {"emoji": "🐗", "label": "Boar",     "price": 150_000,   "unlock": 5},
+    "stag":     {"emoji": "🦌", "label": "Stag",     "price": 300_000,   "unlock": 8},
+    "serpent":  {"emoji": "🐍", "label": "Serpent",  "price": 300_000,   "unlock": 8},
+    "crown":    {"emoji": "👑", "label": "Crown",    "price": 750_000,   "unlock": 12},
+    "dragon":   {"emoji": "🐉", "label": "Dragon",   "price": 1_500_000, "unlock": 15},
+    "phoenix":  {"emoji": "🔥", "label": "Phoenix",  "price": 3_000_000, "unlock": 20},
+}
+# Banner colours — same price tier, tint the tribe panel.
+TRIBE_BANNER_COLORS = {
+    "crimson": ("Crimson", 0xC0392B), "azure":  ("Azure",  0x2980B9),
+    "forest":  ("Forest",  0x27AE60), "amber":  ("Amber",  0xF39C12),
+    "violet":  ("Violet",  0x8E44AD), "onyx":   ("Onyx",   0x2C3E50),
+}
+TRIBE_BANNER_PRICE = 200_000
+
+# ─────────────────────────────────────────────
+# TRIBE BOSS  ·  one shared boss per week once a tribe reaches TRIBE_UNLOCK_BOSS
+# ─────────────────────────────────────────────
+# HP = TRIBE_BOSS_HP_PER_SCALE * the week's frozen scaling group * the boss's hp_mult
+# (the same group size the weekly contracts use, so a 1-player tribe can't solo it).
+# Normal play deals the damage; a defeated boss pays tribe XP, a treasury gift, a
+# crate per real contributor and a title for the top damage dealer.
+TRIBE_BOSS_HP_PER_SCALE = 1_000
+TRIBE_BOSS_DAMAGE = {"hunt": 1, "catch": 1, "daily": 10, "quest": 15, "myth_kill": 150}
+TRIBE_BOSS_MIN_SHARE = 0.03            # damage share needed to earn the crate
+TRIBE_BOSS_TREASURY_PER_SCALE = 5_000  # ◈ gifted to the treasury on a kill
+TRIBE_BOSSES = [
+    {"key": "behemoth", "name": "Ironhide Behemoth",  "emoji": "🦣", "hp_mult": 1.00,
+     "blurb": "A mammoth in rusted armour of its own hide. It has trampled three camps this month.",
+     "title": "Behemoth-Breaker"},
+    {"key": "roc",      "name": "Stormwing Roc",      "emoji": "🦅", "hp_mult": 1.10,
+     "blurb": "It rides the lightning and drops lightning-struck stags on anything that moves.",
+     "title": "Stormcaller"},
+    {"key": "stag",     "name": "The Hollow Stag",    "emoji": "🦌", "hp_mult": 1.05,
+     "blurb": "Antlers like dead trees, eyes like lanterns. Hunters who follow it do not report back.",
+     "title": "Hollow-Hunter"},
+    {"key": "leviathan","name": "Tidecaller Leviathan","emoji": "🐋", "hp_mult": 1.20,
+     "blurb": "The sea pulls back before it surfaces. Then it all comes in at once.",
+     "title": "Tide-Turner"},
+    {"key": "drake",    "name": "Emberfang Drake",    "emoji": "🐉", "hp_mult": 1.15,
+     "blurb": "Every fire in the valley went out the same night. This is where the heat went.",
+     "title": "Drakeslayer"},
+]
+
+
+# ─────────────────────────────────────────────
 # GLOBAL EVENTS — activity mini-games  (Phase 1: Fox / Shipwreck / Duck)
 # ─────────────────────────────────────────────
 # Registry + `ev_*` buff wiring live in app.py; this is just the tunable data.

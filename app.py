@@ -108,6 +108,12 @@ from game_data import (
     TRIBE_XP_TASK_CAP_DAY, TRIBE_XP_CONTRACT, TRIBE_LEVEL_CAP, tribe_xp_to_next,
     tribe_member_cap, TRIBE_UNLOCK_CONTRACTS, TRIBE_RECRUIT_PROBATION_H,
     TRIBE_REJOIN_COOLDOWN_H, TRIBE_CONTRACT_MIN_GROUP, TRIBE_LOG_MAX, TRIBE_CONTRACTS,
+    # Tribe treasury / boss / cosmetics
+    TRIBE_XP_BOSS, TRIBE_UNLOCK_TREASURY, TRIBE_UNLOCK_BOSS, TRIBE_DEPOSIT_MIN_MONEY,
+    TRIBE_PROPOSAL_HOURS, TRIBE_UPGRADE_HISTORY, TRIBE_TREASURY_UPGRADES, tribe_upgrade_cost,
+    TRIBE_EMBLEMS, TRIBE_BANNER_COLORS, TRIBE_BANNER_PRICE,
+    TRIBE_BOSS_HP_PER_SCALE, TRIBE_BOSS_DAMAGE, TRIBE_BOSS_MIN_SHARE,
+    TRIBE_BOSS_TREASURY_PER_SCALE, TRIBE_BOSSES,
     # Global events
     EVENT_HOURS, FOX_ATTEMPTS_DAY, FOX_LEAD_START, FOX_TITLE_AT, FOX_ROUTES, FOX_SHOP,
     SHIP_DIVES_DAY, SHIP_SPOTS, SHIP_SHOP,
@@ -1485,7 +1491,36 @@ def _append_line_bg(path: str, line: str) -> None:
 
 CONFIG_FILE = "config.json"
 
+def _update_day_prefix(ts) -> str:
+    """'YY.MM.DD' (UTC) for an update's timestamp — the front of its version."""
+    try:
+        return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%y.%m.%d")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return datetime.now(timezone.utc).strftime("%y.%m.%d")
+
+def _ensure_update_versions() -> bool:
+    """Give every update-log entry a stable version `YY.MM.DD.N` (UTC date it was
+    posted + its 1-based number among that day's updates). Entries that already
+    have one are never renumbered, so deleting/editing others can't shift it;
+    older entries are backfilled oldest-first. Returns True if anything changed."""
+    used: dict[str, int] = {}
+    for u in UPDATE:
+        v = str(u.get("version", ""))
+        pre, _, n = v.rpartition(".")
+        if pre and n.isdigit():
+            used[pre] = max(used.get(pre, 0), int(n))
+    changed = False
+    missing = sorted((i for i, u in enumerate(UPDATE) if not u.get("version")),
+                     key=lambda i: (UPDATE[i].get("date") or 0, i))
+    for i in missing:
+        pre = _update_day_prefix(UPDATE[i].get("date"))
+        used[pre] = used.get(pre, 0) + 1
+        UPDATE[i]["version"] = f"{pre}.{used[pre]}"
+        changed = True
+    return changed
+
 def save_config():
+    _ensure_update_versions()
     _write_json_bg(CONFIG_FILE, {
         "dev_mail": DEV_MAIL,
         "maintenance": {
@@ -1562,6 +1597,8 @@ async def migrate_json_to_sqlite():
 _cfg = load_config()
 DEV_MAIL = _cfg.get("dev_mail", "")
 UPDATE = _cfg.get("updates", [])  # ← This will always be a list
+if _ensure_update_versions():     # backfill versions on older entries (written on the next save)
+    print("🏷️ Stamped versions on older update-log entries.")
 LATEST_UPDATE = UPDATE[-1] if UPDATE else {"title": "", "message": "", "moderator": "", "time": "", "id": 0}
 
 # Maintenance settings
@@ -1955,6 +1992,16 @@ def _ensure_tribe_fields(td: dict) -> dict:
     td.setdefault("member_since", {})
     td.setdefault("contrib_lifetime", {})
     td.setdefault("log", [])
+    # treasury / upgrades / cosmetics (tribe progression phase 2)
+    tr = td.setdefault("treasury", {})
+    tr.setdefault("money", 0)
+    tr.setdefault("gems", 0)
+    tr.setdefault("deposited", {})
+    tr.setdefault("proposal", None)
+    tr.setdefault("history", [])
+    td.setdefault("upgrades", {})
+    td.setdefault("emblem", "")
+    td.setdefault("banner", "")
     # member cap floor by level (Perk-Shop "+1 Slot" purchases stack above it)
     td["max_members"] = max(int(td.get("max_members", 5)), tribe_member_cap(td.get("level", 1)))
     # backfill member_since for anyone already on the roster
@@ -1971,8 +2018,9 @@ def _ensure_tribe_fields(td: dict) -> dict:
         td["week"] = {
             "tag": tag, "contrib": {}, "scale_group": scale,
             "contracts": _roll_tribe_contracts(td, scale),
-            "explore_biomes": [], "task_members": [], "reroll_used": False,
+            "explore_biomes": [], "task_members": [], "reroll_used": False, "rerolls": 0,
         }
+    _boss_ensure(td)
     return td
 
 def _tribe_log(td: dict, text: str) -> None:
@@ -2055,13 +2103,389 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
             td["xp"] += amount
             td["contrib_lifetime"][uid] = td["contrib_lifetime"].get(uid, 0) + amount
             td["week"]["contrib"][uid] = td["week"]["contrib"].get(uid, 0) + amount
+            # War Banner (treasury upgrade): +10% tribe XP per level. Banked as a
+            # fraction so a 1-XP hunt still contributes toward the bonus.
+            banner = td.get("upgrades", {}).get("war_banner", 0)
+            if banner:
+                td["xp_frac"] = td.get("xp_frac", 0.0) + amount * 0.10 * banner
+                whole = int(td["xp_frac"])
+                if whole:
+                    td["xp"] += whole
+                    td["xp_frac"] -= whole
 
         # ── tribe expedition progress (V2, Phase 31) ──
         if FEATURE_EXPEDITIONS:
             _exp_feed(td, uid, source, catches)
 
+        # ── weekly tribe boss damage ──
+        boss_down = _boss_feed(td, uid, source, catches)
+
         gained = _tribe_apply_levelups(td)
-        return {"leveled": gained > 0, "level": td["level"]} if (amount or gained) else None
+    if boss_down:
+        # outside the lock: pays every contributor under their own locks
+        asyncio.ensure_future(_boss_pay_out(tname))
+    return {"leveled": gained > 0, "level": td["level"]} if (amount or gained) else None
+
+# ═══════════════════════════════════════════════════════════════
+# TRIBE TREASURY  ·  pooled funds, member-voted upgrades, cosmetics
+# ═══════════════════════════════════════════════════════════════
+# Everything below must run inside a tribe transaction (user_tribe_transaction /
+# tribe_only_transaction). No withdrawals exist — see game_data.TRIBE_TREASURY_UPGRADES.
+
+def _treasury_voters(tname: str) -> list[str]:
+    """Players who may vote: leader, officers and full members (not Recruits)."""
+    return [u for u, r in tribe_roster(tname) if r != "recruit"]
+
+def _treasury_need(n_voters: int) -> int:
+    """Strict majority of the eligible voters (a 1-person council needs 1)."""
+    return max(1, n_voters // 2 + 1)
+
+def _upgrade_state(td: dict, key: str) -> int:
+    spec = TRIBE_TREASURY_UPGRADES[key]
+    if spec["kind"] == "boost":
+        return int(td.get(spec["field"], 0))
+    if spec["kind"] == "slot":
+        return 0
+    return int(td.get("upgrades", {}).get(key, 0))
+
+def _upgrade_cost(td: dict, key: str) -> int:
+    return tribe_upgrade_cost(key, _upgrade_state(td, key))
+
+def _upgrade_blocked(td: dict, key: str) -> str:
+    """'' if `key` can be bought now (ignoring funds), else the reason."""
+    spec = TRIBE_TREASURY_UPGRADES.get(key)
+    if not spec:
+        return "Unknown upgrade."
+    if td.get("level", 1) < spec["unlock"]:
+        return f"Unlocks at Tribe Level {spec['unlock']}."
+    if _upgrade_cost(td, key) <= 0:
+        return "Already at the maximum."
+    return ""
+
+def _upgrade_apply(td: dict, key: str) -> str:
+    """Pay for and apply `key` from the treasury. Caller has checked
+    _upgrade_blocked() and that the pool can afford it. Returns a log line."""
+    spec = TRIBE_TREASURY_UPGRADES[key]
+    cost = _upgrade_cost(td, key)
+    td["treasury"][spec["currency"]] -= cost
+    if spec["kind"] == "boost":
+        td[spec["field"]] = min(MAX_TRIBE_BOOST, td.get(spec["field"], 0) + spec["step"])
+        return f"**{spec['label']}** → now {td[spec['field']]}%"
+    if spec["kind"] == "slot":
+        td["max_members"] = td.get("max_members", 5) + 1
+        return f"**{spec['label']}** → {td['max_members']} slots"
+    up = td.setdefault("upgrades", {})
+    up[key] = up.get(key, 0) + 1
+    return f"**{spec['label']}** → level {up[key]}"
+
+def _cost_str(currency: str, amount: int) -> str:
+    return f"◈ {amount:,}" if currency == "money" else f"{emoji('gem')} {amount:,}"
+
+def _prop_summary(td: dict, pr: dict) -> str:
+    spec = TRIBE_TREASURY_UPGRADES.get(pr["key"], {})
+    return f"{spec.get('emoji', '')} {spec.get('label', pr['key'])}"
+
+def _prop_create(tname: str, uid: str, key: str) -> tuple[bool, str]:
+    td = tribe_data.get(tname)
+    if not td:
+        return False, "You're not in a tribe."
+    _ensure_tribe_fields(td)
+    tr = td["treasury"]
+    if td["level"] < TRIBE_UNLOCK_TREASURY:
+        return False, f"The treasury unlocks at Tribe Level {TRIBE_UNLOCK_TREASURY}."
+    if tribe_role_of(uid, tname) not in ("leader", "officer"):
+        return False, "Only the leader or an officer can propose an upgrade."
+    if tr.get("proposal"):
+        return False, "There's already an open proposal — finish or cancel it first."
+    why = _upgrade_blocked(td, key)
+    if why:
+        return False, why
+    spec = TRIBE_TREASURY_UPGRADES[key]
+    cost = _upgrade_cost(td, key)
+    if tr[spec["currency"]] < cost:
+        return False, (f"The treasury needs {_cost_str(spec['currency'], cost)} for that "
+                       f"(it has {_cost_str(spec['currency'], tr[spec['currency']])}).")
+    now = int(time.time())
+    tr["proposal"] = {"id": secrets.token_hex(3), "key": key, "by": str(uid),
+                      "created_ts": now, "ends_ts": now + TRIBE_PROPOSAL_HOURS * 3600,
+                      "yes": [str(uid)], "no": []}
+    _tribe_log(td, f"`🗳️` <@{uid}> proposed **{spec['label']}** ({_cost_str(spec['currency'], cost)}) — vote in the Treasury.")
+    done = _prop_check(tname)
+    return True, done or "Proposal opened — members can now vote in the Treasury."
+
+def _prop_check(tname: str, *, now: int | None = None) -> str | None:
+    """Resolve the open proposal if it has passed, can no longer pass, or expired.
+    Returns a one-line result when it resolved, else None."""
+    td = tribe_data.get(tname)
+    pr = td and td.get("treasury", {}).get("proposal")
+    if not pr:
+        return None
+    now = int(time.time()) if now is None else now
+    voters = set(_treasury_voters(tname))
+    need = _treasury_need(len(voters))
+    yes = [u for u in pr["yes"] if u in voters]
+    no = [u for u in pr["no"] if u in voters]
+    spec = TRIBE_TREASURY_UPGRADES.get(pr["key"], {})
+    if len(yes) >= need:
+        why = _upgrade_blocked(td, pr["key"])
+        cost = _upgrade_cost(td, pr["key"]) if not why else 0
+        if why:
+            outcome, text = "failed", f"Proposal passed but can't be bought: {why}"
+        elif td["treasury"][spec["currency"]] < cost:
+            outcome, text = "failed", (f"Proposal passed but the treasury is short "
+                                       f"({_cost_str(spec['currency'], cost)} needed).")
+        else:
+            outcome, text = "passed", f"Upgrade bought: {_upgrade_apply(td, pr['key'])}"
+    elif len(no) > len(voters) - need:
+        outcome, text = "rejected", f"Proposal rejected: **{spec.get('label', pr['key'])}**."
+    elif now >= pr["ends_ts"]:
+        outcome, text = "expired", f"Proposal expired: **{spec.get('label', pr['key'])}** didn't get enough votes."
+    else:
+        return None
+    td["treasury"]["proposal"] = None
+    hist = td["treasury"].setdefault("history", [])
+    hist.append({"key": pr["key"], "outcome": outcome, "ts": now, "yes": len(yes), "no": len(no)})
+    del hist[:-TRIBE_UPGRADE_HISTORY]
+    _tribe_log(td, f"`🗳️` {text}")
+    return text
+
+def _prop_vote(tname: str, uid: str, yes: bool) -> tuple[bool, str]:
+    td = tribe_data.get(tname)
+    if not td:
+        return False, "You're not in a tribe."
+    _ensure_tribe_fields(td)
+    pr = td["treasury"].get("proposal")
+    if not pr:
+        return False, "There's no open proposal."
+    if str(uid) not in _treasury_voters(tname):
+        return False, "Recruits can't vote yet — you become a full Member after probation."
+    uid = str(uid)
+    for lst in ("yes", "no"):
+        if uid in pr[lst]:
+            pr[lst].remove(uid)
+    pr["yes" if yes else "no"].append(uid)
+    done = _prop_check(tname)
+    return True, done or "Vote counted."
+
+def _prop_cancel(tname: str, uid: str) -> tuple[bool, str]:
+    td = tribe_data.get(tname)
+    pr = td and td.get("treasury", {}).get("proposal")
+    if not pr:
+        return False, "There's no open proposal."
+    if str(uid) != pr["by"] and tribe_role_of(uid, tname) != "leader":
+        return False, "Only the proposer or the leader can cancel it."
+    td["treasury"]["proposal"] = None
+    _tribe_log(td, f"`🗳️` <@{uid}> cancelled the proposal for **{TRIBE_TREASURY_UPGRADES.get(pr['key'], {}).get('label', pr['key'])}**.")
+    return True, "Proposal cancelled."
+
+async def _treasury_deposit(uid: str, money: int, gems: int) -> tuple[bool, str]:
+    """Move ◈/💎 from a member into their tribe's treasury (one-way)."""
+    uid = str(uid)
+    if money < 0 or gems < 0 or (money == 0 and gems == 0):
+        return False, "Enter an amount to deposit."
+    if 0 < money < TRIBE_DEPOSIT_MIN_MONEY:
+        return False, f"The minimum money deposit is ◈ {TRIBE_DEPOSIT_MIN_MONEY:,}."
+    tname = data.get(uid, {}).get("tribe")
+    if not tname or tname not in tribe_data:
+        return False, "You're not in a tribe."
+    async with user_tribe_transaction(uid, tname):
+        if data[uid].get("tribe") != tname or tname not in tribe_data:
+            return False, "You're not in a tribe."
+        td = tribe_data[tname]
+        _ensure_tribe_fields(td)
+        if td["level"] < TRIBE_UNLOCK_TREASURY:
+            return False, f"The treasury unlocks at Tribe Level {TRIBE_UNLOCK_TREASURY}."
+        if tribe_role_of(uid, tname) is None:
+            return False, "You're not in a tribe."
+        if data[uid]["money"] < money:
+            return False, f"You only have ◈ {data[uid]['money']:,}."
+        if data[uid]["gems"] < gems:
+            return False, f"You only have {data[uid]['gems']:,} gems."
+        if money:
+            spend_money(uid, money, "tribe treasury")
+        if gems:
+            spend_gems(uid, gems, "tribe treasury")
+        tr = td["treasury"]
+        tr["money"] += money
+        tr["gems"] += gems
+        dep = tr["deposited"].setdefault(uid, {"money": 0, "gems": 0})
+        dep["money"] += money
+        dep["gems"] += gems
+        bits = ([f"◈ {money:,}"] if money else []) + ([f"{gems:,} gems"] if gems else [])
+        _tribe_log(td, f"`🏦` <@{uid}> deposited {' + '.join(bits)}.")
+        _prop_check(tname)   # funds don't change votes, but keep resolution current
+    analytics(uid, "tribe_deposit", tribe=tname, money=money, gems=gems)
+    return True, f"Deposited {' + '.join(bits)}."
+
+def _tribe_emblem(td: dict) -> str:
+    """The tribe's emblem glyph ('' if none) — shown before its name."""
+    return TRIBE_EMBLEMS.get(td.get("emblem", ""), {}).get("emoji", "")
+
+def _tribe_accent(user_id: str, td: dict) -> int:
+    col = TRIBE_BANNER_COLORS.get(td.get("banner", ""))
+    return col[1] if col else _accent(user_id)
+
+def _cosmetic_buy(tname: str, uid: str, kind: str, key: str) -> tuple[bool, str]:
+    """Buy an emblem / banner colour from the treasury (leader or officer, no vote).
+    key '' clears the current one for free."""
+    td = tribe_data.get(tname)
+    if not td:
+        return False, "You're not in a tribe."
+    _ensure_tribe_fields(td)
+    if td["level"] < TRIBE_UNLOCK_TREASURY:
+        return False, f"The treasury unlocks at Tribe Level {TRIBE_UNLOCK_TREASURY}."
+    if tribe_role_of(uid, tname) not in ("leader", "officer"):
+        return False, "Only the leader or an officer can change the tribe's look."
+    field = "emblem" if kind == "emblem" else "banner"
+    if not key:
+        td[field] = ""
+        _tribe_log(td, f"`🎨` <@{uid}> cleared the tribe {field}.")
+        return True, f"Tribe {field} cleared."
+    if kind == "emblem":
+        spec = TRIBE_EMBLEMS.get(key)
+        price, label, unlock = (spec["price"], f"{spec['emoji']} {spec['label']}", spec["unlock"]) if spec else (0, "", 0)
+    else:
+        spec = TRIBE_BANNER_COLORS.get(key)
+        price, label, unlock = (TRIBE_BANNER_PRICE, spec[0], 3) if spec else (0, "", 0)
+    if not spec:
+        return False, "Unknown choice."
+    if td[field] == key:
+        return False, "That's already your tribe's current look."
+    if td["level"] < unlock:
+        return False, f"Unlocks at Tribe Level {unlock}."
+    if td["treasury"]["money"] < price:
+        return False, f"The treasury needs ◈ {price:,} (it has ◈ {td['treasury']['money']:,})."
+    td["treasury"]["money"] -= price
+    td[field] = key
+    _tribe_log(td, f"`🎨` <@{uid}> set the tribe {field} to **{label}** (◈ {price:,}).")
+    return True, f"Tribe {field} set to **{label}**."
+
+def _rerolls_left(td: dict) -> int:
+    wk = td.get("week", {})
+    used = wk.get("rerolls", 1 if wk.get("reroll_used") else 0)
+    return max(0, 1 + td.get("upgrades", {}).get("contract_board", 0) - used)
+
+# ═══════════════════════════════════════════════════════════════
+# TRIBE BOSS  ·  one shared boss a week; normal play deals the damage
+# ═══════════════════════════════════════════════════════════════
+
+def _boss_spec(key: str) -> dict:
+    return next((b for b in TRIBE_BOSSES if b["key"] == key), TRIBE_BOSSES[0])
+
+def _week_end_ts() -> int:
+    """Unix time of the next ISO-week rollover (Monday 00:00 UTC)."""
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int((start + timedelta(days=7)).timestamp())
+
+def _boss_ensure(td: dict) -> None:
+    """Spawn this week's boss once the tribe is high enough level. Never replaces a
+    boss whose rewards are still being paid out."""
+    if td.get("level", 1) < TRIBE_UNLOCK_BOSS or not isinstance(td.get("week"), dict):
+        return
+    tag = _week_tag()
+    b = td.get("boss")
+    if b and b.get("tag") == tag:
+        return
+    if b and b.get("stage") == "rewarding":
+        return
+    if b and b.get("stage") == "active":
+        _tribe_log(td, f"{_boss_spec(b.get('key', '')).get('emoji', '')} **{_boss_spec(b.get('key', ''))['name']}** escaped before it could be brought down.")
+    y, w, _ = datetime.now(timezone.utc).isocalendar()
+    spec = TRIBE_BOSSES[(y * 53 + w) % len(TRIBE_BOSSES)]
+    scale = max(TRIBE_CONTRACT_MIN_GROUP, td["week"].get("scale_group", TRIBE_CONTRACT_MIN_GROUP))
+    td["boss"] = {"tag": tag, "key": spec["key"], "stage": "active", "damage": {},
+                  "dealt": 0, "max_hp": int(TRIBE_BOSS_HP_PER_SCALE * scale * spec["hp_mult"])}
+    _tribe_log(td, f"{spec['emoji']} **{spec['name']}** has appeared! Everyone hunt to bring it down.")
+
+def _boss_feed(td: dict, uid: str, source: str, catches: int) -> bool:
+    """Add boss damage for one activity. True when this hit defeated it."""
+    b = td.get("boss")
+    if not b or b.get("stage") != "active" or b.get("tag") != _week_tag():
+        return False
+    dmg = 0
+    if source == "hunt":
+        dmg = TRIBE_BOSS_DAMAGE["hunt"] + max(0, catches) * TRIBE_BOSS_DAMAGE["catch"]
+    elif source == "daily":
+        dmg = TRIBE_BOSS_DAMAGE["daily"]
+    elif source == "task":
+        dmg = TRIBE_BOSS_DAMAGE["quest"]
+    elif source == "myth_kill":
+        dmg = TRIBE_BOSS_DAMAGE["myth_kill"]
+    dmg = min(dmg, b["max_hp"] - b["dealt"])
+    if dmg <= 0:
+        return False
+    uid = str(uid)
+    b["dealt"] += dmg
+    b["damage"][uid] = b["damage"].get(uid, 0) + dmg
+    if b["dealt"] >= b["max_hp"]:
+        _boss_defeat(td)
+        return True
+    return False
+
+def _boss_defeat(td: dict) -> None:
+    """Freeze the payout list and move to stage 'rewarding' (see _boss_pay_out)."""
+    b = td["boss"]
+    spec = _boss_spec(b["key"])
+    trophy = td.get("upgrades", {}).get("trophy_hall", 0)
+    mult = 1 + 0.2 * trophy
+    scale = max(TRIBE_CONTRACT_MIN_GROUP, td.get("week", {}).get("scale_group", TRIBE_CONTRACT_MIN_GROUP))
+    xp = int(TRIBE_XP_BOSS * mult)
+    gift = int(TRIBE_BOSS_TREASURY_PER_SCALE * scale * mult)
+    td["xp"] += xp
+    td.setdefault("treasury", {}).setdefault("money", 0)
+    td["treasury"]["money"] += gift
+    total = max(1, sum(b["damage"].values()))
+    top = max(b["damage"], key=b["damage"].get) if b["damage"] else None
+    pending = []
+    for uid, dmg in b["damage"].items():
+        share = dmg / total
+        if share < TRIBE_BOSS_MIN_SHARE and uid != top:
+            continue
+        pending.append({"uid": str(uid), "crate": "Epic Crate" if uid == top else "Rare Crate",
+                        "title": spec["title"] if uid == top else ""})
+    b.update({"stage": "rewarding", "defeated_ts": int(time.time()), "pending": pending, "paid": [],
+              "top": top})
+    _tribe_log(td, f"{spec['emoji']} **{spec['name']}** defeated! (+{xp:,} tribe XP, +◈ {gift:,} to the treasury)")
+
+async def _boss_pay_out(tname: str) -> None:
+    """Pay every unpaid contributor of a defeated boss, then mark it done.
+    Idempotent + crash-safe (same pattern as _exp_pay_out)."""
+    td = tribe_data.get(tname)
+    b = td and td.get("boss")
+    if not b or b.get("stage") != "rewarding":
+        return
+    for entry in list(b.get("pending", [])):
+        uid = str(entry.get("uid", ""))
+        if not uid or uid in b.get("paid", []):
+            continue
+        if uid not in data:
+            async with tribe_only_transaction(tname):
+                bb = tribe_data.get(tname, {}).get("boss")
+                if bb and uid not in bb.setdefault("paid", []):
+                    bb["paid"].append(uid)
+            continue
+        try:
+            async with user_tribe_transaction(uid, tname):
+                bb = tribe_data.get(tname, {}).get("boss")
+                if not bb or uid in bb.get("paid", []):
+                    continue
+                ci = data[uid].setdefault("crate_inv", {})
+                ci[entry["crate"]] = ci.get(entry["crate"], 0) + 1
+                if entry.get("title"):
+                    _grant_title(uid, entry["title"])
+                st = data[uid].setdefault("stats", {})
+                st["tribe_bosses"] = st.get("tribe_bosses", 0) + 1
+                bb.setdefault("paid", []).append(uid)
+            analytics(uid, "tribe_boss_reward", crate=entry["crate"], tribe=tname)
+        except Exception as ex:
+            print(f"tribe boss payout failed for {uid}:", ex)
+    async with tribe_only_transaction(tname):
+        bb = tribe_data.get(tname, {}).get("boss")
+        if not bb or bb.get("stage") != "rewarding":
+            return
+        if not [x for x in bb.get("pending", []) if str(x.get("uid")) not in bb.get("paid", [])]:
+            bb["stage"] = "done"
 
 # ═══════════════════════════════════════════════════════════════
 # TRIBE EXPEDITIONS  ·  vote a route, then normal play fills the bar (V2)
@@ -2870,6 +3294,7 @@ _rules_page:           dict[str, int] = {}
 _help_page:            dict[str, int] = {}
 _info_state:           dict[str, dict] = {}  # /info encyclopedia: {category, group, name}
 _lb_publisher = None    # website leaderboard push (leaderboard_push.LeaderboardPublisher)
+_cl_publisher = None    # website changelog push (leaderboard_push.ChangelogPublisher)
 
 # /biomes world-map image. Discord CDN attachment URLs carry a short-lived
 # signature (?ex=…&hm=…), so the imported constant is only a seed: a 12h task
@@ -8591,7 +9016,7 @@ def build_update_components(user_id: str, mode: str = "all", page: int = 0) -> l
             f"{u['message']}\n\n"
             f"-# By: `{get_username(u['moderator'])}`\n"
             f"-# {date_str}\n"
-            f"-# ID: {update_id + 1}"
+            f"-# Version {u.get('version', '?')} · ID: {update_id + 1}"
         )
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
@@ -8613,7 +9038,7 @@ def build_update_components(user_id: str, mode: str = "all", page: int = 0) -> l
             "components": [{"type": 10, "content": (
                 f"**{u['title']}**\n"
                 f"-# By: `{get_username(u['moderator'])}`\n"
-                f"-# {date_str} · ID: {actual_id}"
+                f"-# {date_str} · v{u.get('version', '?')} · ID: {actual_id}"
             )}],
             "accessory": {
                 "type": 2, "style": 1, "label": "View",
@@ -8688,7 +9113,7 @@ def build_update_admin_components(admin_id: str, page: int = 0, note: str = "") 
             "type": 9,
             "components": [{"type": 10, "content": (
                 f"**#{idx + 1} · {u.get('title', '(untitled)')}**\n"
-                f"-# {preview or '(no body)'}\n"
+                f"-# v{u.get('version', '?')} · {preview or '(no body)'}\n"
                 f"-# <t:{int(u.get('date', 0))}:R> · by `{get_username(str(u.get('moderator', '')))}`"
             )}],
             "accessory": {"type": 2, "style": 2, "label": "Edit",
@@ -8740,7 +9165,8 @@ def _apply_update_add(admin_id: str, title: str, message: str) -> dict:
 def _apply_update_edit(admin_id: str, idx: int, title: str, message: str) -> None:
     global UPDATE, LATEST_UPDATE
     UPDATE[idx] = {"title": title.strip(), "message": message.strip(),
-                   "moderator": str(admin_id), "date": int(time.time()), "id": idx + 1}
+                   "moderator": str(admin_id), "date": int(time.time()), "id": idx + 1,
+                   "version": UPDATE[idx].get("version", "")}
     LATEST_UPDATE = UPDATE[-1]
     save_config()
 
@@ -10741,6 +11167,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
         ("contracts", "Contracts",     "list",          "This week's shared goals"),
         ("roles",     "Roles",         "tribe_leader",  "Leader, officers, members, recruits"),
         ("log",       "Activity Log",  "clock",         "Recent tribe events"),
+        ("treasury",  "Treasury",      "🏦",            "Pooled funds & upgrade votes"),
+        ("boss",      "Tribe Boss",    "🐉",            "This week's shared boss fight"),
+        ("emblem",    "Emblems",       "🎨",            "Tribe emblem & banner colour"),
         ("shop",      "Perk Shop",     "shop",          "Spend gems on tribe boosts"),
         ("actions",   "Actions",       "tribe_set_desc","Invite, kick, promote, leave…"),
     ]
@@ -10772,7 +11201,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
         # level, size, weekly contract progress, and your own contribution.
         desc_line = f"\n`📝` *{td['description']}*" if td.get("description") else ""
         xp_bar, xp_pct = ui_progress(td["xp"], to_next) if lvl < TRIBE_LEVEL_CAP else ("", "")
-        header = ui_header(emoji('tribe'), tribe_name.upper(), f"Level {lvl} Tribe{desc_line}")
+        _emb = _tribe_emblem(td)
+        header = ui_header(emoji('tribe'), f"{_emb + ' ' if _emb else ''}{tribe_name.upper()}",
+                           f"Level {lvl} Tribe{desc_line}")
         lines = [
             header, "",
             f"{TRIBE_EMOJIS['members']} **{total_m}/{td['max_members']}** Members",
@@ -10788,7 +11219,18 @@ def build_tribe_components(user_id: str, tribe_name: str,
                           for c in cts) / len(cts)
             lines.append(f"{ph('🔥')} Weekly Contract: **{avg_pct * 100:.0f}%**")
 
-        wk_contrib   = td["week"]["contrib"].get(user_id, 0)
+        if lvl >= TRIBE_UNLOCK_TREASURY:
+            _tr = td["treasury"]
+            _vt = " · `🗳️` **vote open**" if _tr.get("proposal") else ""
+            lines.append(f"`🏦` Treasury: **◈ {_tr['money']:,}** · {emoji('gem')} **{_tr['gems']:,}**{_vt}")
+        _bs = td.get("boss")
+        if lvl >= TRIBE_UNLOCK_BOSS and _bs and _bs.get("tag") == _week_tag():
+            _bsp = _boss_spec(_bs["key"])
+            _bst = ("defeated" if _bs.get("stage") != "active"
+                    else f"{min(100, _bs['dealt'] * 100 // max(1, _bs['max_hp']))}% dealt")
+            lines.append(f"{_bsp['emoji']} Boss: **{_bsp['name']}** — {_bst}")
+
+        wk_contrib  = td["week"]["contrib"].get(user_id, 0)
         life_contrib = td["contrib_lifetime"].get(user_id, 0)
         lines += ["", f"{ph(emoji('target'))} **YOUR CONTRIBUTION**",
                   f"This week: **{wk_contrib:,}** XP · Lifetime: **{life_contrib:,}** XP"]
@@ -10807,7 +11249,11 @@ def build_tribe_components(user_id: str, tribe_name: str,
         nav_btn_rows.append({"type": 1, "components": row1})
 
         row2 = [{"type": 2, "style": 2, "label": "Perks", "emoji": {"name": "🛠️"},
-                 "custom_id": f"tribe:nav:shop:{user_id}"}]
+                 "custom_id": f"tribe:nav:shop:{user_id}"},
+                {"type": 2, "style": 1, "label": "Treasury", "emoji": {"name": "🏦"},
+                 "custom_id": f"tribe:nav:treasury:{user_id}"},
+                {"type": 2, "style": 1, "label": "Boss", "emoji": {"name": "🐉"},
+                 "custom_id": f"tribe:nav:boss:{user_id}"}]
         if is_leader or is_officer:
             row2.append({"type": 2, "style": 2, "label": "Manage", "emoji": emoji_partial('settings'),
                          "custom_id": f"tribe:nav:actions:{user_id}"})
@@ -10820,7 +11266,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
             _nav_row(),
             ui_footer(user_id),
         ]
-        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False,
+        return [{"type": 17, "accent_color": _tribe_accent(user_id, td), "spoiler": False,
                  "components": _rows_main}]
 
     elif page == "contrib":
@@ -10865,9 +11311,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
                 f"-# {ct['progress']:,}/{ct['target']:,} {tick}")
         rows = [{"type": 10, "content": "\n".join(lines)},
                 {"type": 14, "divider": True, "spacing": 1}]
-        if (is_leader or is_officer) and not td["week"].get("reroll_used"):
+        if (is_leader or is_officer) and _rerolls_left(td) > 0:
             rows.append({"type": 1, "components": [
-                {"type": 2, "style": 2, "label": "🎲 Reroll (1/week)",
+                {"type": 2, "style": 2, "label": f"🎲 Reroll ({_rerolls_left(td)} left)",
                  "custom_id": f"tribe:contract_reroll:{user_id}"}]})
         rows += [_nav_row(), _util_row()]
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": rows}]
@@ -10925,6 +11371,149 @@ def build_tribe_components(user_id: str, tribe_name: str,
                  "custom_id": f"tribe:nav:main:{user_id}"},
             ]},
         ]}]
+
+    elif page == "treasury":
+        acc = _tribe_accent(user_id, td)
+        head = f"### `🏦` {tribe_name} — Treasury"
+        if lvl < TRIBE_UNLOCK_TREASURY:
+            return [{"type": 17, "accent_color": acc, "spoiler": False, "components": [
+                {"type": 10, "content": f"{head}\n-# {emoji('lock')} The treasury unlocks at **Tribe Level {TRIBE_UNLOCK_TREASURY}**."},
+                {"type": 14, "divider": True, "spacing": 1},
+                _nav_row(), _util_row(),
+            ]}]
+        tr   = td["treasury"]
+        role = tribe_role_of(user_id, tribe_name)
+        pr   = tr.get("proposal")
+        voters = set(_treasury_voters(tribe_name))
+        need = _treasury_need(len(voters))
+        lines = [head,
+                 "-# Members pool ◈ and 💎 here. Funds can only be spent on tribe upgrades — never withdrawn.",
+                 "", f"◈ **{tr['money']:,}** · {emoji('gem')} **{tr['gems']:,}**", "", "**Upgrades**"]
+        for k, sp in TRIBE_TREASURY_UPGRADES.items():
+            why = _upgrade_blocked(td, k)
+            cur = _upgrade_state(td, k)
+            if sp["kind"] == "boost":
+                state = f"{cur}%"
+            elif sp["kind"] == "slot":
+                state = f"{td['max_members']} slots"
+            else:
+                state = f"Lv {cur}/{len(sp['costs'])}"
+            tail = (f"🔒 Tribe Lv {sp['unlock']}" if td["level"] < sp["unlock"]
+                    else "**MAX**" if why else _cost_str(sp["currency"], _upgrade_cost(td, k)))
+            extra = f" — {sp['desc']}" if sp.get("desc") else ""
+            lines.append(f"{sp['emoji']} {sp['label']}: **{state}** · {tail}{extra}")
+        if pr:
+            yes = [u for u in pr["yes"] if u in voters]
+            no  = [u for u in pr["no"] if u in voters]
+            sp  = TRIBE_TREASURY_UPGRADES.get(pr["key"], {})
+            lines += ["", "**`🗳️` Open proposal**",
+                      f"{_prop_summary(td, pr)} · {_cost_str(sp.get('currency', 'money'), _upgrade_cost(td, pr['key']))}",
+                      f"-# By <@{pr['by']}> · **{len(yes)}** yes / **{len(no)}** no · needs **{need}** yes of {len(voters)} voters"
+                      f" · closes <t:{pr['ends_ts']}:R>"]
+        dep = sorted(tr["deposited"].items(), key=lambda kv: kv[1]["money"] + kv[1]["gems"] * 100, reverse=True)[:5]
+        if dep:
+            lines += ["", "**Top depositors**"]
+            lines += [f"-# `{get_username(u)}` — ◈ {v['money']:,} · {v['gems']:,} gems" for u, v in dep]
+        hist = tr.get("history", [])[-3:][::-1]
+        if hist:
+            lines += ["", "**Recent votes**"]
+            lines += [f"-# {TRIBE_TREASURY_UPGRADES.get(h['key'], {}).get('label', h['key'])} — {h['outcome']} ({h['yes']}–{h['no']})"
+                      for h in hist]
+        btns = [{"type": 2, "style": 3, "label": "Deposit", "emoji": {"name": "💰"},
+                 "custom_id": f"tribe:deposit:{user_id}"}]
+        if pr and role in ("leader", "officer", "member"):
+            voted = user_id in pr["yes"] or user_id in pr["no"]
+            btns += [{"type": 2, "style": 3, "label": "Vote Yes", "custom_id": f"tribe:vote:yes:{user_id}",
+                      "disabled": user_id in pr["yes"]},
+                     {"type": 2, "style": 4, "label": "Vote No", "custom_id": f"tribe:vote:no:{user_id}",
+                      "disabled": user_id in pr["no"]}]
+        if pr and (user_id == pr["by"] or role == "leader"):
+            btns.append({"type": 2, "style": 2, "label": "Cancel Proposal",
+                         "custom_id": f"tribe:cancelprop:{user_id}"})
+        rows = [{"type": 10, "content": "\n".join(lines)}, {"type": 14, "divider": True, "spacing": 1},
+                {"type": 1, "components": btns}]
+        if not pr and role in ("leader", "officer"):
+            opts = []
+            for k, sp in TRIBE_TREASURY_UPGRADES.items():
+                if _upgrade_blocked(td, k):
+                    continue
+                cost = _upgrade_cost(td, k)
+                opts.append({"label": f"{sp['label']} — " + (f"◈ {cost:,}" if sp["currency"] == "money" else f"{cost:,} gems"),
+                             "value": k, "emoji": {"name": sp["emoji"]},
+                             "description": ("Treasury has enough" if tr[sp["currency"]] >= cost
+                                             else "Treasury is short")})
+            if opts:
+                rows.append({"type": 1, "components": [{"type": 3,
+                    "custom_id": f"tribe:propose:{user_id}", "placeholder": "Propose an upgrade (members vote)…",
+                    "min_values": 1, "max_values": 1, "flows": {}, "options": opts[:25]}]})
+        rows += [_nav_row(), _util_row()]
+        return [{"type": 17, "accent_color": acc, "spoiler": False, "components": rows}]
+
+    elif page == "boss":
+        acc  = _tribe_accent(user_id, td)
+        head = f"### `🐉` {tribe_name} — Tribe Boss"
+        b = td.get("boss")
+        if lvl < TRIBE_UNLOCK_BOSS:
+            body = f"{head}\n-# {emoji('lock')} A boss stalks your tribe's territory from **Tribe Level {TRIBE_UNLOCK_BOSS}**."
+        elif not b or b.get("tag") != _week_tag():
+            body = f"{head}\n-# Last week's rewards are still being paid out — the next boss arrives shortly."
+        else:
+            sp = _boss_spec(b["key"])
+            bar, pct = ui_progress(b["dealt"], b["max_hp"])
+            body_l = [head, f"## {sp['emoji']} {sp['name']}", f"-# {sp['blurb']}", "",
+                      f"{bar} {pct}", f"**{b['dealt']:,}** / **{b['max_hp']:,}** damage"]
+            if b["stage"] == "active":
+                body_l.append(f"-# Flees <t:{_week_end_ts()}:R> · hunts, myth kills, dailies and quests all hurt it.")
+            else:
+                body_l.append(f"{emoji('trophy')} **Defeated!** Crates paid to every contributor.")
+            mine = b["damage"].get(user_id, 0)
+            body_l += ["", f"Your damage: **{mine:,}**"]
+            top = sorted(b["damage"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+            if top:
+                body_l += ["", "**Top damage**"]
+                body_l += [f"-# {i}. `{get_username(u)}` — {d:,}" for i, (u, d) in enumerate(top, 1)]
+            trophy = td.get("upgrades", {}).get("trophy_hall", 0)
+            body_l += ["", f"-# Reward: {int(TRIBE_XP_BOSS * (1 + 0.2 * trophy)):,} tribe XP, ◈ to the treasury, a Rare Crate for "
+                           f"everyone who dealt ≥{int(TRIBE_BOSS_MIN_SHARE * 100)}% and an Epic Crate + title for the top damage dealer."]
+            body = "\n".join(body_l)
+        return [{"type": 17, "accent_color": acc, "spoiler": False, "components": [
+            {"type": 10, "content": body}, {"type": 14, "divider": True, "spacing": 1},
+            _nav_row(), _util_row()]}]
+
+    elif page == "emblem":
+        acc  = _tribe_accent(user_id, td)
+        head = f"### `🎨` {tribe_name} — Emblems & Banner"
+        if lvl < TRIBE_UNLOCK_TREASURY:
+            return [{"type": 17, "accent_color": acc, "spoiler": False, "components": [
+                {"type": 10, "content": f"{head}\n-# {emoji('lock')} Unlocks at **Tribe Level {TRIBE_UNLOCK_TREASURY}** with the treasury."},
+                {"type": 14, "divider": True, "spacing": 1}, _nav_row(), _util_row()]}]
+        cur_e = TRIBE_EMBLEMS.get(td.get("emblem", ""))
+        cur_b = TRIBE_BANNER_COLORS.get(td.get("banner", ""))
+        body = (f"{head}\n-# Paid from the treasury (◈ {td['treasury']['money']:,}). Leader or officers choose — no vote needed.\n\n"
+                f"Emblem: **{(cur_e['emoji'] + ' ' + cur_e['label']) if cur_e else 'none'}**\n"
+                f"Banner colour: **{cur_b[0] if cur_b else 'default'}** (tints your tribe panel)")
+        rows = [{"type": 10, "content": body}, {"type": 14, "divider": True, "spacing": 1}]
+        if is_leader or is_officer:
+            e_opts = [{"label": "Clear emblem (free)", "value": "none", "emoji": {"name": "❌"}}]
+            for k, sp in TRIBE_EMBLEMS.items():
+                locked = lvl < sp["unlock"]
+                e_opts.append({"label": f"{sp['label']} — ◈ {sp['price']:,}", "value": k,
+                               "emoji": {"name": sp["emoji"]}, "default": td.get("emblem") == k,
+                               "description": f"Unlocks at Tribe Level {sp['unlock']}" if locked else "Available"})
+            b_opts = [{"label": "Clear banner colour (free)", "value": "none", "emoji": {"name": "❌"}}]
+            for k, (nm, _c) in TRIBE_BANNER_COLORS.items():
+                b_opts.append({"label": f"{nm} — ◈ {TRIBE_BANNER_PRICE:,}", "value": k,
+                               "default": td.get("banner") == k})
+            rows += [{"type": 1, "components": [{"type": 3, "custom_id": f"tribe:emblemsel:{user_id}",
+                        "placeholder": "Choose an emblem…", "min_values": 1, "max_values": 1,
+                        "flows": {}, "options": e_opts}]},
+                     {"type": 1, "components": [{"type": 3, "custom_id": f"tribe:bannersel:{user_id}",
+                        "placeholder": "Choose a banner colour…", "min_values": 1, "max_values": 1,
+                        "flows": {}, "options": b_opts}]}]
+        else:
+            rows.append({"type": 10, "content": "-# Only the leader or an officer can change this."})
+        rows += [_nav_row(), _util_row()]
+        return [{"type": 17, "accent_color": acc, "spoiler": False, "components": rows}]
 
     elif page == "shop":
         def _bl(key):
@@ -11214,7 +11803,8 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
             lv  = tribe_data[tname].get("level", 1)
             cnt = 1 + len(tribe_data[tname]["roles"]["officer"]) + len(tribe_data[tname]["roles"]["members"])
             you = " ← your tribe" if tname == vtribe else ""
-            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} **{tname}** — Lv. {lv} · {cnt} members{you}")
+            _emb = _tribe_emblem(tribe_data[tname])
+            lines.append(f"{medals.get(pos, f'**#{pos+1}**')} {_emb + ' ' if _emb else ''}**{tname}** — Lv. {lv} · {cnt} members{you}")
         vpos   = next((i for i, t in enumerate(ranked) if t == vtribe), None)
         footer = f"-# Tribe rank: **#{vpos+1}**" if vpos is not None else "-# Not ranked."
         scope_label = f"{guild.name} Server" if scope == "server" and guild else "Global"
@@ -12429,6 +13019,8 @@ def _cid_opens_modal(parts: list[str], values: list) -> bool:
     if a == "tribe" and b in ("action", "action_select"):
         sub = (values[0] if (b == "action_select" and values) else c)
         return sub in ("invite", "set_desc", "leave")
+    if a == "tribe" and b == "deposit":
+        return True
     if a == "gamble" and c in ("setbet", "deal"):
         return True
     if a == "suggestion" and b in ("agree", "neutral", "disagree"):
@@ -14629,6 +15221,37 @@ async def _dispatch_component(interaction: discord.Interaction):
                 # Non-modal leave falls through to defer below
 
 
+        if action == "deposit":
+            if tribe_data[tribe_nm].get("level", 1) < TRIBE_UNLOCK_TREASURY:
+                await send_ephemeral_v2(interaction,
+                    f"{emoji('lock')} The treasury unlocks at Tribe Level {TRIBE_UNLOCK_TREASURY}.", 0xE74C3C)
+                return
+            await interaction.response.send_modal(TribeDepositModal(owner_id, tribe_nm))
+            return
+
+        if action in ("propose", "vote", "cancelprop", "emblemsel", "bannersel"):
+            _ok, _msg = True, ""
+            async with user_tribe_transaction(owner_id, tribe_nm):
+                if tribe_nm not in tribe_data or tribe_role_of(owner_id, tribe_nm) is None:
+                    _ok, _msg = False, "You're not in this tribe any more."
+                elif action == "propose":
+                    _ok, _msg = _prop_create(tribe_nm, owner_id, values[0] if values else "")
+                elif action == "vote":
+                    _ok, _msg = _prop_vote(tribe_nm, owner_id, parts[2] == "yes")
+                elif action == "cancelprop":
+                    _ok, _msg = _prop_cancel(tribe_nm, owner_id)
+                else:
+                    _pick = values[0] if values else "none"
+                    _ok, _msg = _cosmetic_buy(tribe_nm, owner_id,
+                                              "emblem" if action == "emblemsel" else "banner",
+                                              "" if _pick == "none" else _pick)
+            if not _ok:
+                await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {_msg}", 0xE74C3C)
+                return
+            await smart_update_v2(interaction, build_tribe_components(
+                owner_id, tribe_nm, "emblem" if action in ("emblemsel", "bannersel") else "treasury", sort))
+            return
+
         if action == "nav":
             page = parts[2]
             await smart_update_v2(interaction, build_tribe_components(owner_id, tribe_nm, page, sort))
@@ -14651,7 +15274,9 @@ async def _dispatch_component(interaction: discord.Interaction):
                 if tribe_role_of(owner_id, tribe_nm) in ("leader", "officer"):
                     td_r = tribe_data[tribe_nm]
                     _ensure_tribe_fields(td_r)
-                    if not td_r["week"].get("reroll_used"):
+                    if _rerolls_left(td_r) > 0:
+                        td_r["week"]["rerolls"] = td_r["week"].get(
+                            "rerolls", 1 if td_r["week"].get("reroll_used") else 0) + 1
                         td_r["week"]["reroll_used"] = True
                         td_r["week"]["explore_biomes"] = []
                         td_r["week"]["contracts"] = _roll_tribe_contracts(
@@ -16146,6 +16771,39 @@ class TribeInviteModal(_V2Modal, title="Invite a Player"):
             self.user_id, self.tribe_name, raw, interaction.user.display_name)
         await send_ephemeral_v2(interaction, msg, 0x2ECC71 if ok else 0xE74C3C)
 
+class TribeDepositModal(_V2Modal, title="Deposit to Treasury"):
+    money_input = discord.ui.TextInput(
+        label="Money (◈)", placeholder="e.g. 50K, 1M — leave blank for none",
+        required=False, max_length=20)
+    gems_input = discord.ui.TextInput(
+        label="Gems", placeholder="e.g. 25 — leave blank for none",
+        required=False, max_length=10)
+
+    def __init__(self, user_id, tribe_name):
+        super().__init__()
+        self.user_id    = str(user_id)
+        self.tribe_name = tribe_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await _modal_gate(interaction, self.user_id):
+            return
+        money = gems = 0
+        raw_m, raw_g = self.money_input.value.strip(), self.gems_input.value.strip()
+        if raw_m:
+            money = parse_amount(raw_m)
+        if raw_g:
+            gems = parse_amount(raw_g)
+        if money is None or gems is None or money < 0 or gems < 0:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Invalid amount.", 0xE74C3C)
+            return
+        ok, msg = await _treasury_deposit(self.user_id, money, gems)
+        if not ok:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {msg}", 0xE74C3C)
+            return
+        sort = _tribe_sort.get(self.user_id, "rank")
+        tname = data[self.user_id].get("tribe") or self.tribe_name
+        await smart_update_v2(interaction, build_tribe_components(self.user_id, tname, "treasury", sort))
+
 class TribeSetDescModal(_V2Modal, title="Set Tribe Description"):
     desc_input = discord.ui.TextInput(
         label="Description",
@@ -16995,7 +17653,7 @@ def _tribe_info_text(tribe_name: str) -> str:
     desc = f"\n`📝` *{td['description']}*\n" if td.get("description") else ""
     _tn = tribe_xp_to_next(td['level'])
     return (
-        f"### {TRIBE_EMOJIS['tribe']} {tribe_name}{desc}\n"
+        f"### {TRIBE_EMOJIS['tribe']} {_tribe_emblem(td) + ' ' if _tribe_emblem(td) else ''}{tribe_name}{desc}\n"
         f"{USER_EMOJIS['levels']} **Level {td['level']}**"
         + (f" · {USER_EMOJIS['xp']} {td['xp']:,}/{_tn:,} XP\n" if td['level'] < TRIBE_LEVEL_CAP else " · **MAX**\n")
         + f"{TRIBE_EMOJIS['members']} **{total}/{td['max_members']}** members\n"
@@ -18827,10 +19485,11 @@ async def _announce_edit(channel_id: int, message_id: int, body_md: str, color: 
 async def _broadcast_update(u: dict) -> None:
     """Post a /update log entry to the announcements channel."""
     mod = get_username(str(u.get("moderator", ""))) or "the developers"
+    _ensure_update_versions()
     await _announce(
         f"## {emoji('announcement')} {u.get('title', 'Update')}\n"
         f"{u.get('message', '')}\n\n"
-        f"-# <t:{int(u.get('date', time.time()))}:D> · by {mod} · "
+        f"-# v{u.get('version', '?')} · <t:{int(u.get('date', time.time()))}:D> · by {mod} · "
         f"see the full log with `/update view`")
 
 async def _broadcast_expedition_result(tname: str, success: bool) -> None:
@@ -19177,7 +19836,8 @@ async def update_change_cmd(
             "message": message,
             "moderator": str(interaction.user.id),
             "date": int(time.time()),
-            "id": id
+            "id": id,
+            "version": PREV_UPDATE.get("version", ""),
         }
         
         LATEST_UPDATE = UPDATE[-1]
@@ -20750,6 +21410,7 @@ async def tribe_maintenance_task():
     now  = int(time.time())
     cutoff = TRIBE_RECRUIT_PROBATION_H * 3600
     exp_reward_tribes: list[str] = []
+    boss_reward_tribes: list[str] = []
     exp_finished: list[tuple[str, bool]] = []   # (tribe name, success) — announced after the lock
     async with tribe_only_transaction():
         for tname, td in list(tribe_data.items()):
@@ -20763,6 +21424,9 @@ async def tribe_maintenance_task():
                         promoted.append(uid)
                 for uid in promoted:
                     _tribe_log(td, f"`🎖️` <@{uid}> passed probation — now a full Member.")
+                _prop_check(tname)    # expire / settle an open treasury proposal
+                if td.get("boss", {}).get("stage") == "rewarding":
+                    boss_reward_tribes.append(tname)
                 # ── expedition state machine ──
                 exp = td.get("expedition")
                 if FEATURE_EXPEDITIONS and exp and not exp.get("done"):
@@ -20789,6 +21453,12 @@ async def tribe_maintenance_task():
             await _exp_pay_out(tname)
         except Exception as e:
             print(f"expedition pay-out failed for {tname}:", e)
+
+    for tname in dict.fromkeys(boss_reward_tribes):
+        try:
+            await _boss_pay_out(tname)
+        except Exception as e:
+            print(f"tribe boss pay-out failed for {tname}:", e)
 
     for tname, success in exp_finished:
         try:
@@ -21367,6 +22037,16 @@ async def on_ready():
         except Exception as e:
             print("Leaderboard publisher not started:", e)
 
+    # Same idea for the versioned update log -> website changelog page.
+    global _cl_publisher
+    if _cl_publisher is None:
+        try:
+            from leaderboard_push import ChangelogPublisher
+            _cl_publisher = ChangelogPublisher(lambda: UPDATE)
+            _cl_publisher.start()
+        except Exception as e:
+            print("Changelog publisher not started:", e)
+
     global _username_sweep_started
     if not _username_sweep_started:
         _username_sweep_started = True
@@ -21418,6 +22098,11 @@ async def _graceful_close():
             await _lb_publisher.stop()
     except Exception as e:
         print(f"  leaderboard publisher stop failed: {e}")
+    try:
+        if _cl_publisher is not None:
+            await _cl_publisher.stop()
+    except Exception as e:
+        print(f"  changelog publisher stop failed: {e}")
     try:
         if data:
             await bulk_save_users(data)

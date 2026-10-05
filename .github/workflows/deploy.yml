@@ -39,6 +39,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python tests/test_v2.py
       - run: python tests/test_races.py
+      - run: python tests/test_tribe_treasury.py
 
   deploy:
     needs: test

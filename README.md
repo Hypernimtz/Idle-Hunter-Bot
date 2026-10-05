@@ -14,7 +14,7 @@ Start your hunting journey with any command and a detailed tutorial!
 - **Tools & Ammo** — 20 tools across 20 tiers, each with compatible ammo types that boost your Luck, Sell price, and XP
 - **Idle Income** — Hire workers that earn ◈ passively while you're away; stack them for massive returns
 - **Biomes** — Unlock new biomes as you level up, each with rarer animals and higher payouts
-- **Tribes** — Join or create a tribe to share Luck, Sell, and XP boosts with your crew
+- **Tribes** — Join or create a tribe to share Luck, Sell, and XP boosts with your crew; level it up, pool a **Treasury** and vote on upgrades, take down the **weekly Tribe Boss**, and pick an emblem and banner colour
 - **Prestige** — Reset at Level 1,000 for a permanent +20% boost to everything. Repeat.
 - **Daily Rewards** — Claim free ◈ or 💎 every day and build your streak for a bonus multiplier
 - **Leaderboards** — Global and server-scoped rankings for Level, Money, Animals Caught, and Prestige
