@@ -50,6 +50,7 @@ Invite the bot to your server or install it as a user app, then run any command 
 | `/record` | View your catch record book |
 | `/log` | View your recent hunt history |
 | `/progression` | View your achievements, badges, and titles |
+| `/giveaway` | Server giveaways, loot drops, number guesses and hunt races (`list` for everyone; hosting is admin-only) |
 | `/update` | View the latest developer updates |
 | `/rules` | View the server rules |
 | `/tutorial` | Turn tutorial tips on or off |

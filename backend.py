@@ -232,6 +232,16 @@ async def init_schema():
         )
     """)
 
+    # Giveaways / loot drops / number guesses / hunt races (/giveaway). One JSON row
+    # each so a restart resumes them; ended rows linger a while for /giveaway reroll.
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS giveaways (
+            giveaway_id TEXT PRIMARY KEY,
+            data        TEXT NOT NULL,
+            updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # Create indexes
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_level ON users(level DESC)")
     await _pool.execute("CREATE INDEX IF NOT EXISTS idx_users_money ON users(money DESC)")
@@ -344,6 +354,29 @@ async def market_delete(listing_id: str) -> None:
     if SAVES_DISABLED or _pool is None:
         return
     await _pool.execute("DELETE FROM market_listings WHERE listing_id = ?", (listing_id,))
+    await _pool.commit()
+
+# ── Giveaways ──────────────────────────────────────────────────
+async def giveaways_load() -> dict[str, dict]:
+    if _pool is None:
+        return {}
+    async with _pool.execute("SELECT giveaway_id, data FROM giveaways") as cur:
+        return {r[0]: json.loads(r[1]) for r in await cur.fetchall()}
+
+async def giveaway_save(g: dict) -> None:
+    if SAVES_DISABLED or _pool is None:
+        return
+    await _pool.execute(
+        """INSERT INTO giveaways (giveaway_id, data, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(giveaway_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
+        (g["id"], json.dumps(g)))
+    await _pool.commit()
+
+async def giveaway_delete(giveaway_id: str) -> None:
+    if SAVES_DISABLED or _pool is None:
+        return
+    await _pool.execute("DELETE FROM giveaways WHERE giveaway_id = ?", (giveaway_id,))
     await _pool.commit()
 
 async def bulk_save_tribes(tribes_dict: dict):

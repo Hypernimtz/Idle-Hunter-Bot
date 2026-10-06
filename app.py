@@ -1680,6 +1680,13 @@ async def pause_running_timers(since: float, secs: float) -> int:
         moved += _shift_expiry(c, "ends_ts", since, secs)
     if _active_sighting:
         moved += _shift_expiry(_active_sighting, "ends_ts", since, secs)
+    for g in list(_giveaways.values()):
+        if g.get("status") == "active" and _shift_expiry(g, "ends_ts", since, secs):
+            moved += 1
+            try:
+                await backend.giveaway_save(g)
+            except Exception:
+                logger.exception("giveaway expiry shift not persisted (%s)", g.get("id"))
     for lst in list(_market.values()):
         if _shift_expiry(lst, "expires_ts", since, secs):
             moved += 1
@@ -13105,6 +13112,8 @@ def _cid_opens_modal(parts: list[str], values: list) -> bool:
         return sub in ("invite", "set_desc", "leave")
     if a == "tribe" and b == "deposit":
         return True
+    if a == "gw":
+        return True       # the click's own ephemeral answer, or a modal
     if a == "gamble" and c in ("setbet", "deal"):
         return True
     if a == "suggestion" and b in ("agree", "neutral", "disagree"):
@@ -13288,6 +13297,11 @@ async def _dispatch_component(interaction: discord.Interaction):
                 await send_v2_followup(interaction, _own, ephemeral=True)
                 return
             # builder failed — fall through to the normal owner-guarded handler
+
+    # ── GIVEAWAY / DROP / GUESS / RACE ────────
+    if parts[0] == "gw":
+        await _gw_component(interaction, parts)
+        return
 
     # ── PUBLIC ANNOUNCEMENT BUTTONS ───────────
     # No baked-in owner — anyone in the server can click these, so the
@@ -19939,6 +19953,719 @@ bot.tree.add_command(update_group)
 
 
 # ─────────────────────────────────────────────
+# GIVEAWAYS  ·  /giveaway — timed giveaways + loot drops, number guesses, hunt races
+# ─────────────────────────────────────────────
+# Admin-hosted (prizes are paid by the bot, so hosting is a faucet). Four kinds share
+# one engine: a record in `_giveaways` (persisted in the `giveaways` table so a restart
+# resumes them), one public card message that the ticker keeps fresh, and a click
+# handler (`gw:<action>:<id>`).
+#   giveaway — enter before the timer ends; N random winners
+#   drop     — a loot drop: the first N people to grab it win, instantly
+#   guess    — the bot picks a secret number; the closest guesses win
+#   race     — join, then catch the most animals before time is up
+# Prize payout is idempotent (`paid` list) and resumes after a crash.
+
+GW_KINDS = {
+    "giveaway": ("🎁", "GIVEAWAY"),
+    "drop":     ("💰", "LOOT DROP"),
+    "guess":    ("🔢", "NUMBER GUESS"),
+    "race":     ("🏹", "HUNT RACE"),
+}
+GW_MAX_ACTIVE_PER_GUILD = 5
+GW_MIN_SECS, GW_MAX_SECS = 60, 14 * 86400
+GW_KEEP_ENDED_DAYS = 14
+GW_PRIZE_TYPES = ("money", "gems", "crate", "item", "custom")
+GW_MAX_MONEY, GW_MAX_GEMS = 10 ** 12, 100_000
+
+_giveaways: dict[str, dict] = {}
+_gw_locks: dict[str, asyncio.Lock] = {}
+_gw_dirty: set[str] = set()      # cards whose counts changed since the last edit
+
+def _gw_lock(gid: str) -> asyncio.Lock:
+    return _gw_locks.setdefault(gid, asyncio.Lock())
+
+_DUR_RE = re.compile(r"(\d+)([smhd])")
+
+def _gw_parse_duration(text: str) -> int | None:
+    """'90s', '30m', '2h', '1d', '1h30m' -> seconds, or None if it isn't one."""
+    text = (text or "").strip().lower().replace(" ", "")
+    if not re.fullmatch(r"(?:\d+[smhd])+", text):
+        return None
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return sum(int(n) * mult[u] for n, u in _DUR_RE.findall(text))
+
+def _gw_match_name(options, text: str) -> str | None:
+    """Case-insensitive exact match, else a unique substring match."""
+    t = (text or "").strip().lower()
+    if not t:
+        return None
+    names = list(options)
+    for n in names:
+        if n.lower() == t:
+            return n
+    hits = [n for n in names if t in n.lower()]
+    return hits[0] if len(hits) == 1 else None
+
+def _gw_parse_prize(ptype: str, amount_s: str, name: str | None) -> tuple[dict | None, str]:
+    """Validate the command's prize options. Returns (prize, '') or (None, why)."""
+    ptype = (ptype or "").lower()
+    if ptype not in GW_PRIZE_TYPES:
+        return None, "Pick a prize type."
+    if ptype == "custom":
+        txt = (name or "").strip()
+        if not txt:
+            return None, "A custom prize needs its text in the **name** option (e.g. `Discord Nitro`)."
+        return {"type": "custom", "amount": 1, "name": txt[:100]}, ""
+    amt = parse_amount(amount_s or "1")
+    if amt is None or amt <= 0:
+        return None, "That amount isn't valid."
+    if ptype == "money":
+        if amt > GW_MAX_MONEY:
+            return None, f"Money prizes are capped at ◈ {GW_MAX_MONEY:,}."
+        return {"type": "money", "amount": amt, "name": ""}, ""
+    if ptype == "gems":
+        if amt > GW_MAX_GEMS:
+            return None, f"Gem prizes are capped at {GW_MAX_GEMS:,}."
+        return {"type": "gems", "amount": amt, "name": ""}, ""
+    if ptype == "crate":
+        crate = _gw_match_name(CRATE_TIERS, name or "") or (
+            _gw_match_name(CRATE_TIERS, f"{name} Crate") if name else None)
+        if not crate:
+            return None, "Give a crate in the **name** option, e.g. `Epic Crate`."
+        if amt > 50:
+            return None, "At most 50 crates per winner."
+        return {"type": "crate", "amount": amt, "name": crate}, ""
+    item = _gw_match_name(ITEMS, name or "")
+    if not item:
+        return None, "Give an item in the **name** option (try the autocomplete)."
+    if amt > ITEM_STACK_CAP:
+        return None, f"At most {ITEM_STACK_CAP} of an item per winner."
+    return {"type": "item", "amount": amt, "name": item}, ""
+
+def _gw_prize_text(p: dict) -> str:
+    t, n, name = p["type"], p.get("amount", 1), p.get("name", "")
+    if t == "money":
+        return f"◈ {n:,}"
+    if t == "gems":
+        return f"{emoji('gem')} {n:,}"
+    if t == "crate":
+        return f"{CRATE_TIERS.get(name, {}).get('emoji', '')} {n}× {name}"
+    if t == "item":
+        return f"{ITEMS.get(name, {}).get('emoji', '')} {n}× {name}"
+    return name
+
+async def _gw_grant(uid: str, prize: dict) -> None:
+    """Pay one winner. Custom prizes are delivered by the host, so only the stat moves."""
+    init_user(uid)
+    async with user_transaction(uid):
+        t, n, name = prize["type"], prize.get("amount", 1), prize.get("name", "")
+        if t == "money":
+            add_money(uid, n, "giveaway")
+        elif t == "gems":
+            add_gems(uid, n, "giveaway")
+        elif t == "crate":
+            ci = data[uid].setdefault("crate_inv", {})
+            ci[name] = ci.get(name, 0) + n
+        elif t == "item":
+            add_item(uid, name, n)
+        st = data[uid].setdefault("stats", {})
+        st["giveaways_won"] = st.get("giveaways_won", 0) + 1
+
+# ── card ──────────────────────────────────────
+
+def _gw_score(g: dict, uid: str) -> int:
+    """Race score: animals caught since joining."""
+    base = (g.get("entrants", {}).get(uid) or {}).get("base", 0)
+    return max(0, int(data.get(uid, {}).get("total_caught", 0)) - int(base))
+
+def _gw_card(g: dict) -> list:
+    icon, label = GW_KINDS[g["kind"]]
+    active = g["status"] == "active"
+    n, kind = g["winners_n"], g["kind"]
+    req = f" · Level {g['min_level']}+" if g.get("min_level", 1) > 1 else ""
+    host = f"-# Hosted by <@{g['host']}>{req}"
+    prize = f"**Prize:** {_gw_prize_text(g['prize'])}" + (f" — for each of **{n}** winners" if n > 1 else "")
+    lines = [f"## {icon} {label}", prize, host, ""]
+    entrants = g.get("entrants", {})
+    winners = g.get("winners", [])
+    noun = "joined" if kind == "race" else "in"
+
+    if g["status"] == "cancelled":
+        lines.append("`🚫` **Cancelled** by the host.")
+    elif kind == "drop":
+        if active:
+            lines.append(f"First **{n}** to grab it win — expires <t:{int(g['ends_ts'])}:R>.")
+        if winners:
+            lines.append("**Grabbed by:**\n" + "\n".join(f"{i}. <@{u}>" for i, u in enumerate(winners, 1)))
+        if not active and not winners:
+            lines.append("Nobody grabbed it in time.")
+    else:
+        if kind == "guess":
+            lo, hi = g["range"]
+            lines.append(f"I'm thinking of a number from **{lo:,}** to **{hi:,}**. Closest guess wins.")
+        elif kind == "race":
+            lines.append("Join, then **catch the most animals** before the clock runs out. "
+                         "Only catches made after you join count.")
+        if active:
+            lines.append(f"Ends <t:{int(g['ends_ts'])}:R> — **{len(entrants):,}** {noun}")
+        else:
+            lines.append(f"Ended <t:{int(g.get('ended_ts', g['ends_ts']))}:R> — **{len(entrants):,}** {noun}")
+            if kind == "guess" and g.get("secret") is not None:
+                lines.append(f"The number was **{g['secret']:,}**.")
+            if winners:
+                def _row(i, u):
+                    extra = ""
+                    if kind == "guess" and u in entrants:
+                        extra = f" — guessed {entrants[u].get('guess', '?'):,}"
+                    elif kind == "race":
+                        extra = f" — {g.get('scores', {}).get(u, 0):,} catches"
+                    return f"{i}. <@{u}>{extra}"
+                lines.append("**🏆 Winners**\n" + "\n".join(_row(i, u) for i, u in enumerate(winners, 1)))
+            else:
+                lines.append("Nobody caught anything — no winner." if kind == "race"
+                             else "No valid entries — nobody won.")
+    lines.append(f"-# ID `{g['id']}`")
+    color = 0x2ECC71 if active else (0xE74C3C if g["status"] == "cancelled" else 0x95A5A6)
+
+    gid = g["id"]
+    if kind == "giveaway":
+        btns = [{"type": 2, "style": 3, "label": "Enter", "emoji": {"name": "🎉"},
+                 "custom_id": f"gw:enter:{gid}", "disabled": not active}]
+    elif kind == "drop":
+        btns = [{"type": 2, "style": 3, "label": "Grab it!", "emoji": {"name": "💰"},
+                 "custom_id": f"gw:grab:{gid}", "disabled": not active or len(winners) >= n}]
+    elif kind == "guess":
+        btns = [{"type": 2, "style": 1, "label": "Make a guess", "emoji": {"name": "🔢"},
+                 "custom_id": f"gw:guess:{gid}", "disabled": not active}]
+    else:
+        btns = [{"type": 2, "style": 3, "label": "Join the race", "emoji": {"name": "🏹"},
+                 "custom_id": f"gw:join:{gid}", "disabled": not active},
+                {"type": 2, "style": 2, "label": "Standings", "emoji": {"name": "📊"},
+                 "custom_id": f"gw:board:{gid}"}]
+    return [{"type": 17, "accent_color": color, "spoiler": False,
+             "components": [{"type": 10, "content": "\n".join(lines)}]},
+            {"type": 1, "components": btns}]
+
+# ── Discord I/O (bot token, so it works long after the command's 15 min) ─────
+
+async def _gw_post(channel_id: int, components: list, mentions: list[str] | None = None,
+                   reply_to: int | None = None) -> dict | None:
+    try:
+        payload = {"flags": V2_FLAGS, "components": components,
+                   "allowed_mentions": {"users": [str(m) for m in mentions]} if mentions else {"parse": []}}
+        if reply_to:
+            payload["message_reference"] = {"message_id": str(reply_to), "fail_if_not_exists": False}
+        route = Route("POST", "/channels/{channel_id}/messages", channel_id=channel_id)
+        return await bot.http.request(route, json=payload)
+    except Exception as e:
+        logger.warning("giveaway post failed: %s", e)
+        return None
+
+async def _gw_edit_card(g: dict) -> bool:
+    if not g.get("message_id"):
+        return False
+    try:
+        route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}",
+                      channel_id=g["channel_id"], message_id=g["message_id"])
+        await bot.http.request(route, json={"flags": V2_FLAGS, "components": _gw_card(g),
+                                            "allowed_mentions": {"parse": []}})
+        return True
+    except Exception as e:
+        logger.warning("giveaway card edit failed (%s): %s", g.get("id"), e)
+        return False
+
+def _gw_link(g: dict) -> str:
+    return f"https://discord.com/channels/{g['guild_id']}/{g['channel_id']}/{g.get('message_id', 0)}"
+
+# ── game logic (each runs under the giveaway's lock; returns (ok, message)) ───
+
+def _gw_blocked(g: dict | None, uid: str) -> str:
+    """'' if `uid` can act on this giveaway right now, else why not."""
+    if not g:
+        return "That giveaway doesn't exist any more."
+    if g["status"] != "active" or time.time() >= g["ends_ts"]:
+        return "That one has already ended."
+    need = g.get("min_level", 1)
+    if data.get(uid, {}).get("level", 1) < need:
+        return f"You need to be **Level {need}+** to take part."
+    return ""
+
+async def gw_enter(gid: str, uid: str) -> tuple[bool, str]:
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        why = _gw_blocked(g, uid)
+        if why:
+            return False, why
+        if uid in g["entrants"]:
+            del g["entrants"][uid]
+            msg = "You left the giveaway."
+        else:
+            g["entrants"][uid] = {"ts": time.time()}
+            msg = "You're in! Good luck. 🍀 (Press Enter again to leave.)"
+        _gw_dirty.add(gid)
+        await backend.giveaway_save(g)
+        return True, msg
+
+async def gw_join(gid: str, uid: str) -> tuple[bool, str]:
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        why = _gw_blocked(g, uid)
+        if why:
+            return False, why
+        if uid in g["entrants"]:
+            return True, f"You're already racing — **{_gw_score(g, uid):,}** catches so far."
+        g["entrants"][uid] = {"ts": time.time(), "base": int(data[uid].get("total_caught", 0))}
+        _gw_dirty.add(gid)
+        await backend.giveaway_save(g)
+        return True, "You're in the race! Every animal you catch from now on counts. 🏹"
+
+async def gw_guess(gid: str, uid: str, value: int) -> tuple[bool, str]:
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        why = _gw_blocked(g, uid)
+        if why:
+            return False, why
+        lo, hi = g["range"]
+        if not lo <= value <= hi:
+            return False, f"Pick a number from **{lo:,}** to **{hi:,}**."
+        had = uid in g["entrants"]
+        g["entrants"][uid] = {"guess": value, "ts": time.time()}
+        _gw_dirty.add(gid)
+        await backend.giveaway_save(g)
+        return True, f"Guess {'updated to' if had else 'locked in:'} **{value:,}**. 🔢"
+
+async def gw_grab(gid: str, uid: str) -> tuple[bool, str, bool]:
+    """Returns (ok, message, filled). The prize is paid on the spot."""
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        if g and g["status"] in ("active", "ending", "ended") and len(g["winners"]) >= g["winners_n"]:
+            return False, ("You already grabbed this one." if uid in g["winners"]
+                           else "Too slow — it's all gone!"), False
+        why = _gw_blocked(g, uid)
+        if why:
+            return False, why, False
+        if uid in g["winners"]:
+            return False, "You already grabbed this one.", False
+        if len(g["winners"]) >= g["winners_n"]:
+            return False, "Too slow — it's all gone!", False
+        g["winners"].append(uid)
+        g["entrants"][uid] = {"ts": time.time()}
+        try:
+            await _gw_grant(uid, g["prize"])
+            g.setdefault("paid", []).append(uid)
+        except Exception:
+            logger.exception("loot drop grant failed for %s", uid)   # stays unpaid -> the ticker retries
+        filled = len(g["winners"]) >= g["winners_n"]
+        if filled:
+            g["status"] = "ending"          # gw_finish announces + closes it
+        _gw_dirty.add(gid)
+        await backend.giveaway_save(g)
+        text = f"You grabbed it! **{_gw_prize_text(g['prize'])}**"
+        if g["prize"]["type"] == "custom":
+            text += f"\n-# The host (<@{g['host']}>) will get your prize to you."
+        return True, text, filled
+
+def _gw_eligible(g: dict) -> list[str]:
+    return [u for u in g["entrants"] if u in data and not is_banned(u)]
+
+def _gw_pick(g: dict, *, exclude=(), count: int | None = None) -> list[str]:
+    n = count if count is not None else g["winners_n"]
+    pool = [u for u in _gw_eligible(g) if u not in exclude]
+    kind = g["kind"]
+    if kind == "giveaway":
+        return random.sample(pool, min(n, len(pool)))
+    if kind == "guess":
+        sec = g["secret"]
+        pool.sort(key=lambda u: (abs(g["entrants"][u]["guess"] - sec), g["entrants"][u]["ts"]))
+        return pool[:n]
+    if kind == "race":
+        scored = [(u, _gw_score(g, u)) for u in pool]
+        scored = [x for x in scored if x[1] >= 1]
+        scored.sort(key=lambda x: (-x[1], g["entrants"][x[0]]["ts"]))
+        g.setdefault("scores", {}).update(dict(scored))
+        return [u for u, _ in scored[:n]]
+    return []
+
+async def gw_finish(gid: str) -> None:
+    """Close a giveaway: pick winners (once), pay everyone unpaid, post the result.
+    Safe to call again after a crash — it resumes where it stopped."""
+    g = _giveaways.get(gid)
+    if not g or g["status"] not in ("active", "ending"):
+        return
+    async with _gw_lock(gid):
+        if g["status"] == "active":
+            if g["kind"] != "drop":
+                g["winners"] = _gw_pick(g)
+            g["status"] = "ending"
+            g.setdefault("paid", [])
+            await backend.giveaway_save(g)
+        for uid in list(g["winners"]):
+            if uid in g.get("paid", []):
+                continue
+            try:
+                await _gw_grant(uid, g["prize"])
+            except Exception:
+                logger.exception("giveaway payout failed for %s (will retry)", uid)
+                continue
+            g.setdefault("paid", []).append(uid)
+            await backend.giveaway_save(g)
+        announce = False
+        if all(u in g.get("paid", []) for u in g["winners"]):
+            g["status"] = "ended"
+            g["ended_ts"] = int(time.time())
+            announce = not g.get("announced")      # decided under the lock: exactly one announcement
+            g["announced"] = True
+            await backend.giveaway_save(g)
+    if announce:
+        await _gw_edit_card(g)
+        await _gw_announce_result(g)
+
+async def _gw_announce_result(g: dict, *, new_winners: list[str] | None = None, reroll: bool = False) -> None:
+    winners = new_winners if new_winners is not None else g["winners"]
+    icon, label = GW_KINDS[g["kind"]]
+    if winners:
+        who = ", ".join(f"<@{u}>" for u in winners)
+        extra = ""
+        if g["prize"]["type"] == "custom":
+            extra = f"\n-# <@{g['host']}> will deliver the prize."
+        head = ("New winner" + ("s" if len(winners) > 1 else "")) if reroll else "Congratulations"
+        body = f"### {icon} {head}!\n{who} won **{_gw_prize_text(g['prize'])}** in the {label.lower()}!{extra}"
+    else:
+        body = f"### {icon} {label.title()} over\nNobody won this one."
+    await _gw_post(g["channel_id"],
+                   [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False,
+                     "components": [{"type": 10, "content": body}]},
+                    {"type": 1, "components": [{"type": 2, "style": 5, "label": "Jump to it",
+                                                "url": _gw_link(g)}]}],
+                   mentions=winners, reply_to=g.get("message_id"))
+
+async def gw_cancel(gid: str) -> tuple[bool, str]:
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        if not g or g["status"] != "active":
+            return False, "That giveaway isn't running."
+        g["status"] = "cancelled"
+        g["ended_ts"] = int(time.time())
+        await backend.giveaway_save(g)
+    await _gw_edit_card(g)
+    return True, "Cancelled. Nobody was paid."
+
+async def gw_reroll(gid: str, count: int = 1) -> tuple[bool, str]:
+    async with _gw_lock(gid):
+        g = _giveaways.get(gid)
+        if not g or g["status"] != "ended":
+            return False, "Only a finished giveaway can be rerolled."
+        if g["kind"] not in ("giveaway", "guess"):
+            return False, "Only giveaways and number guesses can be rerolled."
+        picks = _gw_pick(g, exclude=set(g["winners"]), count=count)
+        if not picks:
+            return False, "There's nobody left to pick."
+        paid_now = []
+        for uid in picks:
+            try:
+                await _gw_grant(uid, g["prize"])
+            except Exception:
+                logger.exception("reroll payout failed for %s", uid)
+                continue
+            g["winners"].append(uid)
+            g.setdefault("paid", []).append(uid)
+            paid_now.append(uid)
+        await backend.giveaway_save(g)
+    if not paid_now:
+        return False, "The payout failed — try again."
+    await _gw_edit_card(g)
+    await _gw_announce_result(g, new_winners=paid_now, reroll=True)
+    return True, "Rerolled: " + ", ".join(f"<@{u}>" for u in paid_now)
+
+async def gw_create(interaction: discord.Interaction, kind: str, *, prize: dict, secs: int,
+                    winners: int, min_level: int = 1, rng: tuple[int, int] | None = None) -> None:
+    host = str(interaction.user.id)
+    guild_id, channel_id = interaction.guild_id, interaction.channel_id
+    if not guild_id or not channel_id:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Run this inside a server channel.", 0xE74C3C)
+        return
+    active = sum(1 for x in _giveaways.values() if x["status"] == "active" and x["guild_id"] == guild_id)
+    if active >= GW_MAX_ACTIVE_PER_GUILD:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} This server already has **{active}** running — end or cancel one first.", 0xE74C3C)
+        return
+    gid = secrets.token_hex(3)
+    while gid in _giveaways:
+        gid = secrets.token_hex(3)
+    g = {"id": gid, "kind": kind, "guild_id": guild_id, "channel_id": channel_id, "message_id": 0,
+         "host": host, "created_ts": int(time.time()), "ends_ts": time.time() + secs,
+         "status": "active", "prize": prize, "winners_n": winners, "min_level": min_level,
+         "entrants": {}, "winners": [], "paid": []}
+    if kind == "guess":
+        g["range"] = list(rng)
+        g["secret"] = random.randint(*rng)
+    msg = await _gw_post(channel_id, _gw_card(g))
+    if not msg:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} I couldn't post in this channel — I need **View Channel** and "
+            f"**Send Messages** here (and to be added to the server, not just your account).", 0xE74C3C)
+        return
+    g["message_id"] = int(msg["id"])
+    _giveaways[gid] = g
+    await backend.giveaway_save(g)
+    admin_audit(host, "giveaway_start", f"{kind} {gid} {_gw_prize_text(prize)} x{winners} {secs}s")
+    await send_ephemeral_v2(interaction,
+        f"{emoji('check_mark')} {GW_KINDS[kind][0]} Started — ID `{gid}`. "
+        f"[Jump to it]({_gw_link(g)})\n-# Ends <t:{int(g['ends_ts'])}:R>. "
+        f"`/giveaway end`, `cancel` and `reroll` take that ID.", 0x2ECC71)
+
+# ── ticker ────────────────────────────────────
+
+@tasks.loop(seconds=10)
+async def giveaway_task():
+    now = time.time()
+    for gid, g in list(_giveaways.items()):
+        try:
+            st = g["status"]
+            if st == "ending" or (st == "active" and now >= g["ends_ts"]):
+                await gw_finish(gid)
+            elif st == "active" and gid in _gw_dirty:
+                _gw_dirty.discard(gid)
+                await _gw_edit_card(g)
+            elif st in ("ended", "cancelled") and now - g.get("ended_ts", now) > GW_KEEP_ENDED_DAYS * 86400:
+                _giveaways.pop(gid, None)
+                _gw_locks.pop(gid, None)
+                await backend.giveaway_delete(gid)
+            if st != "active":
+                _gw_dirty.discard(gid)
+        except Exception:
+            logger.exception("giveaway tick failed for %s", gid)
+
+@giveaway_task.error
+async def _gwte(error): print("Giveaway task error:", error)
+
+# ── clicks + modal ────────────────────────────
+
+class GwGuessModal(_V2Modal, title="Make your guess"):
+    number = discord.ui.TextInput(label="Your number", placeholder="e.g. 42", required=True, max_length=12)
+
+    def __init__(self, gid: str, lo: int, hi: int):
+        super().__init__()
+        self.gid = gid
+        self.number.label = f"Your number ({lo:,}-{hi:,})"[:45]
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await _modal_gate(interaction):
+            return
+        uid = str(interaction.user.id)
+        try:
+            value = int(self.number.value.strip().replace(",", ""))
+        except ValueError:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} That isn't a whole number.", 0xE74C3C)
+            return
+        ok, msg = await gw_guess(self.gid, uid, value)
+        await send_ephemeral_v2(interaction, (f"{emoji('check_mark')} " if ok else f"{emoji('cross_mark')} ") + msg,
+                                0x2ECC71 if ok else 0xE74C3C)
+
+async def _gw_component(interaction: discord.Interaction, parts: list[str]) -> None:
+    uid = str(interaction.user.id)
+    init_user(uid)
+    sub = parts[1] if len(parts) > 1 else ""
+    gid = parts[2] if len(parts) > 2 else ""
+    g = _giveaways.get(gid)
+
+    async def reply(ok: bool, msg: str):
+        await send_ephemeral_v2(interaction, (f"{emoji('check_mark')} " if ok else f"{emoji('cross_mark')} ") + msg,
+                                0x2ECC71 if ok else 0xE74C3C)
+
+    if sub == "enter":
+        await reply(*await gw_enter(gid, uid))
+    elif sub == "join":
+        await reply(*await gw_join(gid, uid))
+    elif sub == "grab":
+        ok, msg, filled = await gw_grab(gid, uid)
+        await reply(ok, msg)
+        if filled:
+            asyncio.ensure_future(gw_finish(gid))
+    elif sub == "guess":
+        why = _gw_blocked(g, uid)
+        if why:
+            await reply(False, why)
+            return
+        await interaction.response.send_modal(GwGuessModal(gid, *g["range"]))
+    elif sub == "board":
+        if not g or g["kind"] != "race":
+            await reply(False, "That race doesn't exist any more.")
+            return
+        live = g["status"] == "active"
+        rows = sorted(((u, _gw_score(g, u) if live else g.get("scores", {}).get(u, 0))
+                       for u in g["entrants"]), key=lambda x: -x[1])
+        mine = next((i for i, (u, _) in enumerate(rows, 1) if u == uid), None)
+        body = ("\n".join(f"{i}. `{get_username(u)}` — **{s:,}**" for i, (u, s) in enumerate(rows[:10], 1))
+                or "-# Nobody has joined yet.")
+        foot = f"\n\n-# You're **#{mine}** of {len(rows)}." if mine else "\n\n-# You haven't joined yet."
+        await send_ephemeral_v2(interaction, f"### 📊 Hunt Race standings\n{body}{foot}", 0x3498DB)
+
+# ── /giveaway ─────────────────────────────────
+
+giveaway_group = app_commands.Group(
+    name="giveaway",
+    description="Giveaways, loot drops, number guesses and hunt races",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=False, private_channel=False),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=False),
+)
+
+_GW_PRIZE_CHOICES = [app_commands.Choice(name=n, value=v) for n, v in
+                     (("Money (◈)", "money"), ("Gems", "gems"), ("Crate", "crate"),
+                      ("Item", "item"), ("Custom text (you deliver it)", "custom"))]
+_GW_PRIZE_DESC = dict(
+    prize_type="What the winners get",
+    amount="How much / how many per winner (50k, 1m…) — not used for Custom",
+    name="Crate or item name, or the prize text for Custom",
+)
+
+async def _gw_name_autocomplete(interaction: discord.Interaction, current: str):
+    cur = (current or "").lower()
+    pt = getattr(interaction.namespace, "prize_type", "")
+    pool = list(CRATE_TIERS) if pt == "crate" else list(ITEMS) if pt == "item" else []
+    return [app_commands.Choice(name=n, value=n) for n in pool if cur in n.lower()][:25]
+
+async def _gw_id_autocomplete(interaction: discord.Interaction, current: str):
+    out = []
+    for gid, g in sorted(_giveaways.items(), key=lambda kv: -kv[1]["created_ts"]):
+        if g["guild_id"] != interaction.guild_id:
+            continue
+        label = f"{gid} · {GW_KINDS[g['kind']][1].title()} · {g['status']}"
+        if current.lower() in label.lower():
+            out.append(app_commands.Choice(name=label[:100], value=gid))
+    return out[:25]
+
+async def _gw_start_common(interaction: discord.Interaction, kind: str, prize_type: str, amount: str,
+                           name: str | None, duration: str, winners: int, min_level: int = 1,
+                           rng: tuple[int, int] | None = None):
+    init_user(str(interaction.user.id))
+    await interaction.response.defer(ephemeral=True)
+    prize, why = _gw_parse_prize(prize_type, amount, name)
+    secs = _gw_parse_duration(duration)
+    if not prize:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {why}", 0xE74C3C)
+        return
+    if secs is None or not GW_MIN_SECS <= secs <= GW_MAX_SECS:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} Duration must be between 1 minute and 14 days, like `30m`, `2h`, `1d` or `1h30m`.",
+            0xE74C3C)
+        return
+    await gw_create(interaction, kind, prize=prize, secs=secs, winners=winners, min_level=min_level, rng=rng)
+
+@giveaway_group.command(name="start", description="Admin: start a giveaway — people enter, N random winners at the end")
+@app_commands.check(is_admin)
+@app_commands.describe(duration="How long to run — 30m, 2h, 1d, 1h30m", winners="How many winners (each gets the prize)",
+                       min_level="Level needed to enter", **_GW_PRIZE_DESC)
+@app_commands.choices(prize_type=_GW_PRIZE_CHOICES)
+@app_commands.autocomplete(name=_gw_name_autocomplete)
+async def giveaway_start_cmd(interaction: discord.Interaction, prize_type: str, duration: str,
+                             amount: str = "1", name: str = None,
+                             winners: app_commands.Range[int, 1, 10] = 1,
+                             min_level: app_commands.Range[int, 1, 10000] = 1):
+    await _gw_start_common(interaction, "giveaway", prize_type, amount, name, duration, winners, min_level)
+
+@giveaway_group.command(name="drop", description="Admin: drop a prize — the first people to click it win instantly")
+@app_commands.check(is_admin)
+@app_commands.describe(winners="How many people can grab it (each gets the prize)",
+                       expires="Gone if nobody grabs it by then — default 10m", **_GW_PRIZE_DESC)
+@app_commands.choices(prize_type=_GW_PRIZE_CHOICES)
+@app_commands.autocomplete(name=_gw_name_autocomplete)
+async def giveaway_drop_cmd(interaction: discord.Interaction, prize_type: str, amount: str = "1", name: str = None,
+                            winners: app_commands.Range[int, 1, 10] = 1, expires: str = "10m"):
+    await _gw_start_common(interaction, "drop", prize_type, amount, name, expires, winners)
+
+@giveaway_group.command(name="guess", description="Admin: number guess — the closest guess to my secret number wins")
+@app_commands.check(is_admin)
+@app_commands.describe(duration="How long guesses are open — 30m, 2h…", low="Lowest possible number",
+                       high="Highest possible number", winners="Closest N guesses win (each gets the prize)",
+                       **_GW_PRIZE_DESC)
+@app_commands.choices(prize_type=_GW_PRIZE_CHOICES)
+@app_commands.autocomplete(name=_gw_name_autocomplete)
+async def giveaway_guess_cmd(interaction: discord.Interaction, prize_type: str, duration: str,
+                             amount: str = "1", name: str = None, low: int = 1, high: int = 100,
+                             winners: app_commands.Range[int, 1, 3] = 1):
+    if high - low < 9 or high - low > 1_000_000:
+        await interaction.response.send_message("The range must span at least 10 numbers and at most 1,000,000.",
+                                                ephemeral=True)
+        return
+    await _gw_start_common(interaction, "guess", prize_type, amount, name, duration, winners, rng=(low, high))
+
+@giveaway_group.command(name="race", description="Admin: hunt race — whoever catches the most animals before time's up wins")
+@app_commands.check(is_admin)
+@app_commands.describe(duration="How long the race runs — 1h, 1d…", winners="Top N finishers win (each gets the prize)",
+                       min_level="Level needed to join", **_GW_PRIZE_DESC)
+@app_commands.choices(prize_type=_GW_PRIZE_CHOICES)
+@app_commands.autocomplete(name=_gw_name_autocomplete)
+async def giveaway_race_cmd(interaction: discord.Interaction, prize_type: str, duration: str,
+                            amount: str = "1", name: str = None,
+                            winners: app_commands.Range[int, 1, 3] = 1,
+                            min_level: app_commands.Range[int, 1, 10000] = 1):
+    await _gw_start_common(interaction, "race", prize_type, amount, name, duration, winners, min_level)
+
+@giveaway_group.command(name="end", description="Admin: end a giveaway now and pick the winners")
+@app_commands.check(is_admin)
+@app_commands.describe(id="The giveaway ID")
+@app_commands.autocomplete(id=_gw_id_autocomplete)
+async def giveaway_end_cmd(interaction: discord.Interaction, id: str):
+    await interaction.response.defer(ephemeral=True)
+    g = _giveaways.get(id)
+    if not g or g["guild_id"] != interaction.guild_id or g["status"] != "active":
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} No running giveaway with that ID here.", 0xE74C3C)
+        return
+    admin_audit(interaction.user.id, "giveaway_end", id)
+    await gw_finish(id)
+    await send_ephemeral_v2(interaction, f"{emoji('check_mark')} Ended `{id}`.", 0x2ECC71)
+
+@giveaway_group.command(name="cancel", description="Admin: cancel a giveaway — nobody is paid")
+@app_commands.check(is_admin)
+@app_commands.describe(id="The giveaway ID")
+@app_commands.autocomplete(id=_gw_id_autocomplete)
+async def giveaway_cancel_cmd(interaction: discord.Interaction, id: str):
+    await interaction.response.defer(ephemeral=True)
+    g = _giveaways.get(id)
+    if not g or g["guild_id"] != interaction.guild_id:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} No giveaway with that ID here.", 0xE74C3C)
+        return
+    admin_audit(interaction.user.id, "giveaway_cancel", id)
+    ok, msg = await gw_cancel(id)
+    await send_ephemeral_v2(interaction, (f"{emoji('check_mark')} " if ok else f"{emoji('cross_mark')} ") + msg,
+                            0x2ECC71 if ok else 0xE74C3C)
+
+@giveaway_group.command(name="reroll", description="Admin: pick extra winners for a finished giveaway or guess")
+@app_commands.check(is_admin)
+@app_commands.describe(id="The giveaway ID", count="How many new winners")
+@app_commands.autocomplete(id=_gw_id_autocomplete)
+async def giveaway_reroll_cmd(interaction: discord.Interaction, id: str, count: app_commands.Range[int, 1, 5] = 1):
+    await interaction.response.defer(ephemeral=True)
+    g = _giveaways.get(id)
+    if not g or g["guild_id"] != interaction.guild_id:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} No giveaway with that ID here.", 0xE74C3C)
+        return
+    admin_audit(interaction.user.id, "giveaway_reroll", f"{id} x{count}")
+    ok, msg = await gw_reroll(id, count)
+    await send_ephemeral_v2(interaction, (f"{emoji('check_mark')} " if ok else f"{emoji('cross_mark')} ") + msg,
+                            0x2ECC71 if ok else 0xE74C3C)
+
+@giveaway_group.command(name="list", description="See what's running in this server right now")
+async def giveaway_list_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return
+    running = sorted((g for g in _giveaways.values()
+                      if g["guild_id"] == interaction.guild_id and g["status"] == "active"),
+                     key=lambda g: g["ends_ts"])
+    if not running:
+        await send_ephemeral_v2(interaction, "### 🎁 Giveaways\nNothing is running here right now.", 0x3498DB)
+        return
+    lines = [f"{GW_KINDS[g['kind']][0]} **{GW_KINDS[g['kind']][1].title()}** — {_gw_prize_text(g['prize'])} · "
+             f"ends <t:{int(g['ends_ts'])}:R> · [jump]({_gw_link(g)})" for g in running]
+    await send_ephemeral_v2(interaction, "### 🎁 Running here\n" + "\n".join(lines), 0x2ECC71)
+
+bot.tree.add_command(giveaway_group)
+
+
+
+# ─────────────────────────────────────────────
 # SESSION  ·  opt-in "since I last checked" continuity log
 # ─────────────────────────────────────────────
 
@@ -21840,6 +22567,7 @@ if FEATURE_AUTO_EVENTS:
     _V2_BACKGROUND_TASKS.append(automatic_event_scheduler)
 _V2_BACKGROUND_TASKS.append(weekly_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(daily_leaderboard_task)
+_V2_BACKGROUND_TASKS.append(giveaway_task)
 
 @tasks.loop(hours=24)
 async def analytics_prune_task():
@@ -21965,6 +22693,7 @@ async def on_ready():
 
     try:
         _market.update(await backend.market_load())
+        _giveaways.update(await backend.giveaways_load())
         print(f"✅ Market loaded ({len(_market)} listings)")
     except Exception as e:
         print("market load failed:", e)
