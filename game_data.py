@@ -3130,6 +3130,9 @@ def roll_catch_drops(rarity: str, crate_luck_boost: int = 0,
 MAX_PERSONAL_BOOST = 500   # each of data[uid]["boosts"] luck / sell / xp
 MAX_TRIBE_BOOST    = 200   # each of a tribe's luck_boost / sell_price_boost / xp_boost
 
+# Old shop names -> current ones (stale buttons + saved purchase counts still resolve).
+SHOP_ITEM_RENAMES = {"Crate Charm": "Shard Charm"}
+
 # Price escalates per successive upgrade: 5, 10, 15 … 50 gems (see shop_boost_price).
 # "price" is the 1st-upgrade cost, kept for any generic consumer.
 SHOP_BOOST_ITEMS = {
@@ -3151,7 +3154,7 @@ SHOP_BOOST_ITEMS = {
         "max_qty": 10,
         "boost_key": "xp", "boost_amt": 5,
     },
-    "Crate Charm": {
+    "Shard Charm": {     # was "Crate Charm" until 2026-10-05 — it only ever boosted shard drops
         "description": "Increases your shard drop chance while hunting by +0.5% per level.",
         "price": 5, "price_step": 5, "currency": "gems",
         "max_qty": 10,

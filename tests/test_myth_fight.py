@@ -6,6 +6,7 @@ carries a real chance to lose.
 Runs without pytest:  python tests/test_myth_fight.py
 """
 import asyncio
+import json
 import os
 import random
 import sys
@@ -167,6 +168,45 @@ def test_spamming_kick_or_punch_no_longer_wins():
                     break
             wins += out["kind"] == "kill"
         assert wins / n <= cap, f"{action}-spam won {wins}/{n}"
+
+
+def _find(o, pred):
+    if isinstance(o, dict):
+        if pred(o):
+            yield o
+        for v in o.values():
+            yield from _find(v, pred)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _find(v, pred)
+
+
+def test_fight_and_outcome_panels_show_the_creature_art_top_right():
+    d = _mk("art1")
+    thumbs = list(_find(app.build_myth_fight_components("art1"), lambda c: c.get("type") == 11))
+    assert len(thumbs) == 1 and thumbs[0]["media"]["url"].startswith("https://cdn.discordapp.com/emojis/")
+    assert thumbs[0]["media"]["url"].endswith("size=256")
+    secs = list(_find(app.build_myth_fight_components("art1"), lambda c: c.get("type") == 9))
+    assert secs and secs[0]["accessory"]["type"] == 11
+    head = secs[0]["components"][0]["content"]
+    assert "BIGFOOT" in head and "ITS HP" in head and "<:" not in head.splitlines()[0]   # art replaces the inline emoji
+    for kind in ("kill", "death", "escape"):
+        out = {"kind": kind, "creature": "Bigfoot", "bounty": 1, "gems": 1, "xp": 1, "balance": 1, "loss": 1,
+               "php": 50, "level_ups": 0, "level": 5, "clean": True, "drop": "", "hp": 40}
+        comps = app.build_myth_outcome_components("art1", out)
+        assert list(_find(comps, lambda c: c.get("type") == 11)), kind
+
+
+def test_creature_without_custom_art_keeps_the_plain_layout():
+    _mk("art2")
+    real = app.creature_emoji
+    app.creature_emoji = lambda name: "🔮"
+    try:
+        comps = app.build_myth_fight_components("art2")
+    finally:
+        app.creature_emoji = real
+    assert not list(_find(comps, lambda c: c.get("type") in (9, 11)))
+    assert "🔮 BIGFOOT" in comps[0]["components"][0]["content"]
 
 
 def test_fight_is_much_tougher_than_before():

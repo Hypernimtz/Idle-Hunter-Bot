@@ -106,7 +106,7 @@ from game_data import (
     # Tribe progression
     TRIBE_XP_HUNT, TRIBE_XP_HUNT_CAP_DAY, TRIBE_XP_DAILY, TRIBE_XP_TASK,
     TRIBE_XP_TASK_CAP_DAY, TRIBE_XP_CONTRACT, TRIBE_LEVEL_CAP, tribe_xp_to_next,
-    tribe_member_cap, TRIBE_UNLOCK_CONTRACTS, TRIBE_RECRUIT_PROBATION_H,
+    SHOP_ITEM_RENAMES, tribe_member_cap, TRIBE_UNLOCK_CONTRACTS, TRIBE_RECRUIT_PROBATION_H,
     TRIBE_REJOIN_COOLDOWN_H, TRIBE_CONTRACT_MIN_GROUP, TRIBE_LOG_MAX, TRIBE_CONTRACTS,
     # Tribe treasury / boss / cosmetics
     TRIBE_XP_BOSS, TRIBE_UNLOCK_TREASURY, TRIBE_UNLOCK_BOSS, TRIBE_DEPOSIT_MIN_MONEY,
@@ -7525,6 +7525,15 @@ _MYTH_TAUNTS = [
     "Somewhere, a folklorist is taking notes.",
 ]
 
+def _myth_art_block(text: str, name: str) -> dict:
+    """The creature's big art at the top right of the panel (a text block with a
+    thumbnail), or a plain text block when it only has a unicode fallback emoji."""
+    url = _emoji_cdn_url(creature_emoji(name), size=256)
+    if not url:
+        return {"type": 10, "content": text}
+    return {"type": 9, "components": [{"type": 10, "content": text}],
+            "accessory": {"type": 11, "media": {"url": url}, "description": name}}
+
 def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
     """The turn-based boss-fight panel: HP bars + a rolling combat log + actions."""
     b = _myth_fight_ensure(user_id)
@@ -7554,13 +7563,17 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
     # Mythics get the hardest visual break from normal browsing screens in
     # the whole bot — a boxed banner and a distinct dark accent, not just
     # another combat panel.
-    body = (
-        f"## {ico} {name.upper()}\n"
+    has_art = bool(_emoji_cdn_url(ico, size=256))
+    # With the big art up top-right the creature's emoji isn't repeated in the text.
+    head = (
+        f"## {'' if has_art else ico + ' '}{name.upper()}\n"
         f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
         f"**MYTHICAL ENCOUNTER** · Round {b.get('turn', 1)}\n"
         f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
         f"-# {c.get('aka', '')} · {c.get('behavior', '')}\n\n"
-        f"### {ico} {name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
+        f"### {'ITS HP' if has_art else ico + ' ' + name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}"
+    )
+    body = (
         f"{hp_ico} **YOU**\n{php}/{pmax}\n{_hp_bar(php, pmax)}\n\n"
         f"{log_txt}"
     )
@@ -7571,6 +7584,7 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
                 "custom_id": f"hunt:fight:{a}:{eid}:{user_id}"}
 
     return [{"type": 17, "accent_color": 0x4B0082, "spoiler": False, "components": [
+        _myth_art_block(head, name),
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [_btn("punch", 2), _btn("kick", 4), _btn("defend", 3)]},
@@ -7653,8 +7667,10 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
         )
         color = 0xE67E22
 
+    if _emoji_cdn_url(ico, size=256):          # the art sits top right, so drop the inline emoji from the heading
+        body = body.replace(f"### {ico} ", "### ", 1)
     comps = [
-        {"type": 10, "content": body},
+        _myth_art_block(body, name),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}"},
@@ -8557,7 +8573,7 @@ def _shop_price_str(n: int) -> str:
     matching how a player actually reads a price at each scale."""
     return f"{n:,}" if n < 1_000_000 else _short_num(n)
 
-_SHOP_BOOST_ICONS = {"luck": "luck", "sell": "sell_boost", "xp": "xp_boost", "crate_luck": "crate_sample"}
+_SHOP_BOOST_ICONS = {"luck": "luck", "sell": "sell_boost", "xp": "xp_boost", "crate_luck": "crystal_epic"}
 
 def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     d = data[user_id]
@@ -9669,6 +9685,10 @@ def _shop_bought_map(d: dict) -> dict:
     pre-date the tracker are migrated once, seeded from their current boosts (the
     old behaviour) so nobody's shop progress jumps."""
     m = d.get("shop_bought")
+    if m and any(old in m for old in SHOP_ITEM_RENAMES):      # renamed items keep their purchase count
+        for old, new in SHOP_ITEM_RENAMES.items():
+            if old in m:
+                m[new] = m.get(new, 0) + m.pop(old)
     if m is None:
         m = {}
         for name, item in SHOP_BOOST_ITEMS.items():
@@ -14613,7 +14633,7 @@ async def _dispatch_component(interaction: discord.Interaction):
             return
 
         if parts[1] == "buy":
-            item_name = parts[2]
+            item_name = SHOP_ITEM_RENAMES.get(parts[2], parts[2])    # a button from before a rename
             if item_name not in SHOP_BOOST_ITEMS:
                 await send_ephemeral_v2(interaction, "Unknown item.", 0xE74C3C)
                 return

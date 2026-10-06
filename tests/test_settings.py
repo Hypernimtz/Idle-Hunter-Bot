@@ -127,6 +127,19 @@ def test_auto_opened_crate_is_a_bullet_list():
     assert block.count("Auto-opened:") == n and n == len(result["auto_opened"])
 
 
+def test_crate_charm_is_now_shard_charm_and_old_purchases_carry_over():
+    import game_data
+    assert "Shard Charm" in game_data.SHOP_BOOST_ITEMS and "Crate Charm" not in game_data.SHOP_BOOST_ITEMS
+    d = _fresh("8", gems=1000, shop_bought={"Crate Charm": 3, "Lucky Charm": 1}, boosts={"luck": 5, "sell": 0, "xp": 0, "crate_luck": 3})
+    assert app.shop_bought_count(d, "Shard Charm") == 3 and "Crate Charm" not in d["shop_bought"]
+    assert d["shop_bought"]["Lucky Charm"] == 1
+    with tr.Harness():
+        run(tr._click("8", "shop:buy:Crate Charm:8"))      # a button from before the rename still works
+    assert d["shop_bought"]["Shard Charm"] == 4 and d["boosts"]["crate_luck"] == 4
+    import json
+    assert "Shard Charm" in json.dumps(app.build_shop_components("8", "boosts"), ensure_ascii=False)
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

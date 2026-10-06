@@ -13,5 +13,10 @@
     "key": "2026-10-04-hunt-message-setting",
     "title": "New setting: Hunt messages",
     "message": "Choose how the **Hunt** button behaves in `/settings` → **New Message Per Hunt**.\n\n- **OFF** (default): Hunt updates the same message in place\n- **ON**: every Hunt posts a fresh message and keeps the old ones, so you can scroll back through your catches\n\n`/hunt` always posts a new message."
+  },
+  {
+    "key": "2026-10-05-myth-art-shard-charm",
+    "title": "Mythic art + Shard Charm",
+    "message": "- **Mythic fights** now show the creature's art big in the top right of the fight and result screens\n- **Crate Charm** is now **Shard Charm** — it only ever boosted shard drops, so the name finally says so. Your upgrades carried over\n- New `/giveaway` command group: giveaways, loot drops, number guesses and hunt races — watch your server for them"
   }
 ]
