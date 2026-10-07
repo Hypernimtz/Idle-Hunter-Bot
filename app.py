@@ -243,8 +243,8 @@ MYTH_ENCOUNTER_LUCK   = 0.02    # extra chance approached asymptotically with lu
 MYTH_ENCOUNTER_MAX    = 0.05    # hard cap after luck + event multiplier
 MYTH_KILL_BASE        = 25      # base KILL success % (before tool tier / luck / difficulty)
 MYTH_RUN_BASE         = 50      # base clean-getaway % on flee
-MYTH_DEATH_LOSS_CASH  = 0.04    # losing the fight costs min(4% of cash, 5% of the bounty)
-MYTH_DEATH_LOSS_VALUE = 0.05
+MYTH_DEATH_LOSS_CASH  = 0.02    # losing the fight costs min(2% of cash, 3% of the bounty)
+MYTH_DEATH_LOSS_VALUE = 0.03
 
 # ── Mythic boss fight (turn-based) ──────────────────────────
 # 2026-10-04 "make it hard": kick/punch-spamming used to win ~90% of fights and a
@@ -255,7 +255,8 @@ MYTH_DEATH_LOSS_VALUE = 0.05
 FIGHT_PLAYER_HP        = 100
 FIGHT_MONSTER_HP_BASE  = 200     # + biome tool-tier * FIGHT_MONSTER_HP_TIER
 FIGHT_MONSTER_HP_TIER  = 5
-FIGHT_SHOOT_AMMO       = 100     # rounds burned per Shoot (needs this many to fire)
+FIGHT_SHOOT_AMMO       = 10      # rounds burned per Shoot (needs this many to fire). Was 100: a
+                                     # Silver Bullet volley cost ◈40,000 and one fight ate ~◈300K of ammo.
 FIGHT_PUNCH_ACC        = 84      # % to land a punch (was 92)
 FIGHT_KICK_ACC         = 52      # % to land a kick (was 64)
 FIGHT_SHOOT_ACC        = 82      # % for a volley to land (was 88)
@@ -276,7 +277,7 @@ FIGHT_DESPERATE_MULT   = 1.2     # ... by this much
 # myth kills the #1 gem source and ~1,000× a village cryptid's worth.
 MYTH_FIRST_KILL_VALUE_MULT = 5          # first mythic kill ever: 5× the creature's value
 MYTH_FIRST_KILL_GEMS       = 100
-MYTH_REPEAT_VALUE_RANGE    = (0.8, 1.2) # every later kill: 0.8–1.2× its value
+MYTH_REPEAT_VALUE_RANGE    = (1.6, 2.4) # every later kill: 1.6–2.4× its value (was 0.8–1.2 before the fights got hard)
 MYTH_REPEAT_GEMS_RANGE     = (3, 10)
 
 def myth_first_kill_bounty(creature: str) -> int:
@@ -286,7 +287,8 @@ def myth_repeat_bounty_range(creature: str) -> tuple[int, int]:
     v = MYTHIC_CREATURES.get(creature, {}).get("value", 0)
     lo, hi = MYTH_REPEAT_VALUE_RANGE
     return int(v * lo), int(v * hi)
-MYTH_XP_MULT             = 2.0   # mythic kills should out-XP a lucky danger-encounter roll
+MYTH_XP_MULT             = 3.0   # mythic kills should out-XP a lucky danger-encounter roll
+MYTH_WIN_HEAL_PCT        = 0.35  # a kill patches you up: +35% of max HP, so a win doesn't mean a medkit bill
 PRESTIGE_MIN_LEVEL    = 1000
 PRESTIGE_MIN_MONEY    = 1_000_000_000
 TRAVEL_MAX_MIN        = 60      # travel time between opposite edges of the world map
@@ -6153,6 +6155,12 @@ def _hp_bar(cur: int, mx: int) -> str:
 def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> dict:
     data[user_id]["_boss"] = None
     php_left = max(0, data[user_id].get("health", {}).get("hp", 0))
+    healed = 0
+    _h = data[user_id].get("health")
+    if _h is not None:                         # victory patch-up (php_left above is what the fight left you with)
+        _mx = effective_max_hp(user_id)
+        healed = max(0, min(_mx - _h.get("hp", 0), int(_mx * MYTH_WIN_HEAL_PCT)))
+        _h["hp"] = _h.get("hp", 0) + healed
     stats   = data[user_id].setdefault("stats", {})
     is_first_kill = stats.get("myths_killed", 0) == 0
     if is_first_kill:
@@ -6208,7 +6216,7 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
             "drop": drop, "drop_value": c.get("drop_value", 0), "myth_shard": myth_shard,
             "trophy_count": trophy_count, "is_new_discovery": is_new_discovery,
             "level_ups": level_ups, "level": data[user_id]["level"],
-            "balance": data[user_id]["money"], "php": php_left,
+            "balance": data[user_id]["money"], "php": php_left, "healed": healed,
             "is_first_kill": is_first_kill, "first_title": first_title,
             "share_id": _sid}
 
@@ -7616,6 +7624,8 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
         finish  = ("Not a scratch on you." if hp_left >= FIGHT_PLAYER_HP
                    else f"You walk away with **{hp_left} HP** to spare." if hp_left > 25
                    else "You're bleeding, but you're standing. It isn't.")
+        if outcome.get("healed"):
+            finish += f"\n-# {emoji('hp') or '❤️'} You catch your breath and patch up: **+{outcome['healed']} HP**."
         first_line = ""
         if outcome.get("is_first_kill"):
             title_bit = f" · {emoji('label')} Title unlocked: **\"{outcome['first_title']}\"**" if outcome.get("first_title") else ""
@@ -7885,7 +7895,48 @@ def _onb_btn(uid: str, action: str, label: str, style: int = 3, emoji_uni: str =
             b["emoji"] = em
     return b
 
-def build_onboarding_components(user_id: str) -> list:
+def _onb_tour_pages() -> list[str]:
+    """The 'Quick Tour' shown from the intro: what the bot actually is, in four screens."""
+    n_animals = len(_CATCHABLE_ANIMALS)
+    n_biomes  = len(BIOME_ANIMALS)
+    n_myth    = len(MYTHIC_CREATURES)
+    n_tools   = sum(1 for t in TOOLS.values() if t.get("tier", 0) < 100)
+    return [
+        (f"### 🏹 Hunting & gear\n"
+         f"Idle Hunter is a hunting RPG that lives inside Discord. You travel **{n_biomes} regions** of the world — "
+         f"each with its own wildlife, **{n_animals}+ real animals** in all.\n\n"
+         "**1.** `/hunt` (or press **Hunt**) — you catch animals into your bag.\n"
+         "**2.** **Sell All** turns the bag into ◈ money and XP.\n"
+         f"**3.** Spend it in `/shop` on better **tools** ({n_tools} of them), **ammo** and **vehicles**. "
+         "A better tool catches more per hunt and unlocks deeper regions.\n"
+         "**4.** Bows and guns need ammo — buy it, then load it in `/equip`.\n\n"
+         "-# Rare animals, shards and crates drop while you hunt. Your **Field Guide** (`/guide`) tracks every species you find."),
+        (f"### 👹 Danger, Mythicals & health\n"
+         "Some animals fight back. You have **100 HP** that carries across every fight, "
+         "regenerates over time, and heals with Bandages and Medkits.\n\n"
+         f"Deep in each region lurk **{n_myth} Mythical creatures** — Bigfoot, the Kraken, Hydra, Dragons. "
+         "You track one down, then fight it turn by turn: **Punch, Kick, Shoot, Defend, Taunt** or **Flee**. "
+         "They hit back hard, so arrive healthy.\n\n"
+         "A kill pays a big bounty and XP, and drops a **trophy** with a timed power-up you can use or sell on `/market`.\n\n"
+         "-# Global sightings and world conditions temporarily boost certain regions — check `/world`."),
+        ("### 🏕️ Money while you're away\n"
+         "**Hunting Camp** (`/idle`) — station hunters in a region and they bring back a haul while you're offline.\n"
+         "**Daily & vote** — `/daily` keeps a streak going; `/vote` gives a free crate every 12 hours.\n"
+         "**Quests & achievements** — daily and weekly quests, badges, titles.\n"
+         "**Crafting** (`/craft`) — shards fuse into crystals, crystals buy Hunting Crates full of rewards.\n"
+         "**Market** (`/market`) — trade crates and mythic trophies with other players.\n\n"
+         "-# At Level 1,000 there's an end-game reset that makes you permanently stronger."),
+        ("### 🤝 Play together\n"
+         "**Tribes** (`/tribe`) — a crew with shared Luck / Sell / XP boosts, weekly contracts, a shared **treasury** "
+         "you vote on, a weekly **boss**, expeditions, and your own emblem.\n"
+         "**Leaderboards** (`/leaderboard`) — all-time, daily and weekly, for players and tribes.\n"
+         "**Events** (`/events`) — global mini-games and bonus weekends.\n"
+         "**Giveaways** (`/giveaway`) — loot drops, number guesses and hunt races in your server.\n"
+         "**Bring a friend** (`/refer`) — you both get rewards.\n\n"
+         "-# Lost? `/help` lists every command and `/settings` has your preferences."),
+    ]
+
+def build_onboarding_components(user_id: str, tour: int | None = None) -> list:
     ob   = _onb(user_id)
     step = ob.get("step", "intro")
     if step in _ONB_LEGACY_STEPS:
@@ -7895,15 +7946,37 @@ def build_onboarding_components(user_id: str) -> list:
         step = ob["step"]
     acc  = 0x2ECC71
 
-    if step in ("intro", ""):
+    if step in ("intro", "") and tour is not None:
+        pages = _onb_tour_pages()
+        tour = max(0, min(int(tour), len(pages) - 1))
+        body = pages[tour] + f"\n\n-# Quick tour · {tour + 1}/{len(pages)}"
+        rows = [{"type": 1, "components": [
+            _onb_btn(user_id, f"tour:{tour - 1}", "◀ Prev", 2) | ({"disabled": True} if tour == 0 else {}),
+            _onb_btn(user_id, f"tour:{tour + 1}", "Next ▶", 2) | ({"disabled": True} if tour == len(pages) - 1 else {}),
+            _onb_btn(user_id, "tour:exit", "Back to the hunt", 3, "bow"),
+        ]}]
+
+    elif step in ("intro", ""):
+        n_animals, n_biomes, n_myth = len(_CATCHABLE_ANIMALS), len(BIOME_ANIMALS), len(MYTHIC_CREATURES)
         body = (
             f"# {emoji('bow')} IDLE HUNTER\n"
             "### The Pacific Northwest\n"
-            "Rain drums on the cedars. Mist sits low between the trunks.\n\n"
-            "Something just moved in the brush ahead of you.\n"
-            "-# Every hunter starts here. Let's see what it is."
+            "Rain drums on the cedars. Mist sits low between the trunks. "
+            "Something just moved in the brush ahead of you.\n\n"
+            f"**Idle Hunter** is a hunting RPG that lives in Discord. Hunt **{n_animals}+ real animals** across "
+            f"**{n_biomes} regions** of the world, sell your catch, buy better gear and push into wilder lands — "
+            "even while you're away.\n\n"
+            "🏹 **Hunt & upgrade** — tools, ammo, vehicles, and a Field Guide to fill\n"
+            f"👹 **Mythical creatures** — {n_myth} legendary cryptids (Bigfoot, Kraken, Dragons…) fought turn by turn\n"
+            "🏕️ **Idle income** — a Hunting Camp that earns while you're offline\n"
+            "🤝 **Tribes** — shared boosts, a treasury, weekly boss and expeditions\n"
+            "📦 **Crates, trading & events** — craft, trade on the market, join giveaways\n\n"
+            "-# Every hunter starts here. Track what moved — or take the quick tour first."
         )
-        rows = [{"type": 1, "components": [_onb_btn(user_id, "track", "Track It", 3, "animal_fallback")]}]
+        rows = [{"type": 1, "components": [
+            _onb_btn(user_id, "track", "Track It", 3, "animal_fallback"),
+            _onb_btn(user_id, "tour:0", "Quick Tour", 2, "book"),
+        ]}]
 
     elif step == "catch":
         animal = _onb_first_animal()
@@ -9665,14 +9738,34 @@ def build_daily_components(user_id: str, claimed: bool = False,
             f"or {emoji('gem')}{tier['gems_min']}–{tier['gems_max']}\n"
             f"-# Resets <t:{nxt_ts}:R>"
         )
+    vote_ready = time.time() >= data[user_id].get("vote_cd", 0)
+    if vote_ready:
+        _vm = int(VOTE_REWARD_MONEY_X * crate_value_scale(data[user_id].get("level", 1)))
+        vote_text = (
+            f"### {emoji('ballot_box')} Vote reward ready!\n"
+            f"Vote for Idle Hunter (every **{VOTE_COOLDOWN_HOURS}h**) and claim "
+            f"{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{_vm:,} · "
+            f"{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad.\n"
+            f"-# Vote first, then press **Claim Vote Reward**."
+        )
+    else:
+        vote_text = (f"-# {emoji('ballot_box')} Next vote reward "
+                     f"<t:{int(data[user_id].get('vote_cd', 0))}:R> · `/vote`")
     btns = []
     if not already and not claimed:
         btns.append({"type": 2, "style": 3, "label": "Claim Daily",
                      "custom_id": f"daily:claim:{user_id}"})
+    if vote_ready:
+        btns.append({"type": 2, "style": 5, "label": "Vote", "emoji": emoji_partial("ballot_box"),
+                     "url": VOTE_URL})
+        btns.append({"type": 2, "style": 1, "label": "Claim Vote Reward", "emoji": emoji_partial("⭐"),
+                     "custom_id": f"vote:claim:{user_id}"})
     btns.append({"type": 2, "style": 2, "label": "◀ Back",
                  "custom_id": f"nav:back:{user_id}"})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": vote_text},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": btns},
     ]}]
@@ -13966,11 +14059,15 @@ async def _dispatch_component(interaction: discord.Interaction):
             return
         init_user(owner_id)
         action = parts[1] if len(parts) > 2 else ""
+        tour_page = None
         if not onboarding_active(owner_id):
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
 
-        if action == "track":
+        if action == "tour":
+            sub = parts[2] if len(parts) > 3 else "exit"
+            tour_page = int(sub) if sub.lstrip("-").isdigit() else None
+        elif action == "track":
             _onb_set_step(owner_id, "catch")
         elif action in ("follow", "observe"):
             # Retired "tracks" step buttons — only reachable via a stale panel
@@ -14026,7 +14123,7 @@ async def _dispatch_component(interaction: discord.Interaction):
             analytics(owner_id, "onboarding_skipped")
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
-        await smart_update_v2(interaction, build_onboarding_components(owner_id))
+        await smart_update_v2(interaction, build_onboarding_components(owner_id, tour=tour_page))
         return
 
     # ── HUNT ──────────────────────────────────

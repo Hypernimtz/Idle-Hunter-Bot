@@ -140,6 +140,48 @@ def test_crate_charm_is_now_shard_charm_and_old_purchases_carry_over():
     assert "Shard Charm" in json.dumps(app.build_shop_components("8", "boosts"), ensure_ascii=False)
 
 
+def test_daily_panel_reminds_you_to_vote():
+    import json
+    d = _fresh("9")
+    d["vote_cd"] = 0
+    ready = app.build_daily_components("9")
+    blob = json.dumps(ready, ensure_ascii=False)
+    assert "Vote reward ready" in blob and "vote:claim:9" in blob and app.VOTE_URL in blob
+    row = next(c for c in ready[0]["components"] if c.get("type") == 1)["components"]
+    assert len(row) <= 5 and sum(1 for b in row if b["style"] == 5) == 1
+    d["vote_cd"] = __import__("time").time() + 3600       # already claimed -> just a countdown, no buttons
+    waiting = app.build_daily_components("9")
+    blob = json.dumps(waiting, ensure_ascii=False)
+    assert "Next vote reward" in blob and "vote:claim" not in blob and app.VOTE_URL not in blob
+    claimed = app.build_daily_components("9", claimed=True, reward_type="money", reward_amt=5, streak=2)
+    assert "Daily Claimed" in json.dumps(claimed, ensure_ascii=False)
+
+
+def test_intro_explains_the_bot_and_the_tour_walks_through_it():
+    import json
+    d = _fresh("12", onboarding={"version": 2, "completed": False, "step": "intro", "starter_pack": None})
+    intro = json.dumps(app.build_onboarding_components("12"), ensure_ascii=False)
+    for needle in ("hunting RPG", "regions", "Mythical creatures", "Hunting Camp", "Tribes", "Quick Tour", "Track It"):
+        assert needle in intro, needle
+    assert f"{len(app.MYTHIC_CREATURES)} legendary" in intro
+    pages = app._onb_tour_pages()
+    assert len(pages) == 4 and all(len(p) < 1800 for p in pages)
+    with tr.Harness() as h:
+        seen = []
+
+        async def grab(interaction, comps):
+            seen.append(json.dumps(comps, ensure_ascii=False))
+        app.smart_update_v2 = grab
+        run(tr._click("12", "onb:tour:0:12".rsplit(":", 1)[0] + ":12"))
+        run(tr._click("12", "onb:tour:2:12"))
+        assert "Quick tour · 3/4" in seen[-1] and "Hunting Camp" in seen[-1]
+        run(tr._click("12", "onb:tour:exit:12"))
+        assert "Quick Tour" in seen[-1] and "IDLE HUNTER" in seen[-1]
+        assert d["onboarding"]["step"] == "intro"          # browsing the tour doesn't advance the flow
+        run(tr._click("12", "onb:track:12"))
+        assert d["onboarding"]["step"] == "catch"
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

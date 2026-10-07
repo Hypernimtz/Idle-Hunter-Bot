@@ -209,6 +209,50 @@ def test_creature_without_custom_art_keeps_the_plain_layout():
     assert "🔮 BIGFOOT" in comps[0]["components"][0]["content"]
 
 
+def test_a_volley_costs_ten_rounds_and_a_fight_is_cheap_next_to_its_payout():
+    assert app.FIGHT_SHOOT_AMMO == 10
+    d = _mk("am1", biome="forest", tool="Shortbow", equipped_ammo="Wooden Arrow", ammo_inv={"Wooden Arrow": 100})
+    d["_boss"]["mhp"] = d["_boss"]["mhp_max"] = 5000
+    with _Dice([100, 100, 100]):
+        _turn("am1", "shoot")
+    assert d["ammo_inv"]["Wooden Arrow"] == 90
+    # a whole ~8-volley fight with the priciest money ammo of the weapon a player in that biome would use
+    # is a sliver of the bounty at every depth (it used to cost MORE than the bounty)
+    tool_for_tier = {t["tier"]: t["ammo_type"] for t in app.TOOLS.values() if t.get("ammo_type") and t["tier"] < 100}
+    priciest = {}
+    for n, am in app.AMMO.items():
+        if am["currency"] == "money":
+            priciest[am["ammo_type"]] = max(priciest.get(am["ammo_type"], 0), am["price"])
+    for name, c in app.MYTHIC_CREATURES.items():
+        tier = max([t for t in tool_for_tier if t <= max(app.BIOME_TOOL_TIER[c["biome"]], 5)] or [5])
+        cost = 8 * app.FIGHT_SHOOT_AMMO * priciest[tool_for_tier[tier]]
+        assert cost < 0.3 * c["value"] * app.MYTH_REPEAT_VALUE_RANGE[0], (name, cost)
+
+
+def test_a_kill_pays_better_and_patches_you_up():
+    assert app.MYTH_REPEAT_VALUE_RANGE[0] >= 1.5 and app.MYTH_XP_MULT >= 3
+    d = _mk("win1", hp=20)
+    d["stats"]["myths_killed"] = 3                       # not the first-ever kill
+    d["_boss"]["mhp"] = 1                                # one hit finishes it
+    with _Dice([1]):                                     # the punch lands
+        out = _turn("win1", "punch")
+    assert out["kind"] == "kill"
+    mx = app.effective_max_hp("win1")
+    assert out["healed"] == int(mx * app.MYTH_WIN_HEAL_PCT) and d["health"]["hp"] == 20 + out["healed"]
+    assert out["php"] == 20                              # the panel still reports what the fight left you with
+    lo, hi = app.myth_repeat_bounty_range("Bigfoot")
+    assert lo >= 1.5 * app.MYTHIC_CREATURES["Bigfoot"]["value"] and lo <= out["bounty"] <= hi
+    assert out["xp"] == int(app.MYTHIC_CREATURES["Bigfoot"]["xp"] * app.MYTH_XP_MULT)
+    assert "patch up" in json.dumps(app.build_myth_outcome_components("win1", out), ensure_ascii=False)
+    # never heals past full
+    d2 = _mk("win2", hp=99)
+    d2["stats"]["myths_killed"] = 3
+    d2["_boss"]["mhp"] = 1
+    with _Dice([1]):
+        out2 = _turn("win2", "punch")
+    assert d2["health"]["hp"] == app.effective_max_hp("win2") and out2["healed"] == 1
+
+
 def test_fight_is_much_tougher_than_before():
     assert app._myth_monster_hp("village") >= 200
     assert app._myth_monster_hp("celestial_peaks") >= 280
