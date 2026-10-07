@@ -23,5 +23,10 @@
     "key": "2026-10-07-mythic-rebalance-vote-intro",
     "title": "Mythic rebalance, vote reminder & a better intro",
     "message": "- **Mythic fights are cheaper and pay more:** each Shoot now uses **10 rounds** instead of 100, kills pay about **double** the bounty and **triple** XP, and a win **patches you up (+35% HP)** so you don't need a medkit after every fight. Losing costs a little less cash again too\n- **`/daily` now reminds you to vote** — when your vote reward is ready you get a Vote button and a Claim button right there\n- **New players get a real intro:** it now explains what Idle Hunter is, with a Quick Tour of hunting, mythicals, idle income and tribes"
+  },
+  {
+    "key": "2026-10-07-gamble-commands",
+    "title": "Every casino game is its own command",
+    "message": "Search for the game you want and it's right there:\n\n`/gamble blackjack` · `/gamble coinflip` · `/gamble slots` · `/gamble roulette` · `/gamble rps` · `/gamble dice` · `/gamble highlow`\n\n`/gamble menu` still opens the hub with every game in one dropdown."
   }
 ]

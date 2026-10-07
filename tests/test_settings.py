@@ -182,6 +182,36 @@ def test_intro_explains_the_bot_and_the_tour_walks_through_it():
         assert d["onboarding"]["step"] == "catch"
 
 
+def test_gamble_is_a_group_with_a_command_per_game():
+    import json
+    names = {c.name for c in app.gamble_group.commands}
+    assert names == {"menu", "blackjack", "coinflip", "slots", "roulette", "rps", "dice", "highlow"}
+    assert app.gamble_group in app.bot.tree.get_commands()
+    assert not any(c.name == "gamble" and not hasattr(c, "commands") for c in app.bot.tree.get_commands())
+    _fresh("13")
+    expect = {"coinflip": "gamble:cf:", "slots": "gamble:slots:", "blackjack": "gamble:bj:",
+              "roulette": "gamble:rl:", "rps": "gamble:rps:", "dice": "gamble:dice:", "highlow": "gamble:hl:"}
+    for cmd in app.gamble_group.commands:
+        if cmd.name == "menu":
+            continue
+        seen = []
+
+        async def follow(interaction, comps, *, ephemeral=False):
+            seen.append(json.dumps(comps, ensure_ascii=False))
+        with tr.Harness():
+            app.send_v2_followup = follow
+            run(cmd.callback(tr.FakeInteraction("13", "x")))
+        assert seen and expect[cmd.name] in seen[0], (cmd.name, seen[:1])
+    seen = []
+    with tr.Harness():
+        async def follow2(interaction, comps, *, ephemeral=False):
+            seen.append(json.dumps(comps, ensure_ascii=False))
+        app.send_v2_followup = follow2
+        menu = next(c for c in app.gamble_group.commands if c.name == "menu")
+        run(menu.callback(tr.FakeInteraction("13", "x")))
+    assert "gamble:game_select:13" in seen[0]
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

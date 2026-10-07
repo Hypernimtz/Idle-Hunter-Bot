@@ -232,6 +232,25 @@ async def init_schema():
         )
     """)
 
+    # Item ledger (/inspect): every change to a tracked inventory, with the command or
+    # button that caused it. economy_log already covers ◈ and 💎; this covers ammo, crates,
+    # items, trophies, shards, crystals, gemstones, healing items and tools.
+    await _pool.execute("""
+        CREATE TABLE IF NOT EXISTS item_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id       TEXT NOT NULL,
+            kind          TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            delta         INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            source        TEXT NOT NULL,
+            created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_item_log_user ON item_log(user_id, created_at)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_item_log_name ON item_log(name, created_at)")
+    await _pool.execute("CREATE INDEX IF NOT EXISTS idx_economy_log_user ON economy_log(user_id, created_at)")
+
     # Giveaways / loot drops / number guesses / hunt races (/giveaway). One JSON row
     # each so a restart resumes them; ended rows linger a while for /giveaway reroll.
     await _pool.execute("""
@@ -355,6 +374,150 @@ async def market_delete(listing_id: str) -> None:
         return
     await _pool.execute("DELETE FROM market_listings WHERE listing_id = ?", (listing_id,))
     await _pool.commit()
+
+# ── Item ledger (/inspect) ─────────────────────────────────────
+_item_buffer: list[tuple] = []
+_ITEM_BUFFER_MAX = 20_000
+
+def log_item_event(user_id, kind: str, name: str, delta: int, balance_after: int, source: str) -> None:
+    """Queue one inventory change. Synchronous and cheap — the periodic task writes it."""
+    if not delta:
+        return
+    if len(_item_buffer) >= _ITEM_BUFFER_MAX:         # DB stuck? drop the oldest half, never grow forever
+        del _item_buffer[:_ITEM_BUFFER_MAX // 2]
+    _item_buffer.append((str(user_id), kind, name, int(delta), int(balance_after), (source or "system")[:80]))
+
+async def flush_item_buffer() -> int:
+    """Write everything queued. Returns rows written."""
+    global _item_buffer
+    if not _item_buffer:
+        return 0
+    rows, _item_buffer = _item_buffer, []
+    if SAVES_DISABLED or _pool is None:
+        return 0
+    try:
+        await _pool.executemany(
+            "INSERT INTO item_log (user_id, kind, name, delta, balance_after, source) VALUES (?, ?, ?, ?, ?, ?)", rows)
+        await _pool.commit()
+    except Exception:
+        _item_buffer = (rows + _item_buffer)[-_ITEM_BUFFER_MAX:]     # keep them for the next try
+        raise
+    return len(rows)
+
+async def item_log_prune(days: int = 45) -> int:
+    if _pool is None:
+        return 0
+    cur = await _pool.execute("DELETE FROM item_log WHERE created_at < datetime('now', ?)", (f"-{int(days)} days",))
+    await _pool.commit()
+    return cur.rowcount or 0
+
+def _ledger_where(kinds, search, days):
+    conds, params = [], []
+    if kinds:
+        conds.append("kind IN (%s)" % ",".join("?" * len(kinds)))
+        params += list(kinds)
+    if search:
+        conds.append("(LOWER(source) LIKE ? OR LOWER(name) LIKE ?)")
+        like = "%" + search.lower().replace("%", "").replace("_", "") + "%"
+        params += [like, like]
+    if days:
+        conds.append("created_at >= datetime('now', ?)")
+        params.append(f"-{int(days)} days")
+    return (" WHERE " + " AND ".join(conds)) if conds else "", params
+
+_LEDGER_UNION = """(
+    SELECT created_at, currency AS kind, source, delta, balance_after, '' AS name, id AS rid, 0 AS t
+      FROM economy_log WHERE user_id = ?
+    UNION ALL
+    SELECT created_at, kind, source, delta, balance_after, name, id AS rid, 1 AS t
+      FROM item_log WHERE user_id = ?
+)"""
+
+async def ledger_query(user_id: str, *, kinds=None, search: str = "", days: int | None = None,
+                       limit: int = 10, offset: int = 0) -> tuple[list[dict], int]:
+    """One player's merged money / gem / item history, newest first. Returns (rows, total)."""
+    await flush_economy_buffer()
+    await flush_item_buffer()
+    if _pool is None:
+        return [], 0
+    where, wp = _ledger_where(kinds, search, days)
+    base = [str(user_id), str(user_id)]
+    async with _pool.execute(f"SELECT COUNT(*) FROM {_LEDGER_UNION}{where}", base + wp) as cur:
+        total = (await cur.fetchone())[0]
+    async with _pool.execute(
+        f"SELECT created_at, kind, name, source, delta, balance_after FROM {_LEDGER_UNION}{where} "
+        f"ORDER BY created_at DESC, t, rid DESC LIMIT ? OFFSET ?", base + wp + [limit, offset]) as cur:
+        rows = [dict(zip(("created_at", "kind", "name", "source", "delta", "balance_after"), r))
+                for r in await cur.fetchall()]
+    return rows, total
+
+async def item_provenance(user_id: str, name: str, days: int | None = None) -> dict:
+    """How one player got (and lost) one item: totals per source, most recent first-seen/last-seen."""
+    await flush_item_buffer()
+    out = {"gained": [], "spent": [], "recent": []}
+    if _pool is None:
+        return out
+    since, sp = ("", [])
+    if days:
+        since, sp = " AND created_at >= datetime('now', ?)", [f"-{int(days)} days"]
+    for key, cmp_ in (("gained", ">"), ("spent", "<")):
+        async with _pool.execute(
+            f"SELECT source, SUM(delta), COUNT(*), MIN(created_at), MAX(created_at) FROM item_log "
+            f"WHERE user_id = ? AND LOWER(name) = LOWER(?) AND delta {cmp_} 0{since} "
+            f"GROUP BY source ORDER BY ABS(SUM(delta)) DESC LIMIT 12", [str(user_id), name] + sp) as cur:
+            out[key] = [dict(zip(("source", "total", "count", "first", "last"), r)) for r in await cur.fetchall()]
+    async with _pool.execute(
+        f"SELECT created_at, source, delta, balance_after FROM item_log "
+        f"WHERE user_id = ? AND LOWER(name) = LOWER(?){since} ORDER BY created_at DESC, id DESC LIMIT 10",
+        [str(user_id), name] + sp) as cur:
+        out["recent"] = [dict(zip(("created_at", "source", "delta", "balance_after"), r)) for r in await cur.fetchall()]
+    return out
+
+async def item_who(name: str, days: int = 7, limit: int = 12) -> list[dict]:
+    """Who gained the most of one item lately, with their biggest source."""
+    await flush_item_buffer()
+    if _pool is None:
+        return []
+    async with _pool.execute(
+        """SELECT user_id,
+                  SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END),
+                  SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END),
+                  COUNT(*)
+             FROM item_log
+            WHERE LOWER(name) = LOWER(?) AND created_at >= datetime('now', ?)
+            GROUP BY user_id ORDER BY 2 DESC LIMIT ?""", (name, f"-{int(days)} days", limit)) as cur:
+        rows = await cur.fetchall()
+    out = []
+    for uid, gained, spent, n in rows:
+        async with _pool.execute(
+            """SELECT source, SUM(delta) FROM item_log
+                WHERE user_id = ? AND LOWER(name) = LOWER(?) AND delta > 0 AND created_at >= datetime('now', ?)
+                GROUP BY source ORDER BY 2 DESC LIMIT 1""", (uid, name, f"-{int(days)} days")) as cur:
+            top = await cur.fetchone()
+        out.append({"user_id": uid, "gained": gained or 0, "spent": spent or 0, "events": n,
+                    "top_source": top[0] if top else "", "top_amount": top[1] if top else 0})
+    return out
+
+async def user_flow(user_id: str, days: int = 1) -> dict:
+    """◈ / 💎 earned and spent by one player over the last `days`, plus their biggest source each way."""
+    await flush_economy_buffer()
+    out = {}
+    if _pool is None:
+        return out
+    for cur_name in ("money", "gems"):
+        async with _pool.execute(
+            """SELECT COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0),
+                      COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0)
+                 FROM economy_log WHERE user_id = ? AND currency = ? AND created_at >= datetime('now', ?)""",
+            (str(user_id), cur_name, f"-{int(days)} days")) as cur:
+            earned, spent = await cur.fetchone()
+        async with _pool.execute(
+            """SELECT source, SUM(delta) FROM economy_log
+                WHERE user_id = ? AND currency = ? AND delta > 0 AND created_at >= datetime('now', ?)
+                GROUP BY source ORDER BY 2 DESC LIMIT 3""", (str(user_id), cur_name, f"-{int(days)} days")) as cur:
+            top = list(await cur.fetchall())
+        out[cur_name] = {"earned": earned, "spent": spent, "top": top}
+    return out
 
 # ── Giveaways ──────────────────────────────────────────────────
 async def giveaways_load() -> dict[str, dict]:

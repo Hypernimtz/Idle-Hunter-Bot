@@ -139,7 +139,7 @@ from backend import (
     get_user_lock, tribe_lock, state_lock
 )
 from dotenv import load_dotenv
-import os, sys, re
+import os, sys, re, io
 import functools
 import heapq
 load_dotenv("token.env")
@@ -1406,8 +1406,68 @@ tribe_data: dict[str, dict] = {}
 # loop stays a full write as the safety net for out-of-transaction mutations.
 _dirty_users: set[str] = set()
 
+# ── Item ledger ─────────────────────────────────────────────────────────────
+# Every change to a tracked inventory is written to item_log with the command or button
+# that caused it, for /inspect. Rather than instrumenting every place that adds an item,
+# each interaction tags itself (_inv_src), mark_user_dirty() remembers who was touched and
+# under which tag, and inv_flush_touched() diffs those players against a shadow copy of
+# their last-known inventory.
+import contextvars
+_inv_src: "contextvars.ContextVar[str]" = contextvars.ContextVar("inv_src", default="system")
+_inv_touched: dict[str, str] = {}      # uid -> source tag at the last mark_user_dirty
+_inv_shadow: dict[str, dict] = {}      # uid -> {(kind, name): count} as last seen
+_INV_TRACKED = (("ammo_inv", "ammo"), ("items", "item"), ("crate_inv", "crate"), ("myth_items", "trophy"),
+                ("healing_inv", "heal"), ("shards", "shard"), ("crystals", "crystal"), ("gemstones", "gemstone"))
+
+class inv_source:
+    """`with inv_source("giveaway"):` — tag everything inside as coming from that source."""
+    def __init__(self, label: str):
+        self.label = label
+    def __enter__(self):
+        self._tok = _inv_src.set(self.label)
+        return self
+    def __exit__(self, *exc):
+        _inv_src.reset(self._tok)
+
+def _inv_snapshot(d: dict) -> dict:
+    snap = {}
+    for key, kind in _INV_TRACKED:
+        for name, n in (d.get(key) or {}).items():
+            if isinstance(n, (int, float)) and n:
+                snap[(kind, name)] = int(n)
+    for t in d.get("owned_tools") or []:
+        snap[("tool", t)] = 1
+    return snap
+
+def inv_flush_touched() -> int:
+    """Diff every player touched since the last call against their shadow inventory and queue
+    the changes for the item ledger. Synchronous (no awaits), so it is atomic on the event loop."""
+    touched = dict(_inv_touched)
+    _inv_touched.clear()
+    n = 0
+    for uid, src in touched.items():
+        d = data.get(uid)
+        if d is None:
+            continue
+        cur = _inv_snapshot(d)
+        old = _inv_shadow.get(uid)
+        _inv_shadow[uid] = cur
+        if old is None:                       # first time we've seen this player: that's the baseline
+            continue
+        for key in cur.keys() | old.keys():
+            delta = cur.get(key, 0) - old.get(key, 0)
+            if not delta:
+                continue
+            if delta < 0 and (src.startswith("btn:hunt") or src.startswith("cmd:/hunt")):
+                continue                      # ammo burned by hunting would be a row per hunt
+            backend.log_item_event(uid, key[0], key[1], delta, cur.get(key, 0), src)
+            n += 1
+    return n
+
 def mark_user_dirty(user_id) -> None:
-    _dirty_users.add(str(user_id))
+    uid = str(user_id)
+    _dirty_users.add(uid)
+    _inv_touched[uid] = _inv_src.get()
 
 @asynccontextmanager
 async def user_transaction(user_id):
@@ -1455,6 +1515,10 @@ async def load_all_data():
     # Backfill the tribe-progression fields on every existing tribe.
     for _td in tribe_data.values():
         _ensure_tribe_fields(_td)
+
+    _inv_shadow.clear()
+    for _uid, _d in data.items():          # item-ledger baseline: only changes from here on are logged
+        _inv_shadow[_uid] = _inv_snapshot(_d)
 
     print(f"✅ Loaded {len(data)} users and {len(tribe_data)} tribes from SQLite")
 
@@ -2482,6 +2546,7 @@ async def _boss_pay_out(tname: str) -> None:
     b = td and td.get("boss")
     if not b or b.get("stage") != "rewarding":
         return
+    _tok = _inv_src.set("tribe boss reward")
     for entry in list(b.get("pending", [])):
         uid = str(entry.get("uid", ""))
         if not uid or uid in b.get("paid", []):
@@ -2507,6 +2572,7 @@ async def _boss_pay_out(tname: str) -> None:
             analytics(uid, "tribe_boss_reward", crate=entry["crate"], tribe=tname)
         except Exception as ex:
             print(f"tribe boss payout failed for {uid}:", ex)
+    _inv_src.reset(_tok)
     async with tribe_only_transaction(tname):
         bb = tribe_data.get(tname, {}).get("boss")
         if not bb or bb.get("stage") != "rewarding":
@@ -2661,6 +2727,7 @@ async def _exp_pay_out(tname: str) -> None:
     exp = td and td.get("expedition")
     if not exp or exp.get("done") or exp.get("stage") != "rewarding":
         return
+    _tok = _inv_src.set("expedition reward")
     for entry in list(exp.get("pending", [])):
         uid = str(entry.get("uid", ""))
         if not uid:
@@ -2693,6 +2760,7 @@ async def _exp_pay_out(tname: str) -> None:
             analytics(uid, "expedition_reward", crate=entry["crate"], tribe=tname)
         except Exception as ex:
             print(f"expedition payout failed for {uid}:", ex)
+    _inv_src.reset(_tok)
     async with tribe_only_transaction(tname):
         e = tribe_data.get(tname, {}).get("expedition")
         if not e or e.get("done"):
@@ -10561,6 +10629,31 @@ def build_gamble_menu(user_id: str) -> list:
         ]},
     ]}]
 
+GAMBLE_GAMES = ("coinflip", "slots", "blackjack", "roulette", "rps", "dice", "highlow")
+
+def gamble_game_panel(user_id: str, game: str) -> list | None:
+    """The opening panel for one gambling game (or None for an unknown name).
+    Shared by the /gamble hub dropdown and the per-game /gamble subcommands, so
+    both start every game in exactly the same state."""
+    if game == "coinflip":
+        return build_coinflip_panel(user_id)
+    if game == "slots":
+        return build_slots_panel(user_id)
+    if game == "blackjack":
+        _bj_resume_or_clear(user_id)
+        return build_blackjack_panel(user_id)
+    if game == "roulette":
+        return build_roulette_panel(user_id)
+    if game == "rps":
+        return build_rps_panel(user_id)
+    if game == "dice":
+        return build_dice_panel(user_id)
+    if game == "highlow":
+        data[user_id].pop("_hl_n", None)
+        data[user_id].pop("_hl_s", None)
+        return build_highlow_panel(user_id)
+    return None
+
 def build_gamble_warning_panel(user_id: str) -> list:
     content = (
         f"### {emoji('warning')} A word on gambling\n"
@@ -12778,6 +12871,7 @@ async def _tree_gate(interaction: discord.Interaction) -> bool:
         root = cmd.qualified_name.split(" ", 1)[0]
     else:
         root = ((getattr(interaction, "data", {}) or {}).get("name", "") or "")
+    _inv_src.set("cmd:/" + (cmd.qualified_name if cmd is not None else root))   # for the item ledger
     if root in _CMD_GATE_EXEMPT:
         return True
 
@@ -13366,6 +13460,18 @@ _CROSS_USER_PANELS = {
 
 
 async def _dispatch_component(interaction: discord.Interaction):
+    """Tags the click for the item ledger, runs the real handler, then records what changed."""
+    cid = ((getattr(interaction, "data", {}) or {}).get("custom_id", "") or "") \
+        if interaction.type == discord.InteractionType.component else ""
+    tok = _inv_src.set("btn:" + ":".join(cid.split(":")[:2])) if cid else None
+    try:
+        await _dispatch_component_inner(interaction)
+    finally:
+        inv_flush_touched()
+        if tok is not None:
+            _inv_src.reset(tok)
+
+async def _dispatch_component_inner(interaction: discord.Interaction):
     # Application commands self-bootstrap in their own callbacks; modal submits
     # are routed by discord.py's modal store. Only component interactions are
     # handled here.
@@ -13410,6 +13516,11 @@ async def _dispatch_component(interaction: discord.Interaction):
                 await send_v2_followup(interaction, _own, ephemeral=True)
                 return
             # builder failed — fall through to the normal owner-guarded handler
+
+    # ── /inspect panels (admins) ──────────────
+    if parts[0] == "insp":
+        await _insp_component(interaction, parts)
+        return
 
     # ── GIVEAWAY / DROP / GUESS / RACE ────────
     if parts[0] == "gw":
@@ -16007,35 +16118,15 @@ async def _dispatch_component(interaction: discord.Interaction):
             return
 
         if parts[1] == "game_select":
-            game = values[0] if values else None
-            if game == "coinflip":
-                await smart_update_v2(interaction, build_coinflip_panel(owner_id))
-            elif game == "slots":
-                await smart_update_v2(interaction, build_slots_panel(owner_id))
-            elif game == "blackjack":
-                _bj_resume_or_clear(owner_id)
-                await smart_update_v2(interaction, build_blackjack_panel(owner_id))
-            elif game == "roulette":
-                await smart_update_v2(interaction, build_roulette_panel(owner_id))
-            elif game == "rps":
-                await smart_update_v2(interaction, build_rps_panel(owner_id))
-            elif game == "dice":
-                await smart_update_v2(interaction, build_dice_panel(owner_id))
-            elif game == "highlow":
-                data[owner_id].pop("_hl_n", None)
-                data[owner_id].pop("_hl_s", None)
-                await smart_update_v2(interaction, build_highlow_panel(owner_id))
+            panel = gamble_game_panel(owner_id, values[0] if values else "")
+            if panel:
+                await smart_update_v2(interaction, panel)
             return
 
         if parts[1] == "menu":
-            game = parts[2]
-            if game == "coinflip":
-                await smart_update_v2(interaction, build_coinflip_panel(owner_id))
-            elif game == "slots":
-                await smart_update_v2(interaction, build_slots_panel(owner_id))
-            elif game == "blackjack":
-                _bj_resume_or_clear(owner_id)
-                await smart_update_v2(interaction, build_blackjack_panel(owner_id))
+            panel = gamble_game_panel(owner_id, parts[2])
+            if panel:
+                await smart_update_v2(interaction, panel)
             return
 
         if parts[1] == "cf":
@@ -16713,16 +16804,19 @@ class _V2Modal(discord.ui.Modal):
             return
 
         @functools.wraps(orig)
-        async def on_submit(self, interaction, _orig=orig):
+        async def on_submit(self, interaction, _orig=orig, _src=f"modal:{cls.__name__}"):
             # Discord gives 3s to acknowledge. A form that saves before replying can
             # blow that when the loop or DB is busy, so if we haven't answered by
             # ~2s, defer — the handler's later reply then goes out as a follow-up
             # instead of dying with "Unknown interaction".
             dog = asyncio.ensure_future(_modal_ack_watchdog(interaction))
+            tok = _inv_src.set(_src)
             try:
                 return await _orig(self, interaction)
             finally:
                 dog.cancel()
+                inv_flush_touched()
+                _inv_src.reset(tok)
         cls.on_submit = on_submit
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
@@ -19394,14 +19488,41 @@ async def lottery_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_lottery_components(user_id))
     await check_everything(interaction, user_id)
 
-@bot.tree.command(name="gamble", description="Try your luck at various games")
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@app_commands.allowed_installs(guilds=True, users=True)
-async def gamble_cmd(interaction: discord.Interaction):
+# /gamble is a group so every game is its own searchable command: people type
+# "blackjack" or "coinflip" into Discord's command picker, not "gamble".
+gamble_group = app_commands.Group(
+    name="gamble",
+    description="Casino games — blackjack, coinflip, slots, roulette and more",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+)
+
+@gamble_group.command(name="menu", description="Pick a casino game from the gamble hub")
+async def gamble_menu_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
     await send_v2_followup(interaction, build_gamble_menu(user_id))
     await check_everything(interaction, user_id)
+
+def _register_gamble_game(game: str, blurb: str) -> None:
+    async def _cmd(interaction: discord.Interaction):
+        user_id = await _common_init(interaction)
+        if not user_id: return
+        await send_v2_followup(interaction, gamble_game_panel(user_id, game))
+        await check_everything(interaction, user_id)
+    _cmd.__name__ = f"gamble_{game}_cmd"
+    gamble_group.command(name=game, description=blurb)(_cmd)
+
+for _g, _b in (("blackjack", "Play blackjack — beat the dealer to 21"),
+               ("coinflip",  "Flip a coin — double or nothing"),
+               ("slots",     "Spin the slot machine — match animals on the reels"),
+               ("roulette",  "Play roulette — bet on Red, Black or Green"),
+               ("rps",       "Play rock paper scissors against the bot"),
+               ("dice",      "Roll two dice — bet Low, Seven or High"),
+               ("highlow",   "Play high-low — guess if the next card is higher or lower")):
+    _register_gamble_game(_g, _b)
+
+bot.tree.add_command(gamble_group)
 
 @bot.tree.command(name="suggest", description="Make a suggestion for Idle Hunter")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -20174,19 +20295,20 @@ def _gw_prize_text(p: dict) -> str:
 async def _gw_grant(uid: str, prize: dict) -> None:
     """Pay one winner. Custom prizes are delivered by the host, so only the stat moves."""
     init_user(uid)
-    async with user_transaction(uid):
-        t, n, name = prize["type"], prize.get("amount", 1), prize.get("name", "")
-        if t == "money":
-            add_money(uid, n, "giveaway")
-        elif t == "gems":
-            add_gems(uid, n, "giveaway")
-        elif t == "crate":
-            ci = data[uid].setdefault("crate_inv", {})
-            ci[name] = ci.get(name, 0) + n
-        elif t == "item":
-            add_item(uid, name, n)
-        st = data[uid].setdefault("stats", {})
-        st["giveaways_won"] = st.get("giveaways_won", 0) + 1
+    with inv_source("giveaway"):          # item-ledger tag for the payout
+        async with user_transaction(uid):
+            t, n, name = prize["type"], prize.get("amount", 1), prize.get("name", "")
+            if t == "money":
+                add_money(uid, n, "giveaway")
+            elif t == "gems":
+                add_gems(uid, n, "giveaway")
+            elif t == "crate":
+                ci = data[uid].setdefault("crate_inv", {})
+                ci[name] = ci.get(name, 0) + n
+            elif t == "item":
+                add_item(uid, name, n)
+            st = data[uid].setdefault("stats", {})
+            st["giveaways_won"] = st.get("giveaways_won", 0) + 1
 
 # ── card ──────────────────────────────────────
 
@@ -20779,6 +20901,358 @@ async def giveaway_list_cmd(interaction: discord.Interaction):
     await send_ephemeral_v2(interaction, "### 🎁 Running here\n" + "\n".join(lines), 0x2ECC71)
 
 bot.tree.add_command(giveaway_group)
+
+
+# ─────────────────────────────────────────────
+# /inspect  ·  admin investigation tools — who has what, and how they got it
+# ─────────────────────────────────────────────
+# ◈ and 💎 come from the economy_log table; everything else (ammo, crates, items, trophies,
+# shards, crystals, gemstones, healing items, tools) comes from the item ledger fed by
+# inv_flush_touched(). Logs only exist from the moment the ledger shipped.
+
+INSPECT_PAGE = 8
+_insp_state: dict[str, dict] = {}     # admin id -> {"target","kinds","search","days","page"}
+
+_INSPECT_KIND_CHOICES = [app_commands.Choice(name=n, value=v) for n, v in (
+    ("Everything", "all"), ("Money (◈)", "money"), ("Gems", "gems"), ("Ammo", "ammo"), ("Crates", "crate"),
+    ("Items", "item"), ("Trophies", "trophy"), ("Shards", "shard"), ("Crystals", "crystal"),
+    ("Gemstones", "gemstone"), ("Healing items", "heal"), ("Tools", "tool"))]
+_KIND_ICON = {"money": "◈", "gems": "💎", "ammo": "🎯", "crate": "📦", "item": "🧰", "trophy": "🏆",
+              "shard": "🔹", "crystal": "🔷", "gemstone": "💠", "heal": "🩹", "tool": "🛠️"}
+
+def _insp_ts(created_at: str) -> int:
+    try:
+        return int(datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+def _insp_resolve(text: str) -> tuple[str | None, str]:
+    """A user id, <@mention>, exact username, or unique name fragment -> (uid, '') or (None, why)."""
+    t = (text or "").strip().replace("<@", "").replace("!", "").replace(">", "")
+    if not t:
+        return None, "Give a user — an ID, a mention or part of their name."
+    if t in data:
+        return t, ""
+    low = t.lower()
+    exact = [u for u, d in data.items() if str(d.get("username", "")).lower() == low]
+    if len(exact) == 1:
+        return exact[0], ""
+    hits = [u for u, d in data.items() if low in str(d.get("username", "")).lower()]
+    if len(hits) == 1:
+        return hits[0], ""
+    if len(hits) > 1:
+        return None, f"**{len(hits)}** players match `{t}` — use `/inspect search` or paste the ID."
+    return None, f"No player found for `{t}`."
+
+async def _insp_user_autocomplete(interaction: discord.Interaction, current: str):
+    cur = (current or "").lower()
+    out = []
+    for uid, d in data.items():
+        nm = str(d.get("username", ""))
+        if not cur or cur in nm.lower() or uid.startswith(cur):
+            out.append(app_commands.Choice(name=f"{nm or 'unknown'} ({uid})"[:100], value=uid))
+            if len(out) >= 25:
+                break
+    return out
+
+def _insp_item_names() -> list[str]:
+    names = {*AMMO, *ITEMS, *CRATE_TIERS, *HEALING_ITEMS, *TOOLS, *TROPHY_EFFECTS}
+    return sorted(names)
+
+async def _insp_item_autocomplete(interaction: discord.Interaction, current: str):
+    cur = (current or "").lower()
+    return [app_commands.Choice(name=n, value=n) for n in _insp_item_names() if cur in n.lower()][:25]
+
+def _insp_line(r: dict) -> str:
+    kind, delta = r["kind"], r["delta"]
+    sign = f"+{delta:,}" if delta > 0 else f"{delta:,}"
+    icon = _KIND_ICON.get(kind, "•")
+    what = f"{icon} **{sign}**" if kind in ("money", "gems") else f"{icon} {kind} **{sign} {r['name']}**"
+    return f"<t:{_insp_ts(r['created_at'])}:R> {what} → {r['balance_after']:,} · `{r['source']}`"
+
+def _insp_export_line(r: dict) -> str:
+    what = r["kind"] if r["kind"] in ("money", "gems") else f"{r['kind']}:{r['name']}"
+    return f"{r['created_at']} UTC | {what:<28} | {r['delta']:+,} | now {r['balance_after']:,} | {r['source']}"
+
+def _insp_inv_block(d: dict) -> str:
+    def top(dct, n):
+        pairs = sorted(((k, v) for k, v in (dct or {}).items() if v), key=lambda kv: -kv[1])[:n]
+        return ", ".join(f"{k} ×{v:,}" for k, v in pairs) or "—"
+    eq = d.get("equipped_ammo")
+    return (
+        f"**Ammo:** {top(d.get('ammo_inv'), 6)}" + (f"  ·  equipped: **{eq}**" if eq else "") + "\n"
+        f"**Crates:** {top(d.get('crate_inv'), 6)}\n"
+        f"**Items:** {top(d.get('items'), 6)}\n"
+        f"**Healing:** {top(d.get('healing_inv'), 4)}\n"
+        f"**Trophies:** {top(d.get('myth_items'), 4)}\n"
+        f"**Shards:** {top(d.get('shards'), 6)}"
+    )
+
+async def build_inspect_user_components(admin_id: str, uid: str) -> list:
+    d = data[uid]
+    tname = d.get("tribe")
+    role = tribe_role_of(uid, tname) if tname in tribe_data else None
+    ban = d.get("ban") or {}
+    ban_txt = "none"
+    if ban.get("active"):
+        ban_txt = ("permanent" if not ban.get("expires_ts") else f"until <t:{int(ban['expires_ts'])}:f>") + \
+                  (f" — {ban.get('reason')}" if ban.get("reason") else "")
+    flow = await backend.user_flow(uid, 1)
+    def _flow(c, icon):
+        f = flow.get(c, {})
+        tops = ", ".join(f"`{s}` {icon}{a:,}" for s, a in f.get("top", [])) or "—"
+        return f"{icon} +{f.get('earned', 0):,} / −{f.get('spent', 0):,}  ·  top: {tops}"
+    body = (
+        f"### 🔎 {get_username(uid)}  (`{uid}`)\n"
+        f"Level **{d.get('level', 1):,}** · Prestige **{d.get('prestige', 0)}** · joined {d.get('joined_date', '?')} · "
+        f"hunts **{d.get('stats', {}).get('lifetime_hunts', 0):,}** · caught **{d.get('total_caught', 0):,}**\n"
+        f"◈ **{d.get('money', 0):,}** · 💎 **{d.get('gems', 0):,}** · tool **{d.get('tool', '?')}** · "
+        f"biome **{d.get('biome', '?')}** · HP **{d.get('health', {}).get('hp', '?')}**\n"
+        f"Tribe: **{tname or 'none'}**{f' ({role})' if role else ''} · banned: **{ban_txt}**"
+        + (" · `TESTER`" if d.get("is_tester") else "") + "\n\n"
+        f"{_insp_inv_block(d)}\n\n"
+        f"**Last 24h flow**\n-# {_flow('money', '◈')}\n-# {_flow('gems', '💎')}\n\n"
+        f"-# Item history only exists from when the ledger shipped. Use the buttons or `/inspect item`."
+    )
+    return [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
+        {"type": 10, "content": body[:3900]},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "Recent log", "emoji": {"name": "📜"},
+             "custom_id": f"insp:log:open:{uid}:{admin_id}"},
+            {"type": 2, "style": 2, "label": "Items only", "emoji": {"name": "📦"},
+             "custom_id": f"insp:log:items:{uid}:{admin_id}"},
+            {"type": 2, "style": 2, "label": "Money & gems", "emoji": {"name": "💰"},
+             "custom_id": f"insp:log:cash:{uid}:{admin_id}"},
+        ]},
+    ]}]
+
+async def build_inspect_log_components(admin_id: str) -> list:
+    st = _insp_state.get(admin_id)
+    if not st:
+        return [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False,
+                 "components": [{"type": 10, "content": "Nothing open — run `/inspect log` again."}]}]
+    uid, page = st["target"], st["page"]
+    rows, total = await backend.ledger_query(
+        uid, kinds=st["kinds"], search=st["search"], days=st["days"], limit=INSPECT_PAGE, offset=page * INSPECT_PAGE)
+    pages = max(1, -(-total // INSPECT_PAGE))
+    page = max(0, min(page, pages - 1))
+    st["page"] = page
+    filt = ", ".join(x for x in (
+        ("kinds: " + "/".join(st["kinds"])) if st["kinds"] else "",
+        f"search `{st['search']}`" if st["search"] else "",
+        f"last {st['days']}d" if st["days"] else "") if x) or "no filters"
+    lines = "\n".join(_insp_line(r) for r in rows) or "-# No matching log entries."
+    body = (f"### 📜 {get_username(uid)} — log\n-# `{uid}` · {total:,} entries · {filt} · page {page + 1}/{pages}\n\n{lines}")
+    nav = {"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "◀ Prev", "custom_id": f"insp:log:prev:{uid}:{admin_id}", "disabled": page == 0},
+        {"type": 2, "style": 2, "label": f"{page + 1}/{pages}", "custom_id": f"insp:log:noop:{uid}:{admin_id}", "disabled": True},
+        {"type": 2, "style": 2, "label": "Next ▶", "custom_id": f"insp:log:next:{uid}:{admin_id}", "disabled": page >= pages - 1},
+        {"type": 2, "style": 1, "label": "Profile", "emoji": {"name": "🔎"}, "custom_id": f"insp:user:{uid}:{admin_id}"},
+    ]}
+    return [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
+        {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}, nav]}]
+
+async def build_inspect_item_components(uid: str, name: str, days: int | None) -> list:
+    d = data[uid]
+    prov = await backend.item_provenance(uid, name, days)
+    have = 0
+    for key in ("ammo_inv", "items", "crate_inv", "myth_items", "healing_inv", "shards", "crystals", "gemstones"):
+        have += int((d.get(key) or {}).get(name, 0))
+    if name in (d.get("owned_tools") or []):
+        have += 1
+    def _tbl(rows, sign):
+        out = []
+        for r in rows:
+            out.append(f"`{r['source']}` — **{sign}{abs(r['total']):,}** in {r['count']}× "
+                       f"(<t:{_insp_ts(r['first'])}:d> → <t:{_insp_ts(r['last'])}:R>)")
+        return "\n".join(out) or "-# none recorded"
+    recent = "\n".join(f"<t:{_insp_ts(r['created_at'])}:R> **{r['delta']:+,}** → {r['balance_after']:,} · `{r['source']}`"
+                       for r in prov["recent"]) or "-# none recorded"
+    body = (f"### 🎯 {name} — {get_username(uid)}\n-# `{uid}` · holds **{have:,}** now"
+            f"{f' · last {days}d' if days else ''}\n\n"
+            f"**How they got it**\n{_tbl(prov['gained'], '+')}\n\n"
+            f"**Where it went**\n{_tbl(prov['spent'], '−')}\n\n"
+            f"**Latest changes**\n{recent}\n\n"
+            f"-# Not seeing the history you expect? Item tracking only starts when the ledger shipped, "
+            f"and plain hunting spend is not logged.")
+    return [{"type": 17, "accent_color": 0x9B59B6, "spoiler": False, "components": [
+        {"type": 10, "content": body[:3900]}]}]
+
+# ── commands ──────────────────────────────────
+
+inspect_group = app_commands.Group(
+    name="inspect",
+    description="Admin: look up players, their history and how they got things",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+)
+
+async def _insp_open(interaction: discord.Interaction, user: str):
+    """Defer privately and resolve the target; returns uid or None (already answered)."""
+    await interaction.response.defer(ephemeral=True)
+    uid, why = _insp_resolve(user)
+    if not uid:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {why}", 0xE74C3C)
+        return None
+    return uid
+
+@inspect_group.command(name="user", description="Admin: a player's full overview — stats, inventory, 24h money flow")
+@app_commands.check(is_admin)
+@app_commands.describe(user="Player ID, @mention or name")
+@app_commands.autocomplete(user=_insp_user_autocomplete)
+async def inspect_user_cmd(interaction: discord.Interaction, user: str):
+    uid = await _insp_open(interaction, user)
+    if uid:
+        await send_v2_followup(interaction, await build_inspect_user_components(str(interaction.user.id), uid), ephemeral=True)
+
+@inspect_group.command(name="log", description="Admin: a player's money / gem / item history, with search")
+@app_commands.check(is_admin)
+@app_commands.describe(user="Player ID, @mention or name", kind="Only this kind of change",
+                       search="Match a source (e.g. shop, giveaway) or item name", days="Only the last N days")
+@app_commands.choices(kind=_INSPECT_KIND_CHOICES)
+@app_commands.autocomplete(user=_insp_user_autocomplete)
+async def inspect_log_cmd(interaction: discord.Interaction, user: str, kind: str = "all", search: str = "",
+                          days: app_commands.Range[int, 1, 365] = None):
+    uid = await _insp_open(interaction, user)
+    if not uid:
+        return
+    admin_id = str(interaction.user.id)
+    _insp_state[admin_id] = {"target": uid, "kinds": None if kind == "all" else [kind],
+                             "search": search.strip(), "days": days, "page": 0}
+    await send_v2_followup(interaction, await build_inspect_log_components(admin_id), ephemeral=True)
+
+@inspect_group.command(name="item", description="Admin: how a player got (and lost) one specific item or ammo")
+@app_commands.check(is_admin)
+@app_commands.describe(user="Player ID, @mention or name", name="Item, ammo, crate, trophy or tool name",
+                       days="Only the last N days")
+@app_commands.autocomplete(user=_insp_user_autocomplete, name=_insp_item_autocomplete)
+async def inspect_item_cmd(interaction: discord.Interaction, user: str, name: str,
+                           days: app_commands.Range[int, 1, 365] = None):
+    uid = await _insp_open(interaction, user)
+    if not uid:
+        return
+    match = _gw_match_name(_insp_item_names(), name) or name.strip()
+    await send_v2_followup(interaction, await build_inspect_item_components(uid, match, days), ephemeral=True)
+
+@inspect_group.command(name="who", description="Admin: who has been getting a lot of one item lately, and from where")
+@app_commands.check(is_admin)
+@app_commands.describe(name="Item, ammo, crate, trophy or tool name", days="Look back this many days")
+@app_commands.autocomplete(name=_insp_item_autocomplete)
+async def inspect_who_cmd(interaction: discord.Interaction, name: str, days: app_commands.Range[int, 1, 90] = 7):
+    await interaction.response.defer(ephemeral=True)
+    match = _gw_match_name(_insp_item_names(), name) or name.strip()
+    rows = await backend.item_who(match, days)
+    if not rows:
+        await send_ephemeral_v2(interaction, f"No recorded changes to **{match}** in the last {days} days.", 0xE67E22)
+        return
+    lines = [f"{i}. `{get_username(r['user_id'])}` (`{r['user_id']}`) — **+{r['gained']:,}** / −{r['spent']:,} "
+             f"· mostly `{r['top_source']}` ({r['top_amount']:,})" for i, r in enumerate(rows, 1)]
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x9B59B6, "spoiler": False, "components": [
+        {"type": 10, "content": f"### 🎯 Who got **{match}** — last {days}d\n" + "\n".join(lines)[:3800]}]}], ephemeral=True)
+
+@inspect_group.command(name="search", description="Admin: find players by name or ID")
+@app_commands.check(is_admin)
+@app_commands.describe(query="Part of a name or an ID", sort="How to order the matches")
+@app_commands.choices(sort=[app_commands.Choice(name=n, value=v) for n, v in
+                            (("Level", "level"), ("Money", "money"), ("Gems", "gems"), ("Name", "name"))])
+async def inspect_search_cmd(interaction: discord.Interaction, query: str, sort: str = "level"):
+    await interaction.response.defer(ephemeral=True)
+    q = query.strip().lower()
+    hits = [(u, d) for u, d in data.items() if q and (q in str(d.get("username", "")).lower() or u.startswith(q))]
+    key = {"level": lambda x: -x[1].get("level", 1), "money": lambda x: -x[1].get("money", 0),
+           "gems": lambda x: -x[1].get("gems", 0), "name": lambda x: str(x[1].get("username", "")).lower()}[sort]
+    hits.sort(key=key)
+    if not hits:
+        await send_ephemeral_v2(interaction, f"No players match `{query}`.", 0xE67E22)
+        return
+    lines = [f"`{d.get('username', '?')}` (`{u}`) — Lv **{d.get('level', 1):,}** · ◈ {d.get('money', 0):,} · "
+             f"💎 {d.get('gems', 0):,}" + (" · `BANNED`" if is_banned(u) else "") + (" · `TESTER`" if d.get("is_tester") else "")
+             for u, d in hits[:20]]
+    more = f"\n-# …and {len(hits) - 20} more — narrow the search." if len(hits) > 20 else ""
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
+        {"type": 10, "content": f"### 🔎 {len(hits)} match(es) for `{query}`\n" + "\n".join(lines) + more}]}], ephemeral=True)
+
+@inspect_group.command(name="export", description="Admin: download a player's full log as a text file")
+@app_commands.check(is_admin)
+@app_commands.describe(user="Player ID, @mention or name", days="Look back this many days (default 7)")
+@app_commands.autocomplete(user=_insp_user_autocomplete)
+async def inspect_export_cmd(interaction: discord.Interaction, user: str, days: app_commands.Range[int, 1, 90] = 7):
+    uid = await _insp_open(interaction, user)
+    if not uid:
+        return
+    rows, total = await backend.ledger_query(uid, days=days, limit=5000, offset=0)
+    head = f"Ledger for {get_username(uid)} ({uid}) — last {days} days — {total:,} entries" + \
+           (f" (showing newest {len(rows):,})" if total > len(rows) else "")
+    text = head + "\n" + "-" * len(head) + "\n" + "\n".join(_insp_export_line(r) for r in rows)
+    admin_audit(interaction.user.id, "inspect_export", f"{uid} {days}d")
+    await interaction.followup.send(content=f"📄 {head}", ephemeral=True,
+                                    file=discord.File(io.BytesIO(text.encode("utf-8")), filename=f"ledger_{uid}.txt"))
+
+@inspect_group.command(name="actions", description="Admin: recent admin actions (bans, grants, giveaways…)")
+@app_commands.check(is_admin)
+@app_commands.describe(search="Only lines containing this", count="How many (default 15)")
+async def inspect_actions_cmd(interaction: discord.Interaction, search: str = "",
+                              count: app_commands.Range[int, 1, 40] = 15):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        with open(ADMIN_LOG_FILE, "r", encoding="utf-8") as f:
+            raw = f.readlines()[-3000:]
+    except OSError:
+        raw = []
+    out = []
+    for line in reversed(raw):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        txt = f"<t:{int(e.get('ts', 0))}:R> <@{e.get('admin')}> **{e.get('action')}** — {str(e.get('detail', ''))[:120]}"
+        if search.lower() in txt.lower():
+            out.append(txt)
+        if len(out) >= count:
+            break
+    await send_ephemeral_v2(interaction, "### 🧾 Admin actions\n" + ("\n".join(out) or "-# Nothing matches."), 0x3498DB)
+
+@inspect_group.command(name="economy", description="Admin: how much money or gems the game is creating and removing")
+@app_commands.check(is_admin)
+@app_commands.describe(currency="Money or gems")
+@app_commands.choices(currency=[app_commands.Choice(name="Money (◈)", value="money"),
+                                app_commands.Choice(name="Gems", value="gems")])
+async def inspect_economy_cmd(interaction: discord.Interaction, currency: str = "money"):
+    await interaction.response.defer(ephemeral=True)
+    icon = "◈" if currency == "money" else (emoji("gem") or "💎")
+    text = _currency_balance_block(currency, icon, "Money" if currency == "money" else "Gems") + "\n" + \
+        await _currency_flow_block(currency, icon)
+    await send_ephemeral_v2(interaction, f"### 📊 {currency.title()} economy\n{text}"[:3900], 0x3498DB)
+
+bot.tree.add_command(inspect_group)
+
+async def _insp_component(interaction: discord.Interaction, parts: list[str]) -> None:
+    """insp:<log|user>:<action>:<target>:<admin>  — the panels' buttons (admins only)."""
+    admin_id = parts[-1]
+    if str(interaction.user.id) != admin_id or admin_id not in BOT_ADMIN_ID:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Admins only.", 0xE74C3C)
+        return
+    if parts[1] == "user":
+        uid = parts[2]
+        if uid not in data:
+            await send_ephemeral_v2(interaction, "That player no longer exists.", 0xE74C3C)
+            return
+        await smart_update_v2(interaction, await build_inspect_user_components(admin_id, uid))
+        return
+    act, uid = parts[2], parts[3]
+    st = _insp_state.get(admin_id)
+    if act in ("open", "items", "cash") or not st or st["target"] != uid:
+        kinds = {"items": ["ammo", "crate", "item", "trophy", "shard", "crystal", "gemstone", "heal", "tool"],
+                 "cash": ["money", "gems"]}.get(act)
+        st = _insp_state[admin_id] = {"target": uid, "kinds": kinds, "search": "", "days": None, "page": 0}
+    elif act == "prev":
+        st["page"] = max(0, st["page"] - 1)
+    elif act == "next":
+        st["page"] += 1
+    await smart_update_v2(interaction, await build_inspect_log_components(admin_id))
+
+
 
 
 
@@ -22119,6 +22593,8 @@ async def autosave_users():
         await bulk_save_users(data)
     try:
         await backend.flush_economy_buffer()
+        inv_flush_touched()
+        await backend.flush_item_buffer()
     except Exception as e:
         print("economy flush error:", e)
     try:
@@ -22686,10 +23162,31 @@ _V2_BACKGROUND_TASKS.append(weekly_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(daily_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(giveaway_task)
 
+@tasks.loop(seconds=5)
+async def inv_ledger_task():
+    """Catch anything that changed outside an interaction (payouts, ticks) and write the queue."""
+    try:
+        inv_flush_touched()
+        await backend.flush_item_buffer()
+    except Exception as e:
+        print("item ledger flush failed:", e)
+
+@inv_ledger_task.error
+async def _ilte(error): print("Item ledger task error:", error)
+
+_V2_BACKGROUND_TASKS.append(inv_ledger_task)
+
+@bot.event
+async def on_app_command_completion(interaction, command):
+    inv_flush_touched()
+
 @tasks.loop(hours=24)
 async def analytics_prune_task():
     """Keep the analytics table bounded — drop rows older than 120 days."""
     try:
+        removed = await backend.item_log_prune(45)
+        if removed:
+            print(f"🧹 Pruned {removed} old item-ledger rows.")
         removed = await backend.prune_analytics(120)
         if removed:
             print(f"🧹 Pruned {removed} old analytics rows.")
@@ -23050,6 +23547,8 @@ async def _graceful_close():
         print(f"  runtime-state save failed: {e}")
     try:
         await backend.flush_economy_buffer()
+        inv_flush_touched()
+        await backend.flush_item_buffer()
     except Exception as e:
         print(f"  economy-buffer flush failed: {e}")
     try:

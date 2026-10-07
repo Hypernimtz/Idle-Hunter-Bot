@@ -44,7 +44,7 @@ Invite the bot to your server or install it as a user app, then run any command 
 | `/prestige` | Reset for a permanent boost multiplier |
 | `/profile` | View your profile and statistics |
 | `/leaderboard` | View global rankings |
-| `/gamble` | Try your luck at mini-games |
+| `/gamble blackjack` · `coinflip` · `slots` · `roulette` · `rps` · `dice` · `highlow` · `menu` | Every casino game is its own command |
 | `/lottery` | Buy tickets for the daily draw |
 | `/gift` | Send money or gems to another player |
 | `/record` | View your catch record book |
