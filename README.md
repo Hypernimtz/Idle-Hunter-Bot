@@ -27,6 +27,10 @@ Start your hunting journey with any command and a detailed tutorial!
 
 ---
 
+## ⌨️ Text commands
+
+Prefer typing? Start any message with **`ih `** (with the space): `ih hunt`, `ih daily`, `ih bj`, `ih cf`, `ih lb`, `ih tribe`… Send just `ih` for the cheat sheet. They run exactly the same code as the slash commands (same bans, verify and maintenance gates); anything that needs a form still uses the slash command. Admin commands are never available as text.
+
 ## 🚀 Getting Started
 
 Invite the bot to your server or install it as a user app, then run any command to begin. A tutorial will walk you through the basics automatically.

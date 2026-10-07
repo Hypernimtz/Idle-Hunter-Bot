@@ -140,6 +140,7 @@ from backend import (
 )
 from dotenv import load_dotenv
 import os, sys, re, io
+from types import SimpleNamespace
 import functools
 import heapq
 load_dotenv("token.env")
@@ -174,10 +175,28 @@ intents = discord.Intents.default()
 # message_content is deliberately OFF: the bot is slash/component-only (no
 # on_message, no prefix commands) and the intent needs Discord approval past
 # 100 servers. `members` stays on — server leaderboards read guild.members.
-intents.message_content = False
+intents.message_content = True      # privileged: needed to read "ih hunt" style text commands.
+                                    # Enabled in the dev portal; past 100 servers Discord requires approval.
 intents.members = True
 
-bot = commands.Bot(command_prefix=".", intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned_or("ih "), intents=intents)
+
+# ── staff-only commands ──────────────────────────────────────────────────────
+# With STAFF_GUILD_ID set (token.env), the admin command groups are registered to that one
+# server only: they don't exist in anyone else's command picker or the bot's profile.
+# Unset, or if the server can't be reached at startup, they fall back to global so the
+# tools are never lost.
+try:
+    _STAFF_GUILD_ID = int(os.getenv("STAFF_GUILD_ID", "0") or 0)
+except ValueError:
+    _STAFF_GUILD_ID = 0
+_STAFF = discord.Object(id=_STAFF_GUILD_ID) if _STAFF_GUILD_ID else None
+_STAFF_COMMANDS: list = []
+
+def _add_staff_command(cmd) -> None:
+    bot.tree.add_command(cmd, guild=_STAFF)        # guild=None -> a normal global command
+    if _STAFF is not None:
+        _STAFF_COMMANDS.append(cmd)
 
 # ─────────────────────────────────────────────
 # ADMINS
@@ -238,6 +257,8 @@ IDLE_STACK_MULTIPLIER = 2
 _CATCHABLE_ANIMALS = {a for lst in BIOME_ANIMALS.values() for a in lst}
 
 HUNT_COOLDOWN         = 3
+PREFIX_COOLDOWN       = 1.2     # seconds between a player's text commands (silently ignored inside it)
+PREFIX_EPHEMERAL_TTL  = 20      # "private" replies to text commands vanish after this long
 MYTH_ENCOUNTER_BASE   = 0.005   # base per-hunt chance to meet a cryptid (before luck / event)
 MYTH_ENCOUNTER_LUCK   = 0.02    # extra chance approached asymptotically with luck
 MYTH_ENCOUNTER_MAX    = 0.05    # hard cap after luck + event multiplier
@@ -392,13 +413,13 @@ ADMIN_BUFF_EVENT = {
         f"{ph(emoji('idle_camp'))} Idle camp: **×2** catch rate & **×2** storage",
         f"{ph(emoji('gem'))} Shard drops **10% → 25%**, crate drops **5% → 15%**",
         f"{ph('📅')} Daily reward **×2**",
-        f"{emoji('shop')} Shop **50% off** everything",
+        f"{emoji('shop')} Shop **25% off** ammo, healing & items (not tools, vehicles or 💎 prices)",
         f"{emoji('dice')} Gamble: **no cooldown between wagers**",
         f"{ph('👹')} Mythic encounters **×3**, kill chance **+20**",
         f"{emoji('gift')} A one-time **bonus check** the first time you play",
     ],
-    "gift_money": 5_000_000,
-    "gift_gems":  75,
+    "gift_money": 1_000_000,
+    "gift_gems":  25,
     "gift_crate": "Rare Crate",
 }
 
@@ -557,9 +578,17 @@ def ev_ammo_free() -> bool:       return admin_buff_active()
 def ev_travel_free() -> bool:     return admin_buff_active()
 def ev_craft_instant() -> bool:   return admin_buff_active()
 
-def ev_price(base: int) -> int:
-    """Shop price after the event 50%-off, floored at 1."""
-    return max(1, base // 2) if admin_buff_active() else base
+EVENT_SHOP_DISCOUNT_PCT = 25
+# purchases that never get the Admin's Day Off discount (the long-term gear chase)
+_NO_EVENT_DISCOUNT_SOURCES = {"shop tool", "vehicle shop"}
+
+def ev_price(base: int, *, currency: str = "money", gear: bool = False) -> int:
+    """Shop price during Admin's Day Off: 25% off money-priced consumables (ammo, healing items,
+    items). Tools, vehicles and anything priced in 💎 are never discounted — half-price Cosmic
+    RPGs for gems was far too strong. Floored at 1."""
+    if not admin_buff_active() or gear or currency == "gems":
+        return base
+    return max(1, base * (100 - EVENT_SHOP_DISCOUNT_PCT) // 100)
 
 def event_banner_line() -> str:
     ev = get_active_event()
@@ -2393,9 +2422,9 @@ async def _treasury_deposit(uid: str, money: int, gems: int) -> tuple[bool, str]
         if data[uid]["gems"] < gems:
             return False, f"You only have {data[uid]['gems']:,} gems."
         if money:
-            spend_money(uid, money, "tribe treasury")
+            spend_money(uid, money, "tribe treasury", tname)
         if gems:
-            spend_gems(uid, gems, "tribe treasury")
+            spend_gems(uid, gems, "tribe treasury", tname)
         tr = td["treasury"]
         tr["money"] += money
         tr["gems"] += gems
@@ -3121,46 +3150,50 @@ async def _tribe_perm(interaction, user_id: str, tribe_name: str,
         return False
     return True
 
-def add_money(user_id: str, amount: int, source: str) -> None:
+# `detail` says WHAT it was for (the tool bought, who a gift went to…); the command/button that
+# caused the change is recorded automatically. Both show up in /inspect log.
+def add_money(user_id: str, amount: int, source: str, detail: str = "") -> None:
     data[user_id]["money"] += amount
     mark_user_dirty(user_id)
     if amount != 0:
-        log_economy_event(user_id, source, amount, data[user_id]["money"])
+        log_economy_event(user_id, source, amount, data[user_id]["money"], detail=detail, ctx=_inv_src.get())
         session_track_money(user_id, source, amount)
 
-def spend_money(user_id: str, amount: int, source: str) -> bool:
+def spend_money(user_id: str, amount: int, source: str, detail: str = "") -> bool:
     if data[user_id]["money"] < amount:
         return False
     data[user_id]["money"] -= amount
     mark_user_dirty(user_id)
-    log_economy_event(user_id, source, -amount, data[user_id]["money"])
+    log_economy_event(user_id, source, -amount, data[user_id]["money"], detail=detail, ctx=_inv_src.get())
     session_track_money(user_id, source, -amount)
     return True
 
-def spend_gems(user_id: str, amount: int, source: str) -> bool:
+def spend_gems(user_id: str, amount: int, source: str, detail: str = "") -> bool:
     if data[user_id]["gems"] < amount:
         return False
     data[user_id]["gems"] -= amount
     mark_user_dirty(user_id)
-    log_economy_event(user_id, source, -amount, data[user_id]["gems"], currency="gems")
+    log_economy_event(user_id, source, -amount, data[user_id]["gems"], currency="gems",
+                      detail=detail, ctx=_inv_src.get())
     return True
 
-def add_gems(user_id: str, amount: int, source: str) -> None:
+def add_gems(user_id: str, amount: int, source: str, detail: str = "") -> None:
     data[user_id]["gems"] += amount
     mark_user_dirty(user_id)
     if amount != 0:
-        log_economy_event(user_id, source, amount, data[user_id]["gems"], currency="gems")
+        log_economy_event(user_id, source, amount, data[user_id]["gems"], currency="gems",
+                          detail=detail, ctx=_inv_src.get())
 
-def _shop_purchase(user_id: str, currency: str, price: int, source: str) -> tuple[bool, str]:
+def _shop_purchase(user_id: str, currency: str, price: int, source: str, detail: str = "") -> tuple[bool, str]:
     """Charge ``price`` in ``currency`` ("gems" or "money"). MUST be called inside
     a ``user_transaction``. Returns ``(ok, error_message)`` — on failure nothing
     was charged, so the caller must not grant the item."""
-    price = ev_price(int(price))   # event 50%-off, no-op otherwise
+    price = ev_price(int(price), currency=currency, gear=source in _NO_EVENT_DISCOUNT_SOURCES)
     if currency == "gems":
-        if not spend_gems(user_id, price, source):
+        if not spend_gems(user_id, price, source, detail):
             return False, f"{emoji('cross_mark')} You need {emoji('gem')} {price:,} for that."
     else:
-        if not spend_money(user_id, price, source):
+        if not spend_money(user_id, price, source, detail):
             return False, f"{emoji('cross_mark')} You need ◈ {price:,} for that."
     return True, ""
 
@@ -4168,7 +4201,104 @@ async def _http_retry(interaction, route, payload: dict, tries: int = 3):
                            type(e).__name__, attempt + 1, tries - 1)
             await asyncio.sleep(0.4 * (attempt + 1))
 
+class PrefixUnsupported(Exception):
+    """A command tried to do something only a real interaction can (open a modal…)."""
+
+def _is_msg(interaction) -> bool:
+    return bool(getattr(interaction, "is_prefix", False))
+
+async def _msg_delete_later(channel_id: int, message_id: int, delay: float) -> None:
+    await asyncio.sleep(delay)
+    try:
+        await bot.http.request(Route("DELETE", "/channels/{channel_id}/messages/{message_id}",
+                                     channel_id=channel_id, message_id=message_id))
+    except Exception:
+        pass
+
+async def _msg_send(interaction, components: list | None = None, *, ephemeral: bool = False,
+                    content: str | None = None) -> dict | None:
+    """Post a command's reply into the channel as a reply to the player's text message.
+    There is no such thing as an ephemeral message for a text command, so anything that
+    would have been private disappears again after PREFIX_EPHEMERAL_TTL seconds."""
+    payload: dict = {"allowed_mentions": {"parse": [], "replied_user": False},
+                     "message_reference": {"message_id": str(interaction.id), "fail_if_not_exists": False}}
+    if components is not None:
+        _clean_components(components)
+        payload["flags"] = V2_FLAGS
+        payload["components"] = components
+    else:
+        payload["content"] = (content or "")[:2000]
+    try:
+        msg = await bot.http.request(
+            Route("POST", "/channels/{channel_id}/messages", channel_id=interaction.channel_id), json=payload)
+    except Exception as e:
+        logger.warning("text-command reply failed: %s", e)
+        return None
+    if ephemeral and msg:
+        asyncio.ensure_future(_msg_delete_later(interaction.channel_id, int(msg["id"]), PREFIX_EPHEMERAL_TTL))
+    return msg
+
+class _MsgResponse:
+    def __init__(self, interaction):
+        self._i, self.done = interaction, False
+    def is_done(self) -> bool:
+        return self.done
+    async def defer(self, **k):
+        if not self.done:
+            self.done = True
+            asyncio.ensure_future(self._typing())
+    async def _typing(self):
+        try:
+            await bot.http.send_typing(self._i.channel_id)
+        except Exception:
+            pass
+    async def send_message(self, content=None, *, ephemeral=False, embed=None, view=None, **k):
+        self.done = True
+        await _msg_send(self._i, ephemeral=ephemeral, content=content or "")
+    async def send_modal(self, modal):
+        raise PrefixUnsupported("modal")
+    async def edit_message(self, *a, **k):
+        raise PrefixUnsupported("edit")
+
+class _MsgFollowup:
+    def __init__(self, interaction):
+        self._i = interaction
+    async def send(self, content=None, *, ephemeral=False, file=None, **k):
+        if file is not None:
+            return await self._i.channel.send(content=content, file=file)
+        return await _msg_send(self._i, ephemeral=ephemeral, content=content or "")
+
+class MessageInteraction:
+    """Duck-types discord.Interaction for a command typed as text ("ih hunt"), so the very
+    same command functions run for both. Replies go to the channel (see _msg_send)."""
+    is_prefix = True
+    def __init__(self, message: discord.Message, command=None):
+        self.trigger = message
+        self.id = message.id
+        self.type = discord.InteractionType.application_command
+        self.user = message.author
+        self.guild = message.guild
+        self.guild_id = message.guild.id if message.guild else None
+        self.channel = message.channel
+        self.channel_id = message.channel.id
+        self.client = bot
+        self.application_id = bot.application_id
+        self.token = ""
+        self.message = None
+        self.locale = None
+        self.command = command
+        self.data = {"name": (command.qualified_name.split(" ")[0] if command else ""), "options": []}
+        self.namespace = SimpleNamespace()
+        self.response = _MsgResponse(self)
+        self.followup = _MsgFollowup(self)
+
 async def _raw(interaction: discord.Interaction, payload: dict):
+    if _is_msg(interaction):
+        d = payload.get("data") or {}
+        if payload.get("type") == 4:
+            interaction.response.done = True
+            await _msg_send(interaction, d.get("components"), ephemeral=bool(d.get("flags", 0) & 64))
+        return
     try:
         _clean_components((payload.get("data") or {}).get("components"))
     except Exception:
@@ -4198,6 +4328,9 @@ async def _raw(interaction: discord.Interaction, payload: dict):
                        INSTANCE_ID, payload.get("type"))
 
 async def update_v2(interaction: discord.Interaction, components: list):
+    if _is_msg(interaction):
+        await _msg_send(interaction, components)
+        return
     _clean_components(components)
     await _raw(interaction, {
         "type": 7,
@@ -4205,6 +4338,9 @@ async def update_v2(interaction: discord.Interaction, components: list):
     })
 
 async def edit_v2(interaction: discord.Interaction, components: list):
+    if _is_msg(interaction):
+        await _msg_send(interaction, components)
+        return
     _clean_components(components)
     route = Route(
         "PATCH",
@@ -4224,6 +4360,9 @@ async def smart_update_v2(interaction, components):
     # if it fails: the interaction can already be acked (a swallowed defer error,
     # or a second bot instance that beat us to it) in ways ``is_done()`` doesn't
     # see, and vice versa.
+    if _is_msg(interaction):
+        await _msg_send(interaction, components)
+        return
     primary, fallback = (
         (edit_v2, update_v2) if interaction.response.is_done()
         else (update_v2, edit_v2)
@@ -4238,6 +4377,10 @@ async def smart_update_v2(interaction, components):
 async def send_v2_followup(interaction: discord.Interaction, components: list, *, ephemeral: bool = False):
     """Send a v2 container. ACK-aware: initial response (type 4) if the
     interaction is still unacknowledged, otherwise on the followup route."""
+    if _is_msg(interaction):
+        interaction.response.done = True
+        await _msg_send(interaction, components, ephemeral=ephemeral)
+        return
     _clean_components(components)
     flags = V2_FLAGS | 64 if ephemeral else V2_FLAGS
     if not interaction.response.is_done():
@@ -4282,6 +4425,11 @@ async def send_ephemeral_v2(interaction: discord.Interaction, content: str, colo
     """
     container = [{"type": 17, "accent_color": color, "spoiler": False,
         "components": [{"type": 10, "content": content}]}]
+
+    if _is_msg(interaction):
+        interaction.response.done = True
+        await _msg_send(interaction, container, ephemeral=True)
+        return
 
     if not interaction.response.is_done():
         await _raw(interaction, {"type": 4, "data": {
@@ -5778,10 +5926,13 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
 
     # Combat is deliberately styled apart from every browsing screen — no
     # shop/inventory/menu chrome, just the two combatants and the log.
-    body = (
+    has_art = bool(_emoji_cdn_url(ico, size=256))
+    head = (
         f"## {emoji('warning')} WILD {name.upper()}\n"
         f"{extra_line}"
-        f"### {ico} {name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}\n\n"
+        f"### {'ITS HP' if has_art else ico + ' ' + name.upper()}\n{mhp}/{mmax}\n{_hp_bar(mhp, mmax)}"
+    )
+    body = (
         f"{hp_ico} **YOU**\n{hp}/{mx}\n{_hp_bar(hp, mx)}\n\n"
         f"{log_txt}"
     )
@@ -5791,6 +5942,7 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
         return {"type": 2, "style": style, "label": label, "emoji": emoji_partial(emj),
                 "disabled": disabled, "custom_id": f"hunt:afight:{action}:{eid}:{user_id}"}
     return [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
+        _art_block(head, ico, name),
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [_abtn("attack", "Attack", 3, "bow"),
@@ -5835,8 +5987,10 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
         body = (f"### `💨` {name} — you got away.\n"
                 "-# No catch this time — but you live to hunt again.")
         color = 0xE67E22
+    if _emoji_cdn_url(ico, size=256):          # the art sits top right, so drop the inline emoji from the heading
+        body = body.replace(f"### {ico} ", "### ", 1)
     return [{"type": 17, "accent_color": color, "spoiler": False, "components": [
-        {"type": 10, "content": body},
+        _art_block(body, ico, name),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}"},
@@ -7601,14 +7755,17 @@ _MYTH_TAUNTS = [
     "Somewhere, a folklorist is taking notes.",
 ]
 
-def _myth_art_block(text: str, name: str) -> dict:
-    """The creature's big art at the top right of the panel (a text block with a
-    thumbnail), or a plain text block when it only has a unicode fallback emoji."""
-    url = _emoji_cdn_url(creature_emoji(name), size=256)
+def _art_block(text: str, icon: str, alt: str) -> dict:
+    """A text block with `icon`'s art as a big thumbnail at the top right — or a plain text
+    block when it only has a unicode fallback emoji (those have no image to show)."""
+    url = _emoji_cdn_url(icon, size=256)
     if not url:
         return {"type": 10, "content": text}
     return {"type": 9, "components": [{"type": 10, "content": text}],
-            "accessory": {"type": 11, "media": {"url": url}, "description": name}}
+            "accessory": {"type": 11, "media": {"url": url}, "description": alt}}
+
+def _myth_art_block(text: str, name: str) -> dict:
+    return _art_block(text, creature_emoji(name), name)
 
 def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
     """The turn-based boss-fight panel: HP bars + a rolling combat log + actions."""
@@ -8718,7 +8875,8 @@ _SHOP_BOOST_ICONS = {"luck": "luck", "sell": "sell_boost", "xp": "xp_boost", "cr
 
 def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     d = data[user_id]
-    _ev_note = (f"\n{ADMIN_BUFF_EVENT['emoji']} **Admin's Day Off** — every price is **50% off**"
+    _ev_note = (f"\n{ADMIN_BUFF_EVENT['emoji']} **Admin's Day Off** — ammo, healing & items are **{EVENT_SHOP_DISCOUNT_PCT}% off** "
+                    f"(tools, vehicles and 💎 prices are unchanged)"
                 if admin_buff_active() else
                 "\n-# `🦆` The ducks have taken the shop. They're letting you browse. For now."
                 if active_event_key() == "duck" else "")
@@ -8746,7 +8904,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
             icon      = emoji(_SHOP_BOOST_ICONS.get(boost_key, "")) or emoji('potion_bottle')
             bought    = shop_bought_count(d, name) if boost_key else 0
             maxed     = bought >= item["max_qty"]
-            _pr       = ev_price(shop_boost_price(name, bought))
+            _pr       = ev_price(shop_boost_price(name, bought), currency=item["currency"])
             price_line = (f"{emoji('check_mark')} Maxed" if maxed else
                           (f"{emoji('gem')} {_shop_price_str(_pr)}" if item["currency"] == "gems"
                            else f"◈ {_shop_price_str(_pr)}"))
@@ -8783,7 +8941,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         for name, t in page_tools:
             already  = name in owned
             equipped = already and name == equipped_t
-            _pr      = ev_price(t['price'])
+            _pr      = ev_price(t['price'], currency=t["currency"], gear=True)
             acc_emoji = None
             if already:
                 status_line = f"{emoji('check_mark')} Owned" + (" · Equipped" if equipped else "")
@@ -8858,7 +9016,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         for name in grouped[current_type]:
             a         = AMMO[name]
             owned_qty = d.get("ammo_inv", {}).get(name, 0)
-            _pr       = ev_price(a['price'])
+            _pr       = ev_price(a['price'], currency=a["currency"])
             ps        = (f"◈ {_shop_price_str(_pr)}/shot" if a["currency"] == "money"
                          else f"{emoji('gem')} {_shop_price_str(_pr)}/shot")
             boosts_s  = f"+{a['boost_luck']}% Luck · +{a['boost_sell']}% Sell · +{a['boost_xp']}% XP"
@@ -8935,7 +9093,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         for name, spec in ITEM_GEM_SHOP.items():
             it = ITEMS[name]
             owned_qty = item_count(user_id, name)
-            _pr = ev_price(spec["price"])
+            _pr = ev_price(spec["price"], currency="gems")
             content = (f"### {it['emoji']} {name}\n"
                       f"Owned: **{owned_qty}/{ITEM_STACK_CAP}** · {emoji('gem')} {_shop_price_str(_pr)}\n"
                       f"-# {it['description']}")
@@ -8965,7 +9123,7 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
         for name, v in page_vehicles:
             already  = name in owned_v
             is_equip = name == equipped_v
-            _pr      = ev_price(v['price'])
+            _pr      = ev_price(v['price'], currency=v["currency"], gear=True)
             cd_str   = f"-{v['boost_cd']}s cooldown"
             luck_str = f" · +{v['boost_luck']}% Luck" if v["boost_luck"] else ""
             if is_equip:
@@ -13552,15 +13710,25 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 return
             async with user_transaction(clicker):
                 result = run_hunt(clicker)
-            if not result.get("ok"):
+            if result.get("ok"):
+                await award_tribe_xp(clicker, "hunt", catches=len(result.get("catches", [])),
+                                     biome=result.get("biome", ""))
+                await _event_hunt_hook(clicker)
+                await _guild_goal_contribute(interaction, clicker, len(result.get("catches", [])))
+            if result.get("boss_pending"):
+                panel = build_myth_encounter_components(clicker, result["creature"])
+            elif result.get("tracking_pending") or result.get("tracking_encounter") or tracking_active(clicker):
+                panel = build_tracking_components(clicker)
+            elif result.get("animal_fight_pending") or animal_fight_active(clicker):
+                panel = build_animal_fight_components(clicker)
+            elif not result.get("ok"):          # blocked (traveling, no ammo, verify…): private, like the menu
                 await send_v2_followup(interaction, build_menu_components(
                     clicker, interaction.user.display_name), ephemeral=True)
                 return
-            await award_tribe_xp(clicker, "hunt", catches=len(result.get("catches", [])),
-                                 biome=result.get("biome", ""))
-            await _event_hunt_hook(clicker)
-            await _guild_goal_contribute(interaction, clicker, len(result.get("catches", [])))
-            await send_v2_followup(interaction, build_hunt_components(clicker, result), ephemeral=True)
+            else:
+                data[clicker]["_display_name"] = interaction.user.display_name
+                panel = build_hunt_components(clicker, result)
+            await send_v2_followup(interaction, panel)       # public, so the channel sees the hunt
             return
         if sub == "travel":
             biome_key = parts[2] if len(parts) > 2 else ""
@@ -14856,7 +15024,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     ok, err = False, f"Max {item_name} already owned."
                 else:
                     price = shop_boost_price(item_name, bought)
-                    ok, err = _shop_purchase(owner_id, item["currency"], price, "shop boost")
+                    ok, err = _shop_purchase(owner_id, item["currency"], price, "shop boost", f"{item_name} #{bought + 1}")
                     if ok:
                         _shop_bought_map(data[owner_id])[item_name] = bought + 1
                         if boost_key:
@@ -14874,7 +15042,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 return
             async with user_transaction(owner_id):
                 price = healing_item_price(item_name, data[owner_id].get("level", 1))
-                ok, err = _shop_purchase(owner_id, "money", price, "healing item")
+                ok, err = _shop_purchase(owner_id, "money", price, "healing item", item_name)
                 if ok:
                     hi = data[owner_id].setdefault("healing_inv", {})
                     hi[item_name] = hi.get(item_name, 0) + 1
@@ -14896,9 +15064,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     ok, err = False, f"{emoji('cross_mark')} You already have the max ({ITEM_STACK_CAP}) of this item."
                 elif gold_spec:
                     price = item_shop_price(gold_spec["price_x"], data[owner_id].get("level", 1))
-                    ok, err = _shop_purchase(owner_id, "money", price, "shop item")
+                    ok, err = _shop_purchase(owner_id, "money", price, "shop item", item_name)
                 else:
-                    ok, err = _shop_purchase(owner_id, "gems", gem_spec["price"], "shop item")
+                    ok, err = _shop_purchase(owner_id, "gems", gem_spec["price"], "shop item", item_name)
                 if ok:
                     add_item(owner_id, item_name, 1)
             if not ok:
@@ -14934,7 +15102,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 if tool_name in data[owner_id].get("owned_tools", []):
                     ok, err = False, "Already owned."
                 else:
-                    ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool")
+                    ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool", tool_name)
                 if ok:
                     data[owner_id]["owned_tools"].append(tool_name)
                     data[owner_id]["tool"] = tool_name
@@ -14962,7 +15130,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 if tool_name in data[owner_id].get("owned_tools", []):
                     ok, err = False, "Already owned."
                 else:
-                    ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool")
+                    ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool", tool_name)
                 if ok:
                     data[owner_id]["owned_tools"].append(tool_name)
                     data[owner_id]["tool"] = tool_name
@@ -15015,7 +15183,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 if vehicle_name in data[owner_id].get("owned_vehicles", []):
                     ok, err = False, "Already owned."
                 else:
-                    ok, err = _shop_purchase(owner_id, v["currency"], v["price"], "vehicle shop")
+                    ok, err = _shop_purchase(owner_id, v["currency"], v["price"], "vehicle shop", vehicle_name)
                 if ok:
                     data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
                     data[owner_id]["vehicle"] = vehicle_name
@@ -15046,7 +15214,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 if vehicle_name in data[owner_id].get("owned_vehicles", []):
                     ok, err = False, "Already owned."
                 else:
-                    ok, err = _shop_purchase(owner_id, v["currency"], v["price"], "vehicle shop")
+                    ok, err = _shop_purchase(owner_id, v["currency"], v["price"], "vehicle shop", vehicle_name)
                 if ok:
                     data[owner_id].setdefault("owned_vehicles", []).append(vehicle_name)
                     data[owner_id]["vehicle"] = vehicle_name
@@ -15434,12 +15602,12 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     blocked = _block
                 else:
                     if fmt == "money":
-                        spend_money(owner_id, parsed, "gift send")
-                        add_money(recipient_id, parsed, "gift receive")
+                        spend_money(owner_id, parsed, "gift send", f"to {recipient_id}")
+                        add_money(recipient_id, parsed, "gift receive", f"from {owner_id}")
                         bal_str = f"◈ {data[owner_id]['money']:,}"
                     else:
-                        spend_gems(owner_id, parsed, "gift send")
-                        add_gems(recipient_id, parsed, "gift receive")
+                        spend_gems(owner_id, parsed, "gift send", f"to {recipient_id}")
+                        add_gems(recipient_id, parsed, "gift receive", f"from {owner_id}")
                         gd = data[owner_id].get("gem_gift_day") or {}
                         if gd.get("tag") != today_utc():
                             gd = {"tag": today_utc(), "sent": 0}
@@ -15617,7 +15785,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     _err = f"{emoji('cross_mark')} You no longer have permission to do that in this tribe."
                 elif tribe_data[tribe_nm].get(boost_key, 0) >= MAX_TRIBE_BOOST:
                     _err = f"{emoji('cross_mark')} This tribe boost is already at the maximum **{MAX_TRIBE_BOOST}%**."
-                elif not spend_gems(owner_id, cost, "tribe shop"):
+                elif not spend_gems(owner_id, cost, "tribe shop", boost_key):
                     _err = f"Need {emoji('gem')}{cost}."
                 else:
                     tribe_data[tribe_nm][boost_key] = min(
@@ -15643,7 +15811,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             async with user_tribe_transaction(owner_id, tribe_nm):
                 if item_count(owner_id, "War Horn") >= ITEM_STACK_CAP:
                     _err = f"{emoji('cross_mark')} You already have the max ({ITEM_STACK_CAP}) War Horns."
-                elif not spend_gems(owner_id, price, "tribe shop"):
+                elif not spend_gems(owner_id, price, "tribe shop", "War Horn"):
                     _err = f"Need {emoji('gem')}{price}."
                 else:
                     add_item(owner_id, "War Horn", 1)
@@ -17026,7 +17194,7 @@ class AmmoBuyModal(_V2Modal, title="Buy Ammo"):
             await send_ephemeral_v2(interaction,
                 f"{emoji('cross_mark')} Can only buy **{can_buy:,}** more (stack limit: {AMMO_MAX_STACK:,}).", 0xE74C3C)
             return
-        total_cost = ev_price(a["price"] * qty)   # event 50%-off
+        total_cost = ev_price(a["price"] * qty, currency=a["currency"])   # event discount (money ammo only)
         currency   = a["currency"]
         paid = False
         async with user_transaction(self.user_id):
@@ -17035,9 +17203,9 @@ class AmmoBuyModal(_V2Modal, title="Buy Ammo"):
             if owned_now + qty > AMMO_MAX_STACK:
                 pass
             elif currency == "money":
-                paid = spend_money(self.user_id, total_cost, "shop ammo")
+                paid = spend_money(self.user_id, total_cost, "shop ammo", f"{qty:,}× {self.ammo_name}")
             else:
-                paid = spend_gems(self.user_id, total_cost, "shop ammo")
+                paid = spend_gems(self.user_id, total_cost, "shop ammo", f"{qty:,}× {self.ammo_name}")
             if paid:
                 inv = data[self.user_id].setdefault("ammo_inv", {})
                 inv[self.ammo_name] = owned_now + qty
@@ -18253,10 +18421,10 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
             await backend.market_save({**lst, "qty": left})
         else:
             await backend.market_delete(listing_id)
-        if not spend_money(buyer_id, total, "market buy"):
+        if not spend_money(buyer_id, total, "market buy", f"{n}× {lst['item']} from {seller}"):
             raise RuntimeError("market buy: balance changed under the buyer lock")
         tax = int(total * MARKET_TAX)
-        add_money(seller, total - tax, "market sale")
+        add_money(seller, total - tax, "market sale", f"{n}× {lst['item']} to {buyer_id}")
         inv = _market_inv(buyer_id, lst["kind"])
         inv[lst["item"]] = int(inv.get(lst["item"], 0)) + n
         if left > 0:
@@ -19940,7 +20108,17 @@ update_group = app_commands.Group(
     allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
 )
 
-@update_group.command(name="control", description="Admin: add / edit / delete updates via a form")
+# /update view is for everyone; when a staff server is configured the admin half lives in its own
+# staff-only group (/updates control|add|change) instead of the public /update.
+updates_staff_group = app_commands.Group(
+    name="updates",
+    description="Staff: manage the developer update log",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+)
+_update_admin_grp = updates_staff_group if _STAFF is not None else update_group
+
+@_update_admin_grp.command(name="control", description="Admin: add / edit / delete updates via a form")
 @app_commands.check(is_admin)
 async def update_control_cmd(interaction: discord.Interaction):
     admin_id = str(interaction.user.id)
@@ -19957,7 +20135,7 @@ async def update_view_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_update_components(user_id, "all", 0))
     await check_everything(interaction, user_id)
 
-@update_group.command(name="add", description="Append a new update to the end of the queue")
+@_update_admin_grp.command(name="add", description="Append a new update to the end of the queue")
 @app_commands.check(is_admin)
 @app_commands.describe(title="The title to display", message="The update message to display")
 async def update_add_cmd(interaction: discord.Interaction, title: str, message: str):
@@ -19976,7 +20154,7 @@ async def update_add_cmd(interaction: discord.Interaction, title: str, message: 
         0x2ECC71,
     )
 
-@update_group.command(name="change", description="Edit the update queue (delete / change / reorder)")
+@_update_admin_grp.command(name="change", description="Edit the update queue (delete / change / reorder)")
 @app_commands.check(is_admin)
 @app_commands.describe(
     id="The update ID you want to change", 
@@ -20188,6 +20366,8 @@ async def update_change_cmd(
         )
 
 bot.tree.add_command(update_group)
+if _STAFF is not None:
+    _add_staff_command(updates_staff_group)
 
 
 # ─────────────────────────────────────────────
@@ -20968,11 +21148,16 @@ def _insp_line(r: dict) -> str:
     sign = f"+{delta:,}" if delta > 0 else f"{delta:,}"
     icon = _KIND_ICON.get(kind, "•")
     what = f"{icon} **{sign}**" if kind in ("money", "gems") else f"{icon} {kind} **{sign} {r['name']}**"
-    return f"<t:{_insp_ts(r['created_at'])}:R> {what} → {r['balance_after']:,} · `{r['source']}`"
+    src = f"`{r['source']}`" + (f" — **{r['detail']}**" if r.get("detail") else "")
+    ctx = r.get("ctx") or ""
+    via = f" · via `{ctx}`" if ctx and ctx != r["source"] and ctx != "system" else ""
+    return f"<t:{_insp_ts(r['created_at'])}:R> {what} → {r['balance_after']:,} · {src}{via}"
 
 def _insp_export_line(r: dict) -> str:
     what = r["kind"] if r["kind"] in ("money", "gems") else f"{r['kind']}:{r['name']}"
-    return f"{r['created_at']} UTC | {what:<28} | {r['delta']:+,} | now {r['balance_after']:,} | {r['source']}"
+    extra = (f" | {r['detail']}" if r.get("detail") else "") + \
+            (f" | via {r['ctx']}" if r.get("ctx") and r["ctx"] != r["source"] else "")
+    return f"{r['created_at']} UTC | {what:<28} | {r['delta']:+,} | now {r['balance_after']:,} | {r['source']}{extra}"
 
 def _insp_inv_block(d: dict) -> str:
     def top(dct, n):
@@ -21225,7 +21410,202 @@ async def inspect_economy_cmd(interaction: discord.Interaction, currency: str = 
         await _currency_flow_block(currency, icon)
     await send_ephemeral_v2(interaction, f"### 📊 {currency.title()} economy\n{text}"[:3900], 0x3498DB)
 
-bot.tree.add_command(inspect_group)
+_add_staff_command(inspect_group)
+
+# ─────────────────────────────────────────────
+# TEXT COMMANDS  ·  "ih hunt", "ih daily", "ih bj" …
+# ─────────────────────────────────────────────
+# Players expect a short word prefix from a game bot. "ih " (with the space) is long enough
+# not to collide with other bots' "." / "!" and short enough to type. A text command runs the
+# SAME function as its slash command: a MessageInteraction stands in for the interaction, so
+# gating (maintenance / ban / verify), the item ledger and every panel behave identically.
+# Panels reply into the channel and their buttons work normally. Admin commands are never
+# reachable this way, and anything that needs a form (modal) tells the player to use the slash.
+
+# alias -> "command" or "group sub". Anything not here is matched by its real command name.
+PREFIX_ALIASES = {
+    "h": "hunt", "d": "daily", "m": "menu", "p": "profile", "top": "leaderboard", "lb": "leaderboard",
+    "w": "world", "map": "world", "biomes": "world", "s": "shop", "e": "equip", "cr": "craft",
+    "ev": "events", "set": "settings", "v": "vote", "prog": "progression", "achievements": "progression",
+    "bj": "gamble blackjack", "blackjack": "gamble blackjack", "cf": "gamble coinflip",
+    "flip": "gamble coinflip", "coinflip": "gamble coinflip", "slots": "gamble slots",
+    "slot": "gamble slots", "roulette": "gamble roulette", "rps": "gamble rps", "dice": "gamble dice",
+    "hl": "gamble highlow", "highlow": "gamble highlow", "casino": "gamble menu",
+    "q": "quests daily", "qw": "quests weekly", "weekly": "quests weekly",
+    "t": "tribe menu", "mk": "market browse", "listings": "market listings",
+    "changelog": "update view", "updates": "update view", "ga": "giveaway list", "giveaways": "giveaway list",
+}
+# what a bare group word means: "ih tribe" -> /tribe menu
+PREFIX_GROUP_DEFAULT = {"tribe": "menu", "gamble": "menu", "quests": "daily", "market": "browse",
+                        "update": "view", "session": "status", "giveaway": "list"}
+# real slash commands that must not be typed as free text (long free-text args / money transfer)
+PREFIX_BLOCKED = {"report", "suggest", "gift"}
+_prefix_last: dict[int, float] = {}
+
+def _prefix_resolve(tokens: list[str]):
+    """-> (command, number of tokens it consumed). (None, 0) = not a command (stay silent)."""
+    if not tokens:
+        return None, 0
+    first = tokens[0].lower()
+    alias = PREFIX_ALIASES.get(first)
+    parts = alias.split() if alias else [first]
+    cmd = bot.tree.get_command(parts[0])
+    used = 1
+    if isinstance(cmd, app_commands.Group):
+        if len(parts) > 1:
+            sub = parts[1]
+        elif len(tokens) > 1 and cmd.get_command(tokens[1].lower()) is not None:
+            sub, used = tokens[1].lower(), 2
+        else:
+            sub = PREFIX_GROUP_DEFAULT.get(cmd.name, "")
+        cmd = cmd.get_command(sub) if sub else None
+    if cmd is None or getattr(cmd, "checks", None) or cmd.qualified_name.split(" ")[0] in PREFIX_BLOCKED:
+        return None, 0                # unknown, admin-gated, or blocked: never run
+    return cmd, used
+
+def _prefix_usage(cmd) -> str:
+    bits = [f"<{p.name}>" if p.required else f"[{p.name}]" for p in cmd.parameters]
+    return "ih " + cmd.qualified_name + (" " + " ".join(bits) if bits else "")
+
+async def _prefix_user(tok: str, message: discord.Message):
+    m = re.fullmatch(r"<@!?(\d+)>|(\d{15,21})", tok)
+    if not m:
+        return None
+    uid = int(m.group(1) or m.group(2))
+    for u in message.mentions:
+        if u.id == uid:
+            return u
+    user = (message.guild.get_member(uid) if message.guild else None) or bot.get_user(uid)
+    if user is None:
+        try:
+            user = await bot.fetch_user(uid)
+        except Exception:
+            user = None
+    return user
+
+async def _prefix_bind(cmd, tokens: list[str], message: discord.Message) -> tuple[dict | None, str]:
+    """Positional text -> the command's typed options. (None, '') = looks like chat, say nothing;
+    (None, text) = the player meant it but got it wrong, so tell them how."""
+    import inspect
+    pnames = list(inspect.signature(cmd.callback).parameters)[1:]       # drop `interaction`
+    params = list(cmd.parameters)
+    if not params:
+        return ({}, "") if not tokens else (None, "")                  # "ih hunt for deer" is chat, not a command
+    kwargs, i = {}, 0
+    for pname, par in zip(pnames, params):
+        if i >= len(tokens):
+            if par.required:
+                return None, f"`{_prefix_usage(cmd)}`"
+            break
+        tok, t = tokens[i], par.type
+        if t == discord.AppCommandOptionType.string:
+            last = par is params[-1]
+            val = " ".join(tokens[i:]) if last else tok
+            i = len(tokens) if last else i + 1
+            if par.choices:
+                hit = next((c for c in par.choices if str(c.value).lower() == val.lower()
+                            or c.name.lower() == val.lower()), None)
+                if hit is None:
+                    return (None, f"`{par.name}` must be one of: " + ", ".join(f"`{c.value}`" for c in par.choices)
+                            if par.required else "")
+                val = hit.value
+        elif t in (discord.AppCommandOptionType.integer, discord.AppCommandOptionType.number):
+            val = parse_amount(tok)
+            i += 1
+            if val is None or (par.min_value is not None and val < par.min_value) \
+                    or (par.max_value is not None and val > par.max_value):
+                return (None, f"`{par.name}` needs a number" +
+                        (f" from {par.min_value} to {par.max_value}" if par.min_value is not None else "") + ".") \
+                    if par.required else (None, "")
+        elif t == discord.AppCommandOptionType.boolean:
+            word = tok.lower()
+            if word not in ("yes", "no", "true", "false", "on", "off"):
+                return (None, f"`{par.name}` should be yes or no.") if par.required else (None, "")
+            val, i = word in ("yes", "true", "on"), i + 1
+        elif t == discord.AppCommandOptionType.user:
+            val = await _prefix_user(tok, message)
+            i += 1
+            if val is None:
+                return (None, f"Mention the player for `{par.name}`.") if par.required else (None, "")
+        else:
+            return None, f"That one needs the slash command — use `/{cmd.qualified_name}`."
+        kwargs[pname] = val
+    return kwargs, ""
+
+def _prefix_cheatsheet() -> list:
+    body = (
+        "### 🏹 Text commands\n"
+        "Type **`ih`** and a command — e.g. `ih hunt`. Everything also works as a `/slash` command.\n\n"
+        "**Hunt & earn** — `ih hunt` (`h`) · `ih daily` (`d`) · `ih vote` (`v`) · `ih idle` · `ih quests` (`q`) · `ih qw`\n"
+        "**Gear & world** — `ih shop` (`s`) · `ih equip` (`e`) · `ih craft` · `ih world` (`w`) · `ih guide` · `ih record`\n"
+        "**You** — `ih menu` (`m`) · `ih profile [@user]` (`p`) · `ih settings` · `ih progression` · `ih log`\n"
+        "**Casino** — `ih bj` · `ih cf` · `ih slots` · `ih roulette` · `ih rps` · `ih dice` · `ih hl` · `ih casino`\n"
+        "**Social** — `ih tribe` (`t`) · `ih lb` · `ih market` · `ih events` · `ih giveaways` · `ih refer [code]`\n"
+        "**More** — `ih use <item>` · `ih verify <code>` · `ih info <category> <name>` · `ih updates` · `ih rules` · `ih help`\n\n"
+        "-# Needs a form (like creating a tribe with a description)? Use the slash command for that one."
+    )
+    return [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False, "components": [{"type": 10, "content": body}]}]
+
+_PREFIX_RE = re.compile(r"^\s*ih(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+
+async def handle_prefix_message(message: discord.Message) -> bool:
+    """Run `ih <command> …` if that's what the message is. True = it was ours (even if refused)."""
+    m = _PREFIX_RE.match(message.content or "")
+    if not m:
+        return False
+    tokens = (m.group(1) or "").split()
+    uid = message.author.id
+    now = time.monotonic()
+    if now - _prefix_last.get(uid, 0) < PREFIX_COOLDOWN:
+        return True
+    _prefix_last[uid] = now
+    if len(_prefix_last) > 5000:
+        for k in [k for k, t in _prefix_last.items() if now - t > 60]:
+            _prefix_last.pop(k, None)
+
+    cmd, used = _prefix_resolve(tokens)
+    if not tokens or (tokens[0].lower() in ("commands", "cmds", "cheatsheet", "prefix") and cmd is None):
+        fake = MessageInteraction(message)
+        await _msg_send(fake, _prefix_cheatsheet())
+        return True
+    if cmd is None:
+        return True                          # not one of ours — likely just chat that starts with "ih"
+    fake = MessageInteraction(message, cmd)
+    kwargs, err = await _prefix_bind(cmd, tokens[used:], message)
+    if kwargs is None:
+        if err:
+            await _msg_send(fake, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
+                "components": [{"type": 10, "content": f"{emoji('warning')} {err}"}]}], ephemeral=True)
+        return True
+    try:
+        if not await _tree_gate(fake):       # maintenance / ban / verify, exactly like a slash command
+            return True
+        await cmd.callback(fake, **kwargs)
+    except PrefixUnsupported:
+        await _msg_send(fake, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [{
+            "type": 10, "content": f"{emoji('warning')} That one needs a form — use `/{cmd.qualified_name}`."}]}],
+            ephemeral=True)
+    except Exception as e:
+        logger.exception("text command failed: ih %s", cmd.qualified_name)
+        try:
+            await report_error_to_owner(f"text command ih {cmd.qualified_name}", e, fake)
+        except Exception:
+            pass
+        await _msg_send(fake, [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False, "components": [{
+            "type": 10, "content": f"{emoji('warning')} Something went wrong. Please try again."}]}], ephemeral=True)
+    finally:
+        inv_flush_touched()
+    return True
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or not message.content:
+        return
+    try:
+        await handle_prefix_message(message)
+    except Exception:
+        logger.exception("text-command handler crashed")
+
 
 async def _insp_component(interaction: discord.Interaction, parts: list[str]) -> None:
     """insp:<log|user>:<action>:<target>:<admin>  — the panels' buttons (admins only)."""
@@ -22577,7 +22957,7 @@ async def admin_cmd(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     await send_v2_followup(interaction, build_admin_panel(admin_id, "home"), ephemeral=True)
 
-bot.tree.add_command(bot_group)
+_add_staff_command(bot_group)
 
 # ─────────────────────────────────────────────
 # AUTOSAVE & TASKS
@@ -23376,6 +23756,17 @@ async def on_ready():
     register_save_callbacks(_flush_dirty_users, _flush_tribes_cb)
 
     try:
+        if _STAFF is not None:
+            try:
+                _staff_synced = await bot.tree.sync(guild=_STAFF)
+                print(f"Synced {len(_staff_synced)} staff-only commands to guild {_STAFF.id}")
+            except Exception as e:
+                print(f"⚠️ Staff-guild sync failed ({e}) — registering the admin commands globally instead.")
+                for _c in _STAFF_COMMANDS:
+                    try:
+                        bot.tree.add_command(_c)
+                    except Exception:
+                        pass
         synced = await bot.tree.sync()
         # Keep COMMAND_ID (used for clickable </cmd:id> mentions) current — the
         # hardcoded game_data table misses newer commands otherwise.

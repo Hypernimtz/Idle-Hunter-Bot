@@ -28,5 +28,10 @@
     "key": "2026-10-07-gamble-commands",
     "title": "Every casino game is its own command",
     "message": "Search for the game you want and it's right there:\n\n`/gamble blackjack` · `/gamble coinflip` · `/gamble slots` · `/gamble roulette` · `/gamble rps` · `/gamble dice` · `/gamble highlow`\n\n`/gamble menu` still opens the hub with every game in one dropdown."
+  },
+  {
+    "key": "2026-10-07-text-commands-day-off",
+    "title": "Text commands, and Admin's Day Off tuned",
+    "message": "- **Type commands instead of using slash:** start a message with `ih ` — `ih hunt`, `ih daily`, `ih bj`, `ih cf`, `ih lb`, `ih tribe`, `ih vote`… Send just `ih` for the full cheat sheet. Everything works exactly like the slash version, buttons included\n- **Admin's Day Off is less extreme:** the shop discount is now **25% off ammo, healing & items** (was 50% off everything) — tools, vehicles and 💎 prices are no longer discounted, and the welcome bonus is smaller\n- **Wild animal fights show the animal's art** big in the top right, like Mythicals\n- **Hunting from an event announcement now posts publicly** in the channel, and can open fights and tracking properly"
   }
 ]

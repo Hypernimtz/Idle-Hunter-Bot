@@ -232,6 +232,13 @@ async def init_schema():
         )
     """)
 
+    # economy_log: which item / who it concerned, and which command or button did it (older rows: blank).
+    for _col in ("detail", "ctx"):
+        try:
+            await _pool.execute(f"ALTER TABLE economy_log ADD COLUMN {_col} TEXT DEFAULT ''")
+        except Exception:
+            pass     # already there
+
     # Item ledger (/inspect): every change to a tracked inventory, with the command or
     # button that caused it. economy_log already covers ◈ and 💎; this covers ammo, crates,
     # items, trophies, shards, crystals, gemstones, healing items and tools.
@@ -417,19 +424,20 @@ def _ledger_where(kinds, search, days):
         conds.append("kind IN (%s)" % ",".join("?" * len(kinds)))
         params += list(kinds)
     if search:
-        conds.append("(LOWER(source) LIKE ? OR LOWER(name) LIKE ?)")
+        conds.append("(LOWER(source) LIKE ? OR LOWER(name) LIKE ? OR LOWER(detail) LIKE ? OR LOWER(ctx) LIKE ?)")
         like = "%" + search.lower().replace("%", "").replace("_", "") + "%"
-        params += [like, like]
+        params += [like, like, like, like]
     if days:
         conds.append("created_at >= datetime('now', ?)")
         params.append(f"-{int(days)} days")
     return (" WHERE " + " AND ".join(conds)) if conds else "", params
 
 _LEDGER_UNION = """(
-    SELECT created_at, currency AS kind, source, delta, balance_after, '' AS name, id AS rid, 0 AS t
+    SELECT created_at, currency AS kind, source, delta, balance_after, '' AS name,
+           COALESCE(detail, '') AS detail, COALESCE(ctx, '') AS ctx, id AS rid, 0 AS t
       FROM economy_log WHERE user_id = ?
     UNION ALL
-    SELECT created_at, kind, source, delta, balance_after, name, id AS rid, 1 AS t
+    SELECT created_at, kind, source, delta, balance_after, name, '' AS detail, source AS ctx, id AS rid, 1 AS t
       FROM item_log WHERE user_id = ?
 )"""
 
@@ -445,9 +453,9 @@ async def ledger_query(user_id: str, *, kinds=None, search: str = "", days: int 
     async with _pool.execute(f"SELECT COUNT(*) FROM {_LEDGER_UNION}{where}", base + wp) as cur:
         total = (await cur.fetchone())[0]
     async with _pool.execute(
-        f"SELECT created_at, kind, name, source, delta, balance_after FROM {_LEDGER_UNION}{where} "
+        f"SELECT created_at, kind, name, source, delta, balance_after, detail, ctx FROM {_LEDGER_UNION}{where} "
         f"ORDER BY created_at DESC, t, rid DESC LIMIT ? OFFSET ?", base + wp + [limit, offset]) as cur:
-        rows = [dict(zip(("created_at", "kind", "name", "source", "delta", "balance_after"), r))
+        rows = [dict(zip(("created_at", "kind", "name", "source", "delta", "balance_after", "detail", "ctx"), r))
                 for r in await cur.fetchall()]
     return rows, total
 
@@ -612,7 +620,9 @@ async def log_economy_event_buffered(
     source: str,
     delta: int,
     balance_after: int,
-    currency: str = "money"
+    currency: str = "money",
+    detail: str = "",
+    ctx: str = "",
 ):
     """Buffer economy events for batch writing"""
     if delta == 0:
@@ -625,7 +635,9 @@ async def log_economy_event_buffered(
             "source": source,
             "delta": delta,
             "balance_after": balance_after,
-            "currency": currency
+            "currency": currency,
+            "detail": (detail or "")[:120],
+            "ctx": (ctx or "")[:80],
         })
         if len(_economy_buffer) >= _BUFFER_SIZE:
             # Detach the batch while we still hold the lock, then write it OUTSIDE
@@ -641,9 +653,10 @@ async def _write_economy_rows(rows: list) -> None:
     if not rows or _pool is None:
         return
     await _pool.executemany("""
-        INSERT INTO economy_log (user_id, source, delta, balance_after, currency)
-        VALUES (?, ?, ?, ?, ?)
-    """, [(e["user_id"], e["source"], e["delta"], e["balance_after"], e["currency"]) for e in rows])
+        INSERT INTO economy_log (user_id, source, delta, balance_after, currency, detail, ctx)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [(e["user_id"], e["source"], e["delta"], e["balance_after"], e["currency"],
+           e.get("detail", ""), e.get("ctx", "")) for e in rows])
     await _pool.commit()
 
 async def flush_economy_buffer():
@@ -1443,10 +1456,12 @@ def log_economy_event(
     delta: int,
     balance_after: int,
     currency: str = "money",
+    detail: str = "",
+    ctx: str = "",
 ) -> None:
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(log_economy_event_buffered(user_id, source, delta, balance_after, currency))
+        loop.create_task(log_economy_event_buffered(user_id, source, delta, balance_after, currency, detail, ctx))
     except RuntimeError:
         pass  # no running loop (e.g. in tests)
 

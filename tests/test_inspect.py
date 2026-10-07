@@ -321,6 +321,43 @@ def test_export_sends_the_whole_log_as_a_text_file():
     assert text.count("ammo:Iron Arrow") == 3 and "src0" in text and "src2" in text
 
 
+def test_shop_purchases_record_which_item_and_which_button():
+    _reset()
+    tr._mk_user("30", gems=5000)
+    app.maintenance_mode = False
+    app._data_loaded_ok = True
+    _baseline("30")
+    with tr.Harness():
+        run(tr._click("30", "shop:tool_buy:30", ["Cosmic RPG"]))
+    assert "Cosmic RPG" in app.data["30"]["owned_tools"]
+    gems = _log("30", kinds=["gems"])[0]
+    assert gems and gems[0]["source"] == "shop tool" and gems[0]["detail"] == "Cosmic RPG"
+    assert gems[0]["ctx"] == "btn:shop:tool_buy"
+    tool = _log("30", kinds=["tool"])[0]
+    assert tool and tool[0]["name"] == "Cosmic RPG"
+    line = app._insp_line(gems[0])
+    assert "Cosmic RPG" in line and "shop tool" in line and "btn:shop:tool_buy" in line
+    assert "Cosmic RPG" in app._insp_export_line(gems[0])
+    # the detail is searchable
+    assert _log("30", search="cosmic")[1] >= 2
+    assert _log("30", search="nonexistent-thing")[1] == 0
+
+
+def test_gifts_and_market_name_the_other_player():
+    _reset()
+    tr._mk_user("31", money=1000)
+    tr._mk_user("32")
+    async def go():
+        app.spend_money("31", 500, "gift send", "to 32")       # economy events are logged from inside the loop
+        app.add_money("32", 500, "gift receive", "from 31")
+        await asyncio.sleep(0.05)
+        await backend.flush_economy_buffer()
+    run(go())
+    sent = _log("31", kinds=["money"])[0][0]
+    got = _log("32", kinds=["money"])[0][0]
+    assert sent["detail"] == "to 32" and got["detail"] == "from 31"
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

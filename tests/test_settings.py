@@ -212,6 +212,72 @@ def test_gamble_is_a_group_with_a_command_per_game():
     assert "gamble:game_select:13" in seen[0]
 
 
+def test_admins_day_off_discounts_consumables_only():
+    real = app.admin_buff_active
+    try:
+        app.admin_buff_active = lambda: False
+        assert app.ev_price(1000) == 1000
+        app.admin_buff_active = lambda: True
+        assert app.ev_price(1000) == 750 and app.ev_price(1) == 1                      # 25% off, floored at 1
+        assert app.ev_price(1500, currency="gems") == 1500                              # 💎 prices never discounted
+        assert app.ev_price(5_000_000, gear=True) == 5_000_000                          # tools & vehicles neither
+        # the real purchase path agrees with the displayed price
+        _fresh("40", gems=5000, money=10 ** 9)
+        d = app.data["40"]
+
+        async def buy(currency, price, source):
+            async with app.user_transaction("40"):
+                return app._shop_purchase("40", currency, price, source)
+        g0, m0 = d["gems"], d["money"]
+        assert run(buy("gems", 1500, "shop tool"))[0] and g0 - d["gems"] == 1500          # Cosmic RPG, full price
+        assert run(buy("money", 100_000, "vehicle shop"))[0] and m0 - d["money"] == 100_000
+        m1 = d["money"]
+        assert run(buy("money", 1000, "shop ammo"))[0] and m1 - d["money"] == 750          # ammo: 25% off
+        assert app.EVENT_SHOP_DISCOUNT_PCT == 25
+        assert app.ADMIN_BUFF_EVENT["gift_money"] <= 1_000_000 and app.ADMIN_BUFF_EVENT["gift_gems"] <= 25
+    finally:
+        app.admin_buff_active = real
+
+
+def test_animal_fights_show_the_animal_art_top_right():
+    import json
+    d = _fresh("41")
+    d["fight"] = {"kind": "animal", "animal": "Inland Taipan", "eid": "e1", "mhp": 82, "mhp_max": 110,
+                  "bonus": "ambush", "log": [], "turn": 1}
+    comps = app.build_animal_fight_components("41")
+    flat = json.dumps(comps, ensure_ascii=False)
+    ico = app.animal_emoji("Inland Taipan")
+    if ico.startswith("<"):
+        assert '"type": 11' in flat and "cdn.discordapp.com/emojis/" in flat
+        assert "ITS HP" in flat and "WILD INLAND TAIPAN" in flat
+    else:                                                  # unicode-only animal: plain layout, no thumbnail
+        assert '"type": 11' not in flat
+    assert "hunt:afight:attack:e1:41" in flat
+    out = app.build_animal_fight_outcome_components("41", {"kind": "escape", "animal": "Inland Taipan"})
+    assert ('"type": 11' in json.dumps(out, ensure_ascii=False)) == ico.startswith("<")
+
+
+def test_announcement_hunt_is_public_but_the_other_buttons_stay_private():
+    _fresh("42")
+    app.maintenance_mode = False
+    app._data_loaded_ok = True
+    app.data["42"]["tool"] = "Bare Hands"
+    seen = []
+
+    async def follow(interaction, comps, *, ephemeral=False):
+        seen.append(("public" if not ephemeral else "private", json.dumps(comps, ensure_ascii=False)))
+    import json
+    with tr.Harness() as h:
+        app.send_v2_followup = follow
+        run(tr._click("42", "announce:hunt"))
+        hunted = [x for x in seen if "hunt:again:42" in x[1]]
+        assert hunted and hunted[0][0] == "public", seen
+        seen.clear()
+        run(tr._click("42", "announce:events"))
+        run(tr._click("42", "announce:leaderboard"))
+        assert seen and all(kind == "private" for kind, _ in seen), seen
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
