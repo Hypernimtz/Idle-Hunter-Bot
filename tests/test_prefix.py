@@ -291,6 +291,38 @@ def test_balance_aliases_work_as_text_commands():
     assert "ih bal" in _text(_say("1011", "ih")[1][0])
 
 
+def test_text_commands_work_in_dms_threads_and_servers():
+    import discord
+    _fresh("1013", money=555)
+    sent = []
+
+    async def capture(route, **kw):
+        if getattr(route, "method", "") == "POST" and kw.get("json", {}).get("components"):   # not the typing ping
+            sent.append((route.channel_id, kw["json"]))
+        return {"id": str(next(_ids))}
+    app.bot.http.request = capture
+    try:
+        app._prefix_last.clear()
+        # a DM with the bot: no guild at all, a private channel
+        dm = _msg("1013", "ih bal")
+        dm.channel = SimpleNamespace(id=111, type=discord.ChannelType.private)
+        assert run(app.handle_prefix_message(dm)) and sent[-1][0] == 111 and "555" in _text(sent[-1][1])
+        # a thread inside a server: the reply goes to the thread's own id
+        app._prefix_last.clear()
+        thread = _msg("1013", "ih bal")
+        thread.guild = SimpleNamespace(id=9, get_member=lambda i: None, name="srv")
+        thread.channel = SimpleNamespace(id=222, type=discord.ChannelType.public_thread)
+        assert run(app.handle_prefix_message(thread)) and sent[-1][0] == 222
+        # an ordinary server channel
+        app._prefix_last.clear()
+        guild_msg = _msg("1013", "IH   BAL")
+        guild_msg.guild = SimpleNamespace(id=9, get_member=lambda i: None, name="srv")
+        guild_msg.channel = SimpleNamespace(id=333, type=discord.ChannelType.text)
+        assert run(app.handle_prefix_message(guild_msg)) and sent[-1][0] == 333
+    finally:
+        app.bot.http.request = _fake_request
+
+
 def test_without_a_staff_guild_nothing_changes():
     names = {c.name for c in app.bot.tree.get_commands()}
     assert {"bot", "inspect", "update", "giveaway"} <= names and "updates" not in names

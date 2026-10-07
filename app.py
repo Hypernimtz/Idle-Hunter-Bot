@@ -172,11 +172,12 @@ INSTANCE_ID = f"{_socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
 print(f"🥾 Idle Hunter process starting — INSTANCE_ID={INSTANCE_ID}")
 
 intents = discord.Intents.default()
-# message_content is deliberately OFF: the bot is slash/component-only (no
-# on_message, no prefix commands) and the intent needs Discord approval past
-# 100 servers. `members` stays on — server leaderboards read guild.members.
-intents.message_content = True      # privileged: needed to read "ih hunt" style text commands.
-                                    # Enabled in the dev portal; past 100 servers Discord requires approval.
+# Text commands ("ih hunt") need the privileged message_content intent. Enabled in the dev
+# portal; past 100 servers Discord requires approval. DMs with the bot (Intents.default()
+# includes dm_messages) and threads work too. A server where the bot is only USER-installed
+# sends the bot no messages at all — Discord's rule — so there only the slash commands work.
+# `members` stays on — server leaderboards read guild.members.
+intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("ih "), intents=intents)
@@ -192,6 +193,7 @@ except ValueError:
     _STAFF_GUILD_ID = 0
 _STAFF = discord.Object(id=_STAFF_GUILD_ID) if _STAFF_GUILD_ID else None
 _STAFF_COMMANDS: list = []
+_staff_state = "off" if _STAFF is None else "pending"      # off | pending | synced | fallback (global)
 
 def _add_staff_command(cmd) -> None:
     bot.tree.add_command(cmd, guild=_STAFF)        # guild=None -> a normal global command
@@ -3937,6 +3939,7 @@ OUTAGE_MIN_GAP_SEC   = 150
 OUTAGE_FORGIVE_SEC   = 3600
 OUTAGE_KEEP_DAYS     = 60
 _outages: list = []          # [[start_ts, end_ts], ...]
+_boot_info: dict = {"down_secs": 0}   # how long the host was offline before this boot (for the status notifier)
 
 def _record_outage(start_ts: float, end_ts: float) -> None:
     if end_ts - start_ts >= OUTAGE_MIN_GAP_SEC:
@@ -13452,6 +13455,7 @@ def load_runtime_state() -> None:
         if _alive:
             _record_outage(_alive, time.time())
             if _outages and _outages[-1][1] >= time.time() - 5:
+                _boot_info["down_secs"] = int(time.time() - _alive)
                 print(f"⏱️ Bot was down ~{int((time.time() - _alive) // 60)} min "
                       f"(days with >=1h downtime don't break daily streaks)")
     except (TypeError, ValueError):
@@ -18920,8 +18924,9 @@ async def invite_cmd(interaction: discord.Interaction):
             f"## {emoji('link')} Invite Idle Hunter\n"
             f"{emoji('bow')} Hunt, craft, gamble and rule the leaderboards — bring **Idle Hunter** to your server!\n\n"
             f"{emoji('sparkles')} **Add to Server** — put the bot in a server you manage (giveaways, server leaderboards).\n"
-            f"{emoji('profile')} **Add to Account** — use every command anywhere, in any server or DM, "
-            f"without adding it to a server.\n"
+            f"{emoji('profile')} **Add to Account** — use every `/command` anywhere, in any server or DM, "
+            f"without adding it to a server. *(Text commands like `ih hunt` only work in DMs with the bot "
+            f"and in servers it has been added to.)*\n"
             f"{emoji('tribe')} **Join the support server** for updates, events and help.\n"
             f"{emoji('handshake')} **Refer a friend** with </refer:{COMMAND_ID.get('refer','0')}> — "
             f"when they get going you **both** earn {emoji('gem')} gems and a title.\n"
@@ -21690,6 +21695,200 @@ async def on_message(message: discord.Message):
         logger.exception("text-command handler crashed")
 
 
+# ─────────────────────────────────────────────
+# CONNECTION STATUS  ·  "is the bot up, and is everything it talks to connected?"
+# ─────────────────────────────────────────────
+# Posts to STATUS_CHANNEL_ID (token.env) — or DMs the bot owner when that isn't set — when the
+# bot comes online (and how long it was down), reconnects after a gateway drop, has been cut off
+# for more than STATUS_DISCONNECT_GRACE seconds, loses/regains the website push, or shuts down
+# (deploys and restarts included). STATUS_NOTIFY=0 turns the messages off. /inspect status shows
+# the same report on demand. A crash can't announce itself — the next boot reports the downtime.
+
+try:
+    STATUS_CHANNEL_ID = int(os.getenv("STATUS_CHANNEL_ID", "0") or 0)
+except ValueError:
+    STATUS_CHANNEL_ID = 0
+STATUS_NOTIFY = (os.getenv("STATUS_NOTIFY", "1").strip().lower() not in ("0", "false", "no", "off"))
+STATUS_DISCONNECT_GRACE = 90      # seconds of dead gateway before we say so
+STATUS_RECONNECT_MIN = 30         # shorter blips are logged, not announced
+STATUS_WEBSITE_GRACE = 600        # website uploads failing this long -> warn once
+_boot_ts = time.time()
+_conn: dict = {"down_since": 0.0, "warned": False, "site_warned": False, "events": []}
+_status_last: dict[str, float] = {}
+_owner_dm_cache: dict[str, int] = {}
+
+def _conn_log(text: str) -> None:
+    _conn["events"].append((int(time.time()), text))
+    del _conn["events"][:-20]
+
+def _fmt_dur(secs: float) -> str:
+    secs = int(max(0, secs))
+    if secs < 90:
+        return f"{secs}s"
+    if secs < 5400:
+        return f"{secs // 60} min"
+    return f"{secs // 3600}h {(secs % 3600) // 60}m"
+
+def _gateway_latency_ms() -> int | None:
+    try:
+        lat = bot.latency
+    except Exception:
+        return None
+    return None if (lat is None or lat != lat or lat == float("inf")) else int(lat * 1000)
+
+def _website_line(pub, name: str) -> str:
+    if pub is None or getattr(pub, "task", None) is None:
+        return f"⚪ {name}: not configured"
+    if getattr(pub, "connected", False):
+        return f"✅ {name}: connected"
+    if getattr(pub, "unsupported", 0):        # the site answered, it just doesn't have this page yet
+        return f"⚪ {name}: the site has no endpoint for it yet (HTTP {pub.unsupported})"
+    return f"⚠️ {name}: **not connected**"
+
+def status_report() -> str:
+    """The multi-line 'what is connected' block, shared by the notices and /inspect status."""
+    ms = _gateway_latency_ms()
+    down = _conn["down_since"]
+    gw = (f"✅ Discord: connected ({ms} ms)" if down == 0 and ms is not None
+          else f"❌ Discord: **disconnected** for {_fmt_dur(time.time() - down)}" if down
+          else "🟡 Discord: connecting…")
+    db = "✅ Database: open" if getattr(backend, "_pool", None) is not None else "❌ Database: **not open**"
+    staff = {"off": "🌐 Admin commands: global (no `STAFF_GUILD_ID`)",
+             "pending": "⏳ Admin commands: staff server (syncing)",
+             "synced": f"🔒 Admin commands: staff server `{_STAFF_GUILD_ID}` only",
+             "fallback": "⚠️ Admin commands: staff server unreachable — **registered globally instead**"}[_staff_state]
+    ver = (UPDATE[-1].get("version") if UPDATE else None) or "?"
+    return (
+        f"{gw}\n{db}\n"
+        f"{_website_line(_lb_publisher, 'Website leaderboard')}\n"
+        f"{_website_line(_cl_publisher, 'Website changelog')}\n{staff}\n"
+        f"-# {len(bot.guilds):,} servers · {len(data):,} players · up since <t:{int(_boot_ts)}:R> · "
+        f"latest update v{ver} · `{INSTANCE_ID}`"
+    )
+
+async def _status_channel_id() -> int | None:
+    if STATUS_CHANNEL_ID:
+        return STATUS_CHANNEL_ID
+    owner = BOT_OWNER_ID[0] if BOT_OWNER_ID else None
+    if not owner:
+        return None
+    if owner not in _owner_dm_cache:
+        dm = await (await bot.fetch_user(int(owner))).create_dm()
+        _owner_dm_cache[owner] = dm.id
+    return _owner_dm_cache[owner]
+
+async def status_post(title: str, body: str, color: int, *, key: str = "", min_gap: float = 15) -> bool:
+    """Send one status message. Never raises (a notifier must not take the bot down)."""
+    if not STATUS_NOTIFY:
+        return False
+    now = time.time()
+    if key and now - _status_last.get(key, 0) < min_gap:
+        return False
+    try:
+        channel_id = await _status_channel_id()
+        if not channel_id:
+            return False
+        await bot.http.request(
+            Route("POST", "/channels/{channel_id}/messages", channel_id=channel_id),
+            json={"flags": V2_FLAGS, "allowed_mentions": {"parse": []},
+                  "components": [{"type": 17, "accent_color": color, "spoiler": False, "components": [
+                      {"type": 10, "content": f"### {title}\n{body}"[:3900]}]}]})
+        if key:
+            _status_last[key] = now
+        return True
+    except Exception as e:
+        logger.warning("status notice failed: %s", e)
+        return False
+
+async def status_online() -> None:
+    """Fired once per process, after startup finished."""
+    down = _boot_info.get("down_secs", 0)
+    lead = (f"Back after about **{_fmt_dur(down)}** offline.\n" if down >= 30 else "")
+    _conn_log("online")
+    await status_post("🟢 Idle Hunter is online", lead + status_report(), 0x2ECC71, key="online", min_gap=5)
+
+async def status_recovered() -> None:
+    """The gateway came back (resume or re-identify). Announce it if it was down long enough to matter."""
+    since = _conn["down_since"]
+    warned = _conn["warned"]
+    _conn["down_since"], _conn["warned"] = 0.0, False
+    if not since:
+        return
+    dur = time.time() - since
+    _conn_log(f"reconnected after {_fmt_dur(dur)}")
+    if warned or dur >= STATUS_RECONNECT_MIN:
+        await status_post("🟡 Reconnected", f"The Discord connection was down for **{_fmt_dur(dur)}**.\n" + status_report(),
+                          0xF1C40F, key="reconnected")
+
+async def status_shutdown() -> None:
+    _conn_log("shutting down")
+    await status_post("🔴 Idle Hunter is shutting down",
+                      f"Restarting (a deploy or a manual restart) or stopping.\n-# Was up for {_fmt_dur(time.time() - _boot_ts)}.",
+                      0xE74C3C, key="shutdown", min_gap=5)
+
+async def status_watch_once(now: float | None = None) -> list[str]:
+    """One watchdog pass. Returns the notices it sent (for tests)."""
+    now = time.time() if now is None else now
+    sent = []
+    down = _conn["down_since"]
+    if down and not _conn["warned"] and now - down >= STATUS_DISCONNECT_GRACE:
+        _conn["warned"] = True
+        _conn_log(f"gateway down {_fmt_dur(now - down)}")
+        await status_post("🔴 Discord connection lost",
+                          f"The bot has been cut off from Discord for **{_fmt_dur(now - down)}** and is retrying.\n"
+                          + status_report(), 0xE74C3C, key="lost", min_gap=0)
+        sent.append("lost")
+    pub = _lb_publisher
+    fail = getattr(pub, "fail_since", 0.0) if pub is not None else 0.0
+    if fail and not _conn["site_warned"] and now - fail >= STATUS_WEBSITE_GRACE:
+        _conn["site_warned"] = True
+        _conn_log("website leaderboard push failing")
+        await status_post("⚠️ Website not connected",
+                          f"Leaderboard uploads have been failing for **{_fmt_dur(now - fail)}** — "
+                          "the site's rankings are going stale.\n" + status_report(), 0xE67E22, key="site", min_gap=0)
+        sent.append("site")
+    elif _conn["site_warned"] and pub is not None and getattr(pub, "connected", False):
+        _conn["site_warned"] = False
+        _conn_log("website leaderboard push restored")
+        await status_post("✅ Website connected again", status_report(), 0x2ECC71, key="site_ok", min_gap=0)
+        sent.append("site_ok")
+    return sent
+
+@tasks.loop(seconds=30)
+async def status_watch_task():
+    try:
+        await status_watch_once()
+    except Exception as e:
+        print("status watch error:", e)
+
+@status_watch_task.error
+async def _swte(error): print("Status watch task error:", error)
+
+_V2_BACKGROUND_TASKS.append(status_watch_task)
+
+@bot.event
+async def on_disconnect():
+    if not _conn["down_since"]:
+        _conn["down_since"] = time.time()
+        _conn_log("gateway disconnected")
+
+@bot.event
+async def on_resumed():
+    await status_recovered()
+
+@inspect_group.command(name="status", description="Admin: is the bot connected? Discord, database, website, staff commands")
+@app_commands.check(is_admin)
+async def inspect_status_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    ev = "\n".join(f"<t:{t}:R> {txt}" for t, txt in reversed(_conn["events"][-8:])) or "-# nothing yet"
+    dest = f"<#{STATUS_CHANNEL_ID}>" if STATUS_CHANNEL_ID else "a DM to the owner"
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
+        {"type": 10, "content": f"### 📡 Connection status\n{status_report()}"},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": f"**Recent events**\n{ev}\n\n-# Notices go to {dest}"
+                                f"{'' if STATUS_NOTIFY else ' — currently OFF (STATUS_NOTIFY=0)'}."}]}], ephemeral=True)
+
+
 async def _insp_component(interaction: discord.Interaction, parts: list[str]) -> None:
     """insp:<log|user>:<action>:<target>:<admin>  — the panels' buttons (admins only)."""
     admin_id = parts[-1]
@@ -23675,7 +23874,7 @@ _data_loaded_ok = False
 
 @bot.event
 async def on_ready():
-    global _ready_once, _data_loaded_ok
+    global _ready_once, _data_loaded_ok, _staff_state
     print(f"Logged in as {bot.user}  [INSTANCE_ID={INSTANCE_ID}]")
 
     # on_ready fires again on every gateway RESUME/reconnect. The DB open + data
@@ -23684,6 +23883,7 @@ async def on_ready():
     # hold unsaved changes.
     if _ready_once:
         print("on_ready re-fired (reconnect) — init already done, skipping.")
+        asyncio.ensure_future(status_recovered())
         return
     _ready_once = True
 
@@ -23842,8 +24042,10 @@ async def on_ready():
         if _STAFF is not None:
             try:
                 _staff_synced = await bot.tree.sync(guild=_STAFF)
+                _staff_state = "synced"
                 print(f"Synced {len(_staff_synced)} staff-only commands to guild {_STAFF.id}")
             except Exception as e:
+                _staff_state = "fallback"
                 print(f"⚠️ Staff-guild sync failed ({e}) — registering the admin commands globally instead.")
                 for _c in _STAFF_COMMANDS:
                     try:
@@ -23955,6 +24157,7 @@ async def on_ready():
         print("pending updates failed:", e)
 
     print("Autosave started.")
+    asyncio.ensure_future(status_online())
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -23995,6 +24198,10 @@ async def _graceful_close():
     """Final save + clean DB close. discord.py calls Client.close() from the
     bot.run() finally block on SIGINT/SIGTERM, so this runs on every shutdown."""
     print("Shutting down — flushing final state...")
+    try:
+        await asyncio.wait_for(status_shutdown(), timeout=4)
+    except Exception:
+        pass
     try:
         if _lb_publisher is not None:
             await _lb_publisher.stop()

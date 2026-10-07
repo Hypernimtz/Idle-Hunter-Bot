@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 from urllib import request, error, parse
 
@@ -117,6 +118,8 @@ class LeaderboardPublisher:
         self.token = ''
         self.excluded = set()
         self.send_world = False
+        self.connected = False          # last upload got HTTP 200 (shown by the bot's status notifier)
+        self.fail_since = 0.0           # when uploads started failing (0 = not failing)
 
     def start(self):
         if self.task and not self.task.done():
@@ -179,15 +182,20 @@ class LeaderboardPublisher:
                     if not announced:
                         log.warning('Website leaderboard connected; public rankings update every 60 seconds.')
                     announced = True
+                    self.connected, self.fail_since = True, 0.0
                 else:
                     log.warning('Leaderboard upload returned HTTP %s%s; retrying in 60 seconds.',
                                  result, f' — {detail}' if detail else '')
                     announced = False
+                    self.connected = False
+                    self.fail_since = self.fail_since or time.time()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning('Leaderboard upload failed (%s); retrying in 60 seconds.', type(exc).__name__)
                 announced = False
+                self.connected = False
+                self.fail_since = self.fail_since or time.time()
             await asyncio.sleep(60)
 
     async def stop(self):
@@ -265,6 +273,8 @@ class ChangelogPublisher:
         self.task = None
         self.url = ''
         self.token = ''
+        self.connected = False          # last upload got HTTP 200 (shown by the bot's status notifier)
+        self.unsupported = 0            # HTTP 404/405/501 from the site = it has no such endpoint yet
 
     def start(self):
         if self.task and not self.task.done():
@@ -316,15 +326,21 @@ class ChangelogPublisher:
                         if not last_hash:
                             log.warning('Website changelog connected (%d entries).', len(payload['changelog']))
                         last_hash, last_ok, warned = digest, loop.time(), False
+                        self.connected = True
+                        self.unsupported = 0
                     elif status in (404, 405, 501):
+                        self.connected = False
+                        self.unsupported = status      # the site just hasn't built the endpoint yet
                         if not warned:
                             log.warning('The website has no /api/changelog endpoint yet (HTTP %s); retrying hourly.', status)
                         warned, wait = True, 3600
                     else:
+                        self.connected = False
                         log.warning('Changelog upload returned HTTP %s%s; retrying.', status, f' — {detail}' if detail else '')
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self.connected = False
                 log.warning('Changelog upload failed (%s); retrying.', type(exc).__name__)
             await asyncio.sleep(wait)
 
