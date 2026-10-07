@@ -377,6 +377,11 @@ INVITE_PERMISSIONS = discord.Permissions(
     read_message_history=True,
 )
 
+def user_install_url() -> str:
+    """Install the app to a person's own account (works in any server / DMs, no server needed)."""
+    cid = getattr(getattr(bot, "user", None), "id", None) or os.getenv("APPLICATION_ID", "")
+    return f"https://discord.com/oauth2/authorize?client_id={cid}&integration_type=1&scope=applications.commands"
+
 def invite_url() -> str:
     cid = getattr(getattr(bot, "user", None), "id", None) or os.getenv("APPLICATION_ID", "")
     return discord.utils.oauth_url(
@@ -10231,9 +10236,9 @@ def _crate_shop_sections(user_id: str) -> list:
         owned  = inv.get(name, 0)
         can    = have >= cost
         content = (
-            f"{crate['emoji']} **{name}** — {CRYSTAL_ICONS[rarity]} {cost} "
-            f"{_rarity_label(rarity)} Crystal{'s' if cost != 1 else ''} "
-            f"(you have **{have}**) · Owned: **{owned}**\n"
+            f"{crate['emoji']} **{name}**\n"
+            f"{CRYSTAL_ICONS[rarity]} **{cost}** {_rarity_label(rarity)} Crystal{'s' if cost != 1 else ''}"
+            f"  ·  you have **{have}**  ·  owned **{owned}**\n"
             f"-# {crate['description']}"
         )
         sections.append({
@@ -10258,14 +10263,15 @@ def _craft_item_recipe_sections(user_id: str) -> list:
         mat_icon = SHARD_ICONS[rec["rarity"]] if rec["kind"] == "shard" else CRYSTAL_ICONS[rec["rarity"]]
         mat_word = "Shard" if rec["kind"] == "shard" else "Crystal"
         lines.append(
-            f"{it['emoji']} **{name}** — {mat_icon} {cost} {_rarity_label(rec['rarity'])} "
-            f"{mat_word}{'s' if cost != 1 else ''} (you have **{have}**) · Owned: **{owned}/{ITEM_STACK_CAP}**\n"
+            f"{it['emoji']} **{name}**\n"
+            f"{mat_icon} **{cost}** {_rarity_label(rec['rarity'])} {mat_word}{'s' if cost != 1 else ''}"
+            f"  ·  you have **{have}**  ·  owned **{owned}/{ITEM_STACK_CAP}**\n"
             f"-# {it['description']}"
         )
         if have >= cost and owned < ITEM_STACK_CAP:
             opts.append({"label": name[:100], "value": name,
                          "description": f"{cost} {_rarity_label(rec['rarity'])} {mat_word}{'s' if cost != 1 else ''}"[:100]})
-    out = [{"type": 10, "content": "\n".join(lines)}]
+    out = [{"type": 10, "content": "\n\n".join(lines)}]
     if opts:
         out.append({"type": 1, "components": [{"type": 3,
             "custom_id": f"craft:pick:{user_id}",
@@ -10358,7 +10364,22 @@ CRAFT_TABS = {
     "items":    ("Items",         "adhesive_bandage", "Instant shard / crystal recipes"),
 }
 
+def _craft_materials_lines(user_id: str, *, ready_hint: bool = False) -> str:
+    """One line per rarity the player holds anything of: shards, crystals (and, when
+    `ready_hint`, a tick once there are enough shards to fuse)."""
+    lines = []
+    for r in RARITY_KEYS:
+        sc, cc = shard_count(user_id, r), crystal_count(user_id, r)
+        if not (sc or cc):
+            continue
+        tick = f"  {emoji('check_mark')}" if ready_hint and sc >= CRYSTAL_SHARD_COST else ""
+        lines.append(f"{SHARD_ICONS[r]} **{_rarity_label(r)}** — {sc} shard{'s' if sc != 1 else ''}"
+                     f" · {CRYSTAL_ICONS[r]} {cc} crystal{'s' if cc != 1 else ''}{tick}")
+    return "\n".join(lines)
+
 def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> list:
+    """Craft screen: title + one-line summary, the tab menu, then ONE focused section for the
+    chosen tab (fuse crystals / buy crates / craft items). Same custom_ids as always."""
     craft_tick(user_id)
     d = data[user_id]
     if tab in CRAFT_TABS:
@@ -10366,32 +10387,17 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
     tab = d.get("_craft_tab") if d.get("_craft_tab") in CRAFT_TABS else "crystals"
     q = d.get("craft_queue", [])
 
-    shard_lines = []
-    for r in RARITY_KEYS:
-        sc, cc = shard_count(user_id, r), crystal_count(user_id, r)
-        if sc or cc:
-            shard_lines.append(
-                f"-# {SHARD_ICONS[r]} **{sc}** {_rarity_label(r)} Shard"
-                f"{'s' if sc != 1 else ''} · {CRYSTAL_ICONS[r]} **{cc}** Crystal{'s' if cc != 1 else ''}"
-            )
-    mats = "\n".join(shard_lines) if shard_lines else "-# No shards or crystals yet — catch animals to find shards."
-
-    header = (
-        f"### {emoji('crystal_rare')} Craft\n"
-        f"Fuse **{CRYSTAL_SHARD_COST}** shards into **1** crystal "
-        f"(~{CRYSTAL_CRAFT_SECONDS // 60} min each, queued), then spend crystals on "
-        f"crates below. Open crates with </use:{COMMAND_ID.get('use','0')}>.\n"
-        f"{mats}"
-    )
+    total_shards   = sum(shard_count(user_id, r) for r in RARITY_KEYS)
+    total_crystals = sum(crystal_count(user_id, r) for r in RARITY_KEYS)
+    summary = (f"{emoji('crystal_rare')} **{total_shards}** shards · "
+               f"{emoji('crystal_rare')} **{total_crystals}** crystals · "
+               f"⏳ forge **{len(q)}/{CRAFT_QUEUE_MAX}**")
+    head = f"### {emoji('crystal_rare')} Craft\n-# Shards → crystals → crates.   {summary}"
     if notice:
-        header += f"\n\n{notice}"
-
-    qsum = craft_queue_summary(user_id)
-    if qsum:
-        header += f"\n\n**In the forge ({len(q)}/{CRAFT_QUEUE_MAX}):**\n{qsum}"
+        head += f"\n\n{notice}"
 
     rows: list = [
-        {"type": 10, "content": header},
+        {"type": 10, "content": head},
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [{"type": 3,
             "custom_id": f"craft:tab:{user_id}",
@@ -10400,9 +10406,20 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
             "options": [{"label": lbl, "value": key, "description": desc, "default": key == tab,
                          "emoji": emoji_partial(ico)}
                         for key, (lbl, ico, desc) in CRAFT_TABS.items()]}]},
+        {"type": 14, "divider": False, "spacing": 1},
     ]
 
     if tab == "crystals":
+        mats = _craft_materials_lines(user_id, ready_hint=True)
+        rows.append({"type": 10, "content": (
+            f"**{CRAFT_TABS['crystals'][0]}**\n"
+            f"-# {CRYSTAL_SHARD_COST} shards of one rarity → 1 crystal · ~{CRYSTAL_CRAFT_SECONDS // 60} min each · "
+            f"up to {CRAFT_QUEUE_MAX} in the forge at once\n\n"
+            + (mats if mats else "-# No shards or crystals yet — catch animals to find shards."))})
+        qsum = craft_queue_summary(user_id)
+        if qsum:
+            rows.append({"type": 14, "divider": False, "spacing": 1})
+            rows.append({"type": 10, "content": f"**⏳ In the forge ({len(q)}/{CRAFT_QUEUE_MAX})**\n{qsum}"})
         craftable = [r for r in RARITY_KEYS if shard_count(user_id, r) >= CRYSTAL_SHARD_COST]
         if len(q) >= CRAFT_QUEUE_MAX:
             rows.append({"type": 10, "content": f"-# {emoji('warning')} The forge queue is full \u2014 wait for a crystal to finish."})
@@ -10421,14 +10438,21 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
                 "placeholder": "Fuse shards into a crystal\u2026",
                 "min_values": 1, "max_values": 1, "flows": {}, "options": opts}]})
         else:
-            rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to craft a crystal."})
+            rows.append({"type": 10, "content": f"-# Need at least {CRYSTAL_SHARD_COST} shards of one rarity to fuse a crystal."})
     elif tab == "crates":
-        rows.append({"type": 10, "content": f"### {emoji('crate_sample')} Crate Shop\n{_crystals_owned_line(user_id)}"})
+        owned = _crystals_owned_line(user_id)
+        rows.append({"type": 10, "content": (
+            f"**{CRAFT_TABS['crates'][0]}**\n"
+            f"-# Spend crystals on crates, then open them with </use:{COMMAND_ID.get('use','0')}>.\n\n"
+            f"Your crystals: {owned}")})
+        rows.append({"type": 14, "divider": False, "spacing": 1})
         rows.extend(_crate_shop_sections(user_id))
     else:
-        rows.append({"type": 10, "content": f"### {emoji('adhesive_bandage')} Item Crafting\n-# Instant \u2014 no queue."})
+        rows.append({"type": 10, "content": (
+            f"**{CRAFT_TABS['items'][0]}**\n-# Instant \u2014 no queue. Pay with shards or crystals.")})
         rows.extend(_craft_item_recipe_sections(user_id))
 
+    rows.append({"type": 14, "divider": True, "spacing": 1})
     rows.append({"type": 1, "components": [
         {"type": 2, "style": 2, "label": "Refresh", "emoji": emoji_partial("refresh"), "custom_id": f"craft:open:{user_id}"},
         _back_row(user_id)["components"][0],
@@ -17702,6 +17726,61 @@ async def profile_cmd(interaction: discord.Interaction, user: discord.User = Non
         build_profile_components(target_id, target.display_name, viewer_id=vid))
     await check_everything(interaction, viewer_id)
 
+def build_balance_components(user_id: str, display_name: str, viewer_id: str | None = None) -> list:
+    """◈ / 💎 at a glance. Your own balance also shows the bag, materials and crates, with
+    shortcuts; someone else's shows just the wallet."""
+    d = data[user_id]
+    own = viewer_id is None
+    bag_n, bag_val = len(d.get("inv", [])), (inv_sell_value(user_id) if own else 0)
+    lines = [
+        f"### {emoji('money_bag')} {'Your balance' if own else display_name + chr(39) + 's balance'}",
+        f"## ◈ {d.get('money', 0):,}",
+        f"## {emoji('gem')} {d.get('gems', 0):,}",
+    ]
+    if own:
+        shards = sum(shard_count(user_id, r) for r in RARITY_KEYS)
+        crystals = sum(crystal_count(user_id, r) for r in RARITY_KEYS)
+        crates = sum(int(v) for v in d.get("crate_inv", {}).values())
+        lines.append(f"-# {emoji('inventory')} Bag: **{bag_n}** animal{'s' if bag_n != 1 else ''} worth ◈ {bag_val:,}"
+                     f" → net worth ◈ {d.get('money', 0) + bag_val:,}")
+        lines.append(f"-# {emoji('crystal_rare')} {shards} shards · {crystals} crystals · "
+                     f"{emoji('crate_sample')} {crates} crate{'s' if crates != 1 else ''}")
+    else:
+        lines.append(f"-# Level {d.get('level', 1):,} · Prestige {d.get('prestige', 0)}")
+    comps = [{"type": 17, "accent_color": _accent(viewer_id or user_id), "spoiler": False, "components": [
+        {"type": 10, "content": "\n".join(lines)}]}]
+    if own:
+        comps[0]["components"] += [
+            {"type": 14, "divider": True, "spacing": 1},
+            {"type": 1, "components": [
+                {"type": 2, "style": 3, "label": "Sell All", "emoji": emoji_partial("money_bag"),
+                 "custom_id": f"hunt:sell_all:{user_id}", "disabled": bag_n == 0},
+                {"type": 2, "style": 2, "label": "Daily", "emoji": emoji_partial("daily"),
+                 "custom_id": f"nav:daily:{user_id}"},
+                {"type": 2, "style": 2, "label": "Shop", "emoji": emoji_partial("shop"),
+                 "custom_id": f"nav:shop:{user_id}"},
+                {"type": 2, "style": 2, "label": "Menu", "emoji": emoji_partial("home"),
+                 "custom_id": f"nav:menu:{user_id}"},
+            ]}]
+    return comps
+
+@bot.tree.command(name="balance", description="See your money and gems (or another player's)")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.describe(user="Player to look at (leave empty for yourself)")
+async def balance_cmd(interaction: discord.Interaction, user: discord.User = None):
+    viewer_id = await _common_init(interaction)
+    if not viewer_id: return
+    target = user or interaction.user
+    target_id = str(target.id)
+    if target_id != viewer_id and target_id not in data:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cross_mark')} That player hasn't started Idle Hunter yet.", 0xE74C3C)
+        return
+    await send_v2_followup(interaction, build_balance_components(
+        target_id, target.display_name, viewer_id=None if target_id == viewer_id else viewer_id))
+    await check_everything(interaction, viewer_id)
+
 @bot.tree.command(name="hunt", description="Go hunting in your current biome!")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -18840,7 +18919,9 @@ async def invite_cmd(interaction: discord.Interaction):
         {"type": 10, "content":
             f"## {emoji('link')} Invite Idle Hunter\n"
             f"{emoji('bow')} Hunt, craft, gamble and rule the leaderboards — bring **Idle Hunter** to your server!\n\n"
-            f"{emoji('sparkles')} **Add the bot** to your own server with the first button.\n"
+            f"{emoji('sparkles')} **Add to Server** — put the bot in a server you manage (giveaways, server leaderboards).\n"
+            f"{emoji('profile')} **Add to Account** — use every command anywhere, in any server or DM, "
+            f"without adding it to a server.\n"
             f"{emoji('tribe')} **Join the support server** for updates, events and help.\n"
             f"{emoji('handshake')} **Refer a friend** with </refer:{COMMAND_ID.get('refer','0')}> — "
             f"when they get going you **both** earn {emoji('gem')} gems and a title.\n"
@@ -18848,6 +18929,7 @@ async def invite_cmd(interaction: discord.Interaction):
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [
             {"type": 2, "style": 5, "label": "Add to Server", "emoji": emoji_partial("link"), "url": url1},
+            {"type": 2, "style": 5, "label": "Add to Account", "emoji": emoji_partial("profile"), "url": user_install_url()},
             {"type": 2, "style": 5, "label": "Support Server", "emoji": emoji_partial("tribe"), "url": url2},
         ]},
     ]}]
@@ -21424,7 +21506,8 @@ _add_staff_command(inspect_group)
 
 # alias -> "command" or "group sub". Anything not here is matched by its real command name.
 PREFIX_ALIASES = {
-    "h": "hunt", "d": "daily", "m": "menu", "p": "profile", "top": "leaderboard", "lb": "leaderboard",
+    "h": "hunt", "d": "daily", "m": "menu", "p": "profile", "bal": "balance", "money": "balance",
+    "cash": "balance", "gems": "balance", "wallet": "balance", "top": "leaderboard", "lb": "leaderboard",
     "w": "world", "map": "world", "biomes": "world", "s": "shop", "e": "equip", "cr": "craft",
     "ev": "events", "set": "settings", "v": "vote", "prog": "progression", "achievements": "progression",
     "bj": "gamble blackjack", "blackjack": "gamble blackjack", "cf": "gamble coinflip",
@@ -21538,7 +21621,7 @@ def _prefix_cheatsheet() -> list:
         "Type **`ih`** and a command — e.g. `ih hunt`. Everything also works as a `/slash` command.\n\n"
         "**Hunt & earn** — `ih hunt` (`h`) · `ih daily` (`d`) · `ih vote` (`v`) · `ih idle` · `ih quests` (`q`) · `ih qw`\n"
         "**Gear & world** — `ih shop` (`s`) · `ih equip` (`e`) · `ih craft` · `ih world` (`w`) · `ih guide` · `ih record`\n"
-        "**You** — `ih menu` (`m`) · `ih profile [@user]` (`p`) · `ih settings` · `ih progression` · `ih log`\n"
+        "**You** — `ih bal [@user]` · `ih menu` (`m`) · `ih profile [@user]` (`p`) · `ih settings` · `ih progression` · `ih log`\n"
         "**Casino** — `ih bj` · `ih cf` · `ih slots` · `ih roulette` · `ih rps` · `ih dice` · `ih hl` · `ih casino`\n"
         "**Social** — `ih tribe` (`t`) · `ih lb` · `ih market` · `ih events` · `ih giveaways` · `ih refer [code]`\n"
         "**More** — `ih use <item>` · `ih verify <code>` · `ih info <category> <name>` · `ih updates` · `ih rules` · `ih help`\n\n"

@@ -278,6 +278,110 @@ def test_announcement_hunt_is_public_but_the_other_buttons_stay_private():
         assert seen and all(kind == "private" for kind, _ in seen), seen
 
 
+def _components(o):
+    """Every Components-V2 component in a payload (anything with a numeric `type`)."""
+    if isinstance(o, dict):
+        if isinstance(o.get("type"), int):
+            yield o
+        for v in o.values():
+            yield from _components(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _components(v)
+
+
+def test_craft_screen_is_one_focused_section_per_tab():
+    import json, time as _t
+    d = _fresh("50")
+    d["shards"] = {"common": 12, "rare": 5, "epic": 2}
+    d["crystals"] = {"common": 3, "rare": 1}
+    d["craft_queue"] = [{"rarity": "rare", "done_ts": _t.time() + 300}, {"rarity": "common", "done_ts": _t.time() + 600}]
+    seen = {}
+    for tab in app.CRAFT_TABS:
+        comps = app.build_craft_components("50", tab=tab, notice="NOTICE-LINE")
+        flat = json.dumps(comps, ensure_ascii=False)
+        seen[tab] = flat
+        assert len(list(_components(comps))) <= 40, (tab, len(list(_components(comps))))     # Discord's component cap
+        ids = [c["custom_id"] for c in _components(comps) if c.get("custom_id")]
+        assert len(ids) == len(set(ids)), (tab, ids)
+        assert all(len(i) <= 100 for i in ids)
+        assert "NOTICE-LINE" in flat and f"craft:tab:50" in flat and "craft:open:50" in flat
+        assert "shards" in flat and "forge" in flat                                 # the one-line summary is always there
+        sel = next(c for c in _components(comps) if c.get("custom_id") == "craft:tab:50")
+        assert [o["value"] for o in sel["options"] if o.get("default")] == [tab]
+    # the tab's own content, and nothing from the other tabs
+    assert "craft:queue:50" in seen["crystals"] and "In the forge (2/" in seen["crystals"]
+    assert "Common** — 12 shards" in seen["crystals"]
+    assert seen["crates"].count("crate:buy:") == len(app.CRATE_TIERS) and "craft:queue" not in seen["crates"]
+    assert "Your crystals:" in seen["crates"]
+    assert "craft:queue" not in seen["items"] and "crate:buy" not in seen["items"] and "Instant" in seen["items"]
+    # nothing owned: friendly, not empty
+    d["shards"], d["crystals"], d["craft_queue"] = {}, {}, []
+    empty = json.dumps(app.build_craft_components("50", tab="crystals"), ensure_ascii=False)
+    assert "No shards or crystals yet" in empty
+
+
+def test_invite_offers_server_account_and_support_links():
+    import json
+    _fresh("51")
+    url = app.user_install_url()
+    assert url.startswith("https://discord.com/oauth2/authorize?client_id=") and "integration_type=1" in url
+    assert "scope=applications.commands" in url and "permissions" not in url
+    posts = []
+
+    async def fake_request(route, **kw):
+        posts.append(kw.get("json"))
+        return {}
+    real = app.bot.http.request
+    app.bot.http.request = fake_request
+    try:
+        it = tr.FakeInteraction("51", "x")
+        it.user.display_name = "tester"
+        run(app.invite_cmd.callback(it))
+    finally:
+        app.bot.http.request = real
+    blob = json.dumps(posts[-1], ensure_ascii=False)
+    assert "Add to Server" in blob and "Add to Account" in blob and "Support Server" in blob
+    assert "integration_type=1" in blob and "scope=bot" in blob.replace("%20", " ").replace("+", " ")
+    row = next(c for c in _components(posts[-1]) if c.get("type") == 1)["components"]
+    assert len(row) == 3 and all(b["style"] == 5 for b in row)
+
+
+def test_balance_command_for_yourself_and_for_others():
+    import json
+    d = _fresh("52", money=1_234_567, gems=89)
+    d["inv"] = ["Deer", "Deer", "Rabbit"]
+    d["shards"], d["crystals"], d["crate_inv"] = {"common": 4}, {"rare": 2}, {"Epic Crate": 3}
+    mine = json.dumps(app.build_balance_components("52", "me"), ensure_ascii=False)
+    assert "1,234,567" in mine and "89" in mine and "Bag: **3** animals" in mine
+    assert "4 shards" in mine and "2 crystals" in mine and "3 crates" in mine
+    assert "hunt:sell_all:52" in mine and "nav:daily:52" in mine and "nav:shop:52" in mine
+    tr._mk_user("53", money=777, gems=5)
+    theirs = json.dumps(app.build_balance_components("53", "Other", viewer_id="52"), ensure_ascii=False)
+    assert "Other's balance" in theirs and "777" in theirs and "Bag:" not in theirs and "hunt:sell_all" not in theirs
+    d["inv"] = []
+    assert '"disabled": true' in json.dumps(app.build_balance_components("52", "me"))      # nothing to sell
+    out = []
+
+    async def follow(interaction, comps, *, ephemeral=False):
+        out.append(json.dumps(comps, ensure_ascii=False))
+
+    async def eph(interaction, msg, color=0):
+        out.append(msg)
+    app.maintenance_mode = False
+    app._data_loaded_ok = True
+    with tr.Harness():
+        app.send_v2_followup, app.send_ephemeral_v2 = follow, eph
+        run(app.balance_cmd.callback(tr.FakeInteraction("52", "x")))
+        assert "1,234,567" in out[-1]
+        other = type("U", (), {"id": 53, "display_name": "Other"})()
+        run(app.balance_cmd.callback(tr.FakeInteraction("52", "x"), other))
+        assert "Other's balance" in out[-1]
+        stranger = type("U", (), {"id": 999, "display_name": "Nobody"})()
+        run(app.balance_cmd.callback(tr.FakeInteraction("52", "x"), stranger))
+        assert "hasn't started" in out[-1]
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

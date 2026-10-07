@@ -279,6 +279,18 @@ def test_staff_commands_register_to_the_guild_only_when_configured():
     assert out["update_public"] == ["view"] and out["update_staff"] == ["add", "change", "control"]
 
 
+def test_balance_aliases_work_as_text_commands():
+    _fresh("1011", money=4242, gems=7)
+    for word in ("bal", "balance", "money", "cash", "gems", "wallet"):
+        handled, posts = _say("1011", f"ih {word}")
+        assert handled and posts and "4,242" in _text(posts[0]), word
+    other = SimpleNamespace(id=1012, name="o", display_name="o")
+    tr._mk_user("1012", money=99)
+    handled, posts = _say("1011", "ih bal <@1012>", mentions=[other])
+    assert posts and "99" in _text(posts[0])
+    assert "ih bal" in _text(_say("1011", "ih")[1][0])
+
+
 def test_without_a_staff_guild_nothing_changes():
     names = {c.name for c in app.bot.tree.get_commands()}
     assert {"bot", "inspect", "update", "giveaway"} <= names and "updates" not in names

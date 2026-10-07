@@ -46,6 +46,7 @@ Invite the bot to your server or install it as a user app, then run any command 
 | `/daily` | Claim your daily reward |
 | `/tribe` | View or manage your tribe |
 | `/prestige` | Reset for a permanent boost multiplier |
+| `/balance` | See your money and gems (or another player's) |
 | `/profile` | View your profile and statistics |
 | `/leaderboard` | View global rankings |
 | `/gamble blackjack` · `coinflip` · `slots` · `roulette` · `rps` · `dice` · `highlow` · `menu` | Every casino game is its own command |
@@ -61,7 +62,7 @@ Invite the bot to your server or install it as a user app, then run any command 
 | `/verify` | Complete a verification check |
 | `/suggest` | Send a suggestion to the developers |
 | `/report` | Report a user or a bug |
-| `/invite` | Invite Idle Hunter to your server |
+| `/invite` | Add Idle Hunter to a server — or to your own account, to use it anywhere |
 | `/help` | View all available commands |
 
 *More commands are coming soon!
