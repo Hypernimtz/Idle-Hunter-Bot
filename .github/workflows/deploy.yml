@@ -47,6 +47,7 @@ jobs:
       - run: python tests/test_inspect.py
       - run: python tests/test_prefix.py
       - run: python tests/test_status.py
+      - run: python tests/test_lifetime.py
 
   deploy:
     needs: test

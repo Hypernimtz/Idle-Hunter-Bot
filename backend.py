@@ -1578,6 +1578,9 @@ class Stats:
     animal_fights_won:        int = 0
     animal_fights_lost:       int = 0
     animal_fights_fled:       int = 0
+    # Animals caught across the account's whole life — never wiped by /prestige or /reset
+    # (the top-level total_caught is the current run and IS wiped).
+    lifetime_caught:          int = 0
 
     # Anything not modeled above (older or future keys) is preserved verbatim.
     _extra: dict = field(default_factory=dict, repr=False)
@@ -1590,7 +1593,7 @@ class Stats:
         "tracks_completed", "tracks_lost", "sightings_joined", "shares_posted",
         "regions_explored", "world_conditions_hunted", "expedition_contrib",
         "animal_fights_started", "animal_fights_won", "animal_fights_lost",
-        "animal_fights_fled",
+        "animal_fights_fled", "lifetime_caught",
     )
 
     @classmethod

@@ -63,6 +63,7 @@ def featured_badge(record):
 _FIELDS = [
     ('level', 'level'), ('money', 'money'), ('prestige', 'prestige'),
     ('caught', 'total_caught'),
+    ('lifetime_caught', 'stats.lifetime_caught'),
     # Idle Hunter V2 — exploration-flavoured boards
     ('myths', 'stats.myths_killed'),
     ('tracking', 'stats.tracks_completed'),

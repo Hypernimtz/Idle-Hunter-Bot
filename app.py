@@ -1552,6 +1552,11 @@ async def load_all_data():
     for _td in tribe_data.values():
         _ensure_tribe_fields(_td)
 
+    # Accounts that predate the lifetime-animals counter start it at their current run.
+    for _d in data.values():
+        _st = _d.setdefault("stats", {})
+        _st["lifetime_caught"] = max(int(_st.get("lifetime_caught", 0) or 0), int(_d.get("total_caught", 0) or 0))
+
     _inv_shadow.clear()
     for _uid, _d in data.items():          # item-ledger baseline: only changes from here on are logged
         _inv_shadow[_uid] = _inv_snapshot(_d)
@@ -3813,6 +3818,20 @@ def collect_idle_haul(user_id: str) -> dict:
 # RECORD & LOG HELPERS
 # ─────────────────────────────────────────────
 
+def lifetime_caught(user_id: str) -> int:
+    """Animals caught over the whole life of the account. total_caught is wiped by a
+    prestige/reset, so the lifetime figure is kept separately; max() also covers
+    accounts that predate the counter (their current run is the best we know)."""
+    d = data.get(user_id, {})
+    return max(int(d.get("stats", {}).get("lifetime_caught", 0) or 0), int(d.get("total_caught", 0) or 0))
+
+def bump_caught(user_id: str, n: int = 1) -> None:
+    """One more catch: advances both the current-run count and the lifetime count."""
+    d = data[user_id]
+    life = lifetime_caught(user_id)                      # read BEFORE total_caught moves
+    d["total_caught"] = d.get("total_caught", 0) + n
+    d.setdefault("stats", {})["lifetime_caught"] = life + n
+
 def record_catch(user_id: str, animal: str, tool: str, value: int):
     record = data[user_id].setdefault("record", {})
     if animal not in record:
@@ -3821,7 +3840,7 @@ def record_catch(user_id: str, animal: str, tool: str, value: int):
     record[animal]["total_earned"] += value
     record[animal]["best"]          = max(record[animal].get("best", 0), value)
     record[animal].setdefault("tools", {})[tool] = record[animal]["tools"].get(tool, 0) + 1
-    data[user_id]["total_caught"] = data[user_id].get("total_caught", 0) + 1
+    bump_caught(user_id)
 
 # ─────────────────────────────────────────────
 # SESSION TRACKING  ·  opt-in "/session" continuity log
@@ -6423,7 +6442,7 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
     myth_shard = random.random() < MYTH_SHARD_KILL_CHANCE
     if myth_shard:
         add_shard(user_id, "mythic", 1)
-    data[user_id]["total_caught"] = data[user_id].get("total_caught", 0) + 1
+    bump_caught(user_id)
     stats["myths_killed"] = stats.get("myths_killed", 0) + 1
     first_title = ""
     if is_first_kill:
@@ -7501,7 +7520,8 @@ def build_statistics_components(user_id: str, display_name: str, viewer_id: str 
         f"{emoji('trophy')} Best daily streak: **{best_streak}**\n\n"
         f"{emoji('money_bag')} Net worth: **◈ {nw:,}**\n"
         f"{emoji('money_bag')} Total ◈ earned: **◈ {total_earned:,}**\n"
-        f"{emoji('target')} Total animals caught: **{total_caught:,}**\n"
+        f"{emoji('target')} Animals caught (this run): **{total_caught:,}**\n"
+        f"{emoji('target')} Animals caught (lifetime): **{lifetime_caught(user_id):,}**\n"
         f"{emoji('diamond_small')} Ammo used: **{s.get('ammo_used', 0):,}**\n"
         f"{emoji('dice')} Gamble wins — BJ: **{s.get('bj_wins',0):,}** · CF: **{s.get('cf_wins',0):,}** · "
         f"RL: **{s.get('rl_wins',0):,}** · RPS: **{s.get('rps_wins',0):,}** · "
@@ -10036,6 +10056,7 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
     prestige count exactly as it was. Returns the new prestige count. Caller
     must run this inside a user_transaction."""
     d = data[user_id]
+    d.setdefault("stats", {})["lifetime_caught"] = lifetime_caught(user_id)   # survives the wipe below
     # Log the wipe so the economy ledger still reconciles with balances in
     # circulation (otherwise reset money/gems just silently vanish from it).
     _old_money = int(d.get("money", 0))
@@ -12134,12 +12155,18 @@ def build_tribe_components(user_id: str, tribe_name: str,
 HUNTER_LB_STATS = {
     "Level":                lambda uid: data[uid].get("level", 1),
     "Money":                lambda uid: data[uid].get("money", 0),
-    "Total Animals Caught": lambda uid: data[uid].get("total_caught", 0),
+    "Total Animals Caught": lambda uid: data[uid].get("total_caught", 0),     # this run: reset by /prestige
+    "Lifetime Animals Caught": lambda uid: lifetime_caught(uid),              # whole account: never resets
     "Prestige Count":       lambda uid: data[uid].get("prestige", 0),
     # ── Idle Hunter V2 — reward exploration, not just grind (Phase 45) ──
     "Mythic Creatures Slain": lambda uid: data[uid].get("stats", {}).get("myths_killed", 0),
     "Tracking Successes":     lambda uid: data[uid].get("stats", {}).get("tracks_completed", 0),
     "Regions Explored":       lambda uid: len(data[uid].get("guide_seen", [])),
+}
+
+LB_STAT_HINTS = {
+    "Total Animals Caught":    "Since your last prestige / reset",
+    "Lifetime Animals Caught": "Whole account, never resets",
 }
 
 LB_PERIOD_LABELS = {"all": "All-Time", "daily": "Today", "weekly": "This Week"}
@@ -12305,7 +12332,8 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
          "custom_id": f"lb:next:{user_id}", "disabled": (page >= total_pages - 1)},
     ]}]
     if mode == "hunter":
-        stat_options = [{"label": s, "value": s, "default": (s == stat)}
+        stat_options = [{"label": s, "value": s, "default": (s == stat),
+                         **({"description": LB_STAT_HINTS[s]} if s in LB_STAT_HINTS else {})}
                        for s in HUNTER_LB_STATS.keys()]
         components.append({"type": 1, "components": [{"type": 3,
             "custom_id": f"lb:stat:{user_id}",
@@ -12847,6 +12875,39 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
 # COMMON INIT
 # ─────────────────────────────────────────────
 
+ADMIN_MAINT_NUDGE_EVERY = 10
+_admin_maint_count: dict[str, int] = {}
+
+async def _admin_maintenance_nudge(interaction: discord.Interaction, user_id: str) -> None:
+    """Admins bypass maintenance, so nothing tells them everyone else is locked out.
+    While it's on, remind an admin every ADMIN_MAINT_NUDGE_EVERY commands. The count
+    only restarts once the reminder was actually shown (it needs an acknowledged
+    interaction), and it is cleared when maintenance is off."""
+    if not maintenance_mode:
+        _admin_maint_count.pop(user_id, None)
+        return
+    n = _admin_maint_count.get(user_id, 0) + 1
+    if n < ADMIN_MAINT_NUDGE_EVERY:
+        _admin_maint_count[user_id] = n
+        return
+    if not interaction.response.is_done():
+        _admin_maint_count[user_id] = n          # try again on the next command
+        return
+    _admin_maint_count[user_id] = 0
+    since = f" since <t:{int(maintenance_since)}:R>" if maintenance_since > 0 else ""
+    try:
+        await send_ephemeral_v2(
+            interaction,
+            f"### {emoji('warning')} Maintenance mode is ON\n"
+            f"Players are locked out{since}; only admins can use the bot right now.\n"
+            f"Reason shown to players: {maintenance_message or '—'}\n"
+            f"-# Turn it off in `/admin` → Maintenance when you're done. "
+            f"Reminder every {ADMIN_MAINT_NUDGE_EVERY} commands.",
+            0xE67E22)
+    except Exception:
+        pass
+
+
 async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = True) -> str | None:
     """Run the shared per-interaction bootstrap (init user, maintenance / ban /
     verify gates) and return the caller's user id, or ``None`` when a gate has
@@ -12901,6 +12962,7 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
         data[user_id]["username"] = interaction.user.name
         await update_user_servers(user_id, interaction.guild)
         await _maybe_defer()
+        await _admin_maintenance_nudge(interaction, user_id)
         return user_id
 
     # Maintenance — type 4 immediate response, no defer
@@ -22738,6 +22800,7 @@ async def _admin_apply(op: str, params: dict, admin_id: str) -> tuple[str, str]:
                 note = f"`✨` Set <@{target}>'s current-level XP to **{val:,}**."
             elif op == "set_caught":
                 d["total_caught"] = val
+                d.setdefault("stats", {})["lifetime_caught"] = max(lifetime_caught(target), val)
                 note = f"{emoji('target')} Set <@{target}>'s total caught to **{val:,}**."
             elif op == "set_streak":
                 d["daily_streak"] = val

@@ -38,5 +38,10 @@
     "key": "2026-10-07-balance-craft-invite",
     "title": "/balance, a cleaner /craft, and add the bot to your account",
     "message": "- **New `/balance`** (or `ih bal`): your money and gems at a glance, plus your bag's value, shards, crystals and crates — with Sell All, Daily and Shop buttons. Add a name to check someone else's\n- **`/craft` has been reorganised:** a one-line summary up top, then one clear section per tab — Fuse Crystals (with your shards and the forge queue), Crates, and Items\n- **`/invite` now has \"Add to Account\":** install the bot to *yourself* and use every command in any server or DM, without adding it to a server"
+  },
+  {
+    "key": "2026-10-07-lifetime-animals",
+    "title": "Lifetime animals leaderboard",
+    "message": "- **New leaderboard: Lifetime Animals Caught.** Every animal you catch now counts towards your whole account, and prestiging or resetting never wipes it\n- **\"Total Animals Caught\" is now your current run** (since your last prestige), so you can race people on both boards — pick either one in `/leaderboard` → Sort by stat\n- Your **Statistics** page shows both numbers. Lifetime starts from your current run for existing players, and counts every catch from now on"
   }
 ]
