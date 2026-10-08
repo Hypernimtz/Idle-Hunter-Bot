@@ -57,8 +57,9 @@ The changelog page then renders `GET /api/changelog` (version badge, date, title
 | Variable | What it does |
 |---|---|
 | `STAFF_GUILD_ID` | Registers `/bot`, `/inspect` and `/updates` to this one server only. Unset = they stay global. If the bot can't reach that server at startup they fall back to global automatically. |
-| `STATUS_CHANNEL_ID` | Channel for connection notices (online, reconnected, connection lost, website down, shutting down). Unset = the bot DMs its owner. |
+| `STATUS_CHANNEL_ID` | Channel for connection notices (reconnected, connection lost, website down, long-outage boot; plus online/shutting down if `STATUS_NOTIFY_BOOT=1`). Unset = the bot DMs its owner. |
 | `STATUS_NOTIFY` | `0` turns the connection notices off. |
+| `STATUS_NOTIFY_BOOT` | `1` also sends the routine "online" / "shutting down" notices on every restart or deploy. Off by default; a boot after a 10+ minute outage and real problems (connection lost, website down) are always sent. |
 | `LEADERBOARD_URL`, `LEADERBOARD_PUSH_TOKEN` | Website leaderboard push (and, derived from the same URL, the changelog push). |
 | `CHANGELOG_URL` | Only if the changelog lives somewhere other than `<LEADERBOARD_URL host>/api/changelog`. |
 

@@ -21762,8 +21762,9 @@ async def on_message(message: discord.Message):
 # ─────────────────────────────────────────────
 # Posts to STATUS_CHANNEL_ID (token.env) — or DMs the bot owner when that isn't set — when the
 # bot comes online (and how long it was down), reconnects after a gateway drop, has been cut off
-# for more than STATUS_DISCONNECT_GRACE seconds, loses/regains the website push, or shuts down
-# (deploys and restarts included). STATUS_NOTIFY=0 turns the messages off. /inspect status shows
+# for more than STATUS_DISCONNECT_GRACE seconds, or loses/regains the website push. Ordinary
+# boots and shutdowns (every deploy) stay silent unless STATUS_NOTIFY_BOOT=1; a boot after a
+# 10+ minute outage still speaks up. STATUS_NOTIFY=0 turns every message off. /inspect status shows
 # the same report on demand. A crash can't announce itself — the next boot reports the downtime.
 
 try:
@@ -21771,6 +21772,10 @@ try:
 except ValueError:
     STATUS_CHANNEL_ID = 0
 STATUS_NOTIFY = (os.getenv("STATUS_NOTIFY", "1").strip().lower() not in ("0", "false", "no", "off"))
+# Routine "online" / "shutting down" notices (every deploy!) are OFF unless STATUS_NOTIFY_BOOT=1.
+# Problems always get through: a long outage before this boot, connection lost, website down.
+STATUS_NOTIFY_BOOT = (os.getenv("STATUS_NOTIFY_BOOT", "0").strip().lower() in ("1", "true", "yes", "on"))
+STATUS_LONG_DOWNTIME = 600        # a boot after at least this long offline is worth a message
 STATUS_DISCONNECT_GRACE = 90      # seconds of dead gateway before we say so
 STATUS_RECONNECT_MIN = 30         # shorter blips are logged, not announced
 STATUS_WEBSITE_GRACE = 600        # website uploads failing this long -> warn once
@@ -21867,6 +21872,8 @@ async def status_online() -> None:
     down = _boot_info.get("down_secs", 0)
     lead = (f"Back after about **{_fmt_dur(down)}** offline.\n" if down >= 30 else "")
     _conn_log("online")
+    if not STATUS_NOTIFY_BOOT and down < STATUS_LONG_DOWNTIME:
+        return                        # an ordinary restart/deploy: no message
     await status_post("🟢 Idle Hunter is online", lead + status_report(), 0x2ECC71, key="online", min_gap=5)
 
 async def status_recovered() -> None:
@@ -21884,6 +21891,8 @@ async def status_recovered() -> None:
 
 async def status_shutdown() -> None:
     _conn_log("shutting down")
+    if not STATUS_NOTIFY_BOOT:
+        return
     await status_post("🔴 Idle Hunter is shutting down",
                       f"Restarting (a deploy or a manual restart) or stopping.\n-# Was up for {_fmt_dur(time.time() - _boot_ts)}.",
                       0xE74C3C, key="shutdown", min_gap=5)

@@ -50,6 +50,7 @@ def _reset(**state):
     app._conn.update({"down_since": 0.0, "warned": False, "site_warned": False, "events": []})
     app._boot_info["down_secs"] = 0
     app.STATUS_NOTIFY = True
+    app.STATUS_NOTIFY_BOOT = True          # the boot/shutdown tests below opt in; see the silent-by-default test
     app.STATUS_CHANNEL_ID = state.get("channel", 4242)
     app._lb_publisher = state.get("lb")
     app._cl_publisher = state.get("cl")
@@ -84,6 +85,27 @@ def test_online_notice_reports_what_is_connected_and_the_downtime():
     _reset()
     run(app.status_online())
     assert "Back after" not in _text()                                              # a normal boot says nothing about downtime
+
+
+def test_ordinary_boots_and_shutdowns_are_silent_by_default():
+    _reset()
+    app.STATUS_NOTIFY_BOOT = False
+    try:
+        run(app.status_online())
+        run(app.status_shutdown())
+        assert not SENT                                                              # a deploy restart sends nothing
+        app._boot_info["down_secs"] = 3 * 60
+        run(app.status_online())
+        assert not SENT                                                              # a short outage is still routine
+        app._boot_info["down_secs"] = 45 * 60
+        run(app.status_online())
+        assert len(SENT) == 1 and "Back after about **45 min** offline" in _text()   # a long outage is not
+        SENT.clear()
+        run(app.status_watch_once(time.time()))
+        app._conn["down_since"] = time.time() - 180
+        assert run(app.status_watch_once()) == ["lost"] and SENT                    # problems still get through
+    finally:
+        app.STATUS_NOTIFY_BOOT = True
 
 
 def test_report_marks_unconfigured_failing_and_staff_states():
