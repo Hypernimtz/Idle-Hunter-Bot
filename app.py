@@ -7420,6 +7420,66 @@ def _profile_tab_rows(active: str, target_id: str, viewer_id=None) -> list:
                                     "custom_id": f"nav:menu:{nav_id}"}]},
     ]
 
+# ── Profile customisation: bio + which sections show ─────────────────────────
+PROFILE_BIO_MAX = 150
+
+# (key, label, hint) — what the multi-select offers. Name, level and prestige always show.
+PROFILE_SECTIONS = [
+    ("bio",       "Bio",                 "Your short bio"),
+    ("title",     "Equipped title",      "The title under your name"),
+    ("health",    "Health",              "Your HP"),
+    ("wealth",    "Money & gems",        "Your ◈ and gems"),
+    ("location",  "Biome / travel",      "Where you are hunting"),
+    ("gear",      "Tool, ammo, vehicle", "Your equipment"),
+    ("tribe",     "Tribe",               "Which tribe you are in"),
+    ("badges",    "Badges & gemstones",  "Your featured badges"),
+    ("boosts",    "Luck / Sell / XP",    "Your boost percentages"),
+    ("camp",      "Idle camp",           "Hunters and haul"),
+    ("inventory", "Inventory summary",   "Item count and value"),
+]
+PROFILE_SECTION_KEYS = [k for k, _l, _h in PROFILE_SECTIONS]
+
+def profile_editor_on(user_id: str) -> bool:
+    """Off by default for everybody, admins included — the edit controls only appear once a
+    player turns on Profile Editor in /settings."""
+    return bool(data.get(user_id, {}).get("profile_editor", False))
+
+def profile_shown(user_id: str) -> set:
+    """Sections this player's profile shows (everything until they choose otherwise)."""
+    chosen = data.get(user_id, {}).get("profile_show")
+    if chosen is None:
+        return set(PROFILE_SECTION_KEYS)
+    return {k for k in chosen if k in PROFILE_SECTION_KEYS}
+
+_BIO_LINK_RE = re.compile(r"(https?://\S+|www\.\S+|discord(?:app)?\.(?:gg|com/invite)/\S+)", re.IGNORECASE)
+
+def clean_bio(text: str) -> str:
+    """A bio is shown to other players, so it can't ping anyone, carry links/invites, or
+    break the panel layout: no mentions, no links, no code blocks, at most 3 lines."""
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = "".join(ch for ch in text if ch == "\n" or (ch.isprintable() and ch not in "\u202e\u202d"))
+    text = _BIO_LINK_RE.sub("[link removed]", text)
+    text = text.replace("```", "").replace("@", "@\u200b").replace("<", "<\u200b").replace("](", "] (")
+    lines = [ln.strip() for ln in text.split("\n")]
+    lines = [ln for ln in lines if ln][:3]
+    return "\n".join(lines)[:PROFILE_BIO_MAX].strip()
+
+def _profile_editor_rows(user_id: str) -> list:
+    """Edit Bio button + the 'what does my profile show' multi-select (own profile, editor on)."""
+    shown = profile_shown(user_id)
+    options = [{"label": label, "value": key, "description": hint, "default": key in shown}
+               for key, label, hint in PROFILE_SECTIONS]
+    return [
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": f"-# {emoji('settings')} **Profile Editor** — pick what your profile shows. "
+                                 f"Hidden sections are hidden for everyone (use `/balance` for your own wallet)."},
+        {"type": 1, "components": [{"type": 3, "custom_id": f"profile:sections:{user_id}",
+            "placeholder": "Choose what your profile shows…",
+            "min_values": 0, "max_values": len(options), "options": options}]},
+        {"type": 1, "components": [{"type": 2, "style": 1, "label": "Edit Bio",
+            "emoji": emoji_partial("label"), "custom_id": f"profile:bio:{user_id}"}]},
+    ]
+
 def build_profile_components(user_id: str, display_name: str,
                               active_panel: str = "main", viewer_id: str = None) -> list:
     d         = data[user_id]
@@ -7460,33 +7520,60 @@ def build_profile_components(user_id: str, display_name: str,
 
     viewing_note = f"-# {emoji('eyes')} You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
     tester_note  = f"-# {emoji('test_tube')} **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
+    shown = profile_shown(user_id)
+    bio   = d.get("bio", "")
+    bio_block = ("\n".join(f"> {ln}" for ln in bio.split("\n")) + "\n") if (bio and "bio" in shown) else ""
+    if "title" not in shown:
+        title_line = ""
+    vitals = []
+    if "health" in shown:
+        vitals.append(hp_status_line(user_id))
+    if "wealth" in shown:
+        vitals += [f"**◈ {d['money']:,}**", f"{emoji('gem')} **{d['gems']}**"]
+    vitals_line = (" · ".join(vitals) + "\n") if vitals else ""
+    place_line = ""
+    if "location" in shown:
+        place_line = (f"{travel_status_line(user_id)}\n" if is_traveling(user_id) else
+                      f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · {biome_region(biome)['region']}\n")
+    gear_block = ""
+    if "gear" in shown:
+        gear_block = (f"{tool_emoji(tool_name)} **{tool_name}** (T{get_tool_tier(tool_name)})\n"
+                      f"{ph(emoji('diamond_small'))} Ammo: {ammo_line}\n"
+                      f"{ph(emoji('jeep'))} Vehicle: {vehicle_line}\n")
+    tribe_block  = f"{TRIBE_EMOJIS['tribe']} {tribe_line}\n" if "tribe" in shown else ""
+    badge_block  = f"{gem_disp}\n{badge_line}" if "badges" in shown else "\n"
+    boosts_block = (f"{emoji('luck')} Luck: + **{boosts['luck']}%** · "
+                    f"{emoji('sell_boost')} Sell: + **{boosts['sell']}%** · "
+                    f"{emoji('xp_boost')} XP: + **{boosts['xp']}%**\n\n") if "boosts" in shown else ""
+    camp_block = (f"{emoji('idle_camp')} Camp: **{stacks}** hunter(s)"
+                  f"{f' · Haul {idle_haul}/{idle_cap} @ {idle_camp_nm}' if stacks else ''}\n\n") if "camp" in shown else ""
+    inv_block  = (f"{emoji('inventory')} Inventory ({len(inv)} items · ◈ {sell_val:,}):\n") if "inventory" in shown else ""
+    own_view   = not _viewing_other(user_id, viewer_id)
+    editor_on  = own_view and profile_editor_on(user_id)
+    edit_hint  = ("" if (editor_on or not own_view) else
+                  "-# Want a bio or to choose what shows here? Turn on **Profile Editor** in `/settings`.\n")
     stats = (
         f"{_profile_title(USER_EMOJIS['profile'], display_name, 'Profile', user_id, viewer_id)}\n"
         f"{viewing_note}"
         f"{tester_note}"
         f"{title_line}"
+        f"{bio_block}"
         f"{USER_EMOJIS['levels']} Lv. **{d['level']}** ({d['xp']:,}/{xp_for_level(d['level']):,} XP) · "
         f"{emoji('prestige')} Prestige **{prestige}**\n"
-        f"{hp_status_line(user_id)} · **◈ {d['money']:,}** · {emoji('gem')} **{d['gems']}**\n"
-        + (f"{travel_status_line(user_id)}\n"
-           if is_traveling(user_id) else
-           f"{BIOME_EMOJIS[biome]} **{BIOME_NAMES[biome]}** · {biome_region(biome)['region']}\n")
-        + f"{tool_emoji(tool_name)} **{tool_name}** (T{get_tool_tier(tool_name)})\n"
-        f"{ph(emoji('diamond_small'))} Ammo: {ammo_line}\n"
-        f"{ph(emoji('jeep'))} Vehicle: {vehicle_line}\n"
-        f"{TRIBE_EMOJIS['tribe']} {tribe_line}\n"
-        f"{gem_disp}\n"
-        f"{badge_line}"
-        f"{emoji('luck')} Luck: + **{boosts['luck']}%** · "
-        f"{emoji('sell_boost')} Sell: + **{boosts['sell']}%** · "
-        f"{emoji('xp_boost')} XP: + **{boosts['xp']}%**\n\n"
-        f"{emoji('idle_camp')} Camp: **{stacks}** hunter(s)"
-        f"{f' · Haul {idle_haul}/{idle_cap} @ {idle_camp_nm}' if stacks else ''}\n\n"
-        f"{emoji('inventory')} Inventory ({len(inv)} items · ◈ {sell_val:,}):\n"
+        f"{vitals_line}"
+        f"{place_line}"
+        f"{gear_block}"
+        f"{tribe_block}"
+        f"{badge_block}"
+        f"{boosts_block}"
+        f"{camp_block}"
+        f"{inv_block}"
+        f"{edit_hint}"
     )
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": stats},
         {"type": 14, "divider": True, "spacing": 1},
+        *(_profile_editor_rows(user_id) if editor_on else []),
         *_profile_tab_rows(active_panel, user_id, viewer_id),
     ]}]
 
@@ -9333,6 +9420,9 @@ def build_settings_components(user_id: str) -> list:
                           "ON: every press of Hunt posts a fresh message (and keeps the old ones). "
                           "OFF: Hunt updates the same message in place. `/hunt` always posts a new one.",
                           hunt_new_message(user_id)),
+        _setting_section("profile_editor", emoji('profile'), "Profile Editor",
+                          "Adds an Edit Bio button and a \"what my profile shows\" picker to your own `/profile`. "
+                          "Off by default.", profile_editor_on(user_id)),
     ]
 
     comps = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
@@ -13567,6 +13657,8 @@ def _cid_opens_modal(parts: list[str], values: list) -> bool:
         return sub in ("invite", "set_desc", "leave")
     if a == "tribe" and b == "deposit":
         return True
+    if a == "profile" and b == "bio":
+        return True
     if a == "gw":
         return True       # the click's own ephemeral answer, or a modal
     if a == "gamble" and c in ("setbet", "deal"):
@@ -14405,6 +14497,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 data[owner_id]["auto_open_crates"] = not data[owner_id].get("auto_open_crates", False)
             elif key == "hunt_new_message":
                 data[owner_id]["hunt_new_message"] = not data[owner_id].get("hunt_new_message", False)
+            elif key == "profile_editor":
+                data[owner_id]["profile_editor"] = not data[owner_id].get("profile_editor", False)
             mark_user_dirty(owner_id)
             await smart_update_v2(interaction, build_settings_components(owner_id))
             return
@@ -16708,6 +16802,21 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                else (data.get(target_id, {}).get("_display_name") or get_username(target_id)))
         vid = None if is_self else self_id
 
+        if panel in ("bio", "sections"):
+            # The editor controls: own profile only, and only once Profile Editor is on.
+            if not is_self or not profile_editor_on(self_id):
+                await send_ephemeral_v2(interaction,
+                    f"{emoji('cross_mark')} Turn on **Profile Editor** in `/settings` first.", 0xE74C3C)
+                return
+            if panel == "bio":
+                await interaction.response.send_modal(ProfileBioModal(self_id))
+                return
+            async with user_transaction(self_id):
+                data[self_id]["profile_show"] = [k for k in PROFILE_SECTION_KEYS if k in set(values)]
+                mark_user_dirty(self_id)
+            await smart_update_v2(interaction, build_profile_components(target_id, nm, "main", viewer_id=vid))
+            return
+
         if panel == "main":
             await smart_update_v2(interaction, build_profile_components(target_id, nm, "main", viewer_id=vid))
             return
@@ -17225,6 +17334,27 @@ class LotteryBuyModal(_V2Modal, title="Buy Lottery Tickets"):
                 f"{emoji('cross_mark')} Need **◈ {total_cost:,}** for {qty:,} ticket(s).", 0xE74C3C)
             return
         await smart_update_v2(interaction, build_lottery_components(self.user_id))
+
+class ProfileBioModal(_V2Modal, title="Edit Your Bio"):
+    bio_input = discord.ui.TextInput(
+        label=f"Bio (max {PROFILE_BIO_MAX} characters)",
+        placeholder="A line or two about you. Leave empty to remove it.",
+        required=False, max_length=PROFILE_BIO_MAX, style=discord.TextStyle.paragraph)
+
+    def __init__(self, user_id):
+        super().__init__()
+        self.user_id = str(user_id)
+        self.bio_input.default = data.get(self.user_id, {}).get("bio", "") or None
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not await _modal_gate(interaction, self.user_id):
+            return
+        bio = clean_bio(self.bio_input.value)
+        async with user_transaction(self.user_id):
+            data[self.user_id]["bio"] = bio
+            mark_user_dirty(self.user_id)
+        await smart_update_v2(interaction, build_profile_components(
+            self.user_id, interaction.user.display_name, "main"))
 
 class CustomColorModal(_V2Modal, title="Custom Embed Color"):
     hex_input = discord.ui.TextInput(
@@ -21455,6 +21585,24 @@ async def inspect_log_cmd(interaction: discord.Interaction, user: str, kind: str
     _insp_state[admin_id] = {"target": uid, "kinds": None if kind == "all" else [kind],
                              "search": search.strip(), "days": days, "page": 0}
     await send_v2_followup(interaction, await build_inspect_log_components(admin_id), ephemeral=True)
+
+@inspect_group.command(name="bio", description="Admin: read a player's profile bio, or remove it")
+@app_commands.check(is_admin)
+@app_commands.describe(user="Player ID, @mention or name", clear="Remove their bio")
+@app_commands.autocomplete(user=_insp_user_autocomplete)
+async def inspect_bio_cmd(interaction: discord.Interaction, user: str, clear: bool = False):
+    uid = await _insp_open(interaction, user)
+    if not uid:
+        return
+    old = data[uid].get("bio", "") or ""
+    if clear and old:
+        async with user_transaction(uid):
+            data[uid]["bio"] = ""
+            mark_user_dirty(uid)
+        admin_audit(interaction.user.id, "clear_bio", f"{uid}: {old[:150]!r}")
+    shown = "Removed. It said:" if (clear and old) else "Current bio:"
+    await send_ephemeral_v2(interaction, f"### {emoji('label')} {get_username(uid)} — bio\n-# `{uid}`\n{shown}\n"
+                            + (f"```\n{old.replace(chr(96), chr(39))}\n```" if old else "*(empty)*"), 0x3498DB)
 
 @inspect_group.command(name="item", description="Admin: how a player got (and lost) one specific item or ammo")
 @app_commands.check(is_admin)

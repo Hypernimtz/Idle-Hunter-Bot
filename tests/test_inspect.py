@@ -266,7 +266,7 @@ def test_commands_run_end_to_end_and_are_admin_gated():
     _baseline("16")
     _change("16", "giveaway", lambda: app.data["16"].setdefault("ammo_inv", {}).__setitem__("Lead Ball", 77))
     cmds = {c.name: c for c in app.inspect_group.commands}
-    assert set(cmds) == {"user", "log", "item", "who", "search", "export", "actions", "economy", "status"}
+    assert set(cmds) == {"user", "log", "item", "who", "search", "export", "actions", "economy", "status", "bio"}
     assert all(c.checks for c in cmds.values())                  # every one is admin-gated
     out = []
 
