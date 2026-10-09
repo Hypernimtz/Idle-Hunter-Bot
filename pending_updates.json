@@ -103,5 +103,10 @@
     "key": "2026-10-09-quest-fixes",
     "title": "Quest fixes",
     "message": "- **Quests never run out anymore** — claimed quests clear the next day and unfinished ones expire after a day or two, so new quests always keep rolling\n- **Your first hunt or sale of the day starts your quests** — no need to open the quest panel first\n- **Quests only ask for what you can do** — rarities, crates, biomes and tool tiers you can actually reach\n- **Weekly daily-quest goal is now 14 quests** (was 20)\n- **\"Claim your daily reward\" is always 1**, and \"Complete other quests today\" is at most 2 and only counts quests from today\n- **Quest money now follows your biome's earning power** — much smaller at low levels, steadier at high ones; sell-this-much quests are sized in catches (a level 1 sells ◈10,000, not ◈100,000)\n- Harder-rarity catch quests ask for fewer animals, and the weekly hunts quest tops out at 300"
+  },
+  {
+    "key": "2026-10-09-shop-fixes",
+    "title": "Shop fixes",
+    "message": "- **Ammo Pouch** now restocks the basic coin-priced ammo for your weapon type (20 at a time) — it no longer refills gem ammo, and it respects the 9,999 stack limit\n- **Gift Box** pays out a little less on average — it's a treat, not a money maker\n- **Timed boosts** (flares, scents, crate boosts…) now cap at **+200%** combined per stat, and you won't burn an item if you're already maxed\n- **Haul Wagon** won't be used up on a nearly-full haul\n- **Permanent boosts** can't be bought once you're at the +500% cap, so you won't be charged for nothing\n- You can carry at most **15** of each healing item from the shop"
   }
 ]

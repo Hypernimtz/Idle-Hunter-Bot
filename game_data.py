@@ -3175,6 +3175,8 @@ def roll_catch_drops(rarity: str, crate_luck_boost: int = 0,
 # admin set_*/max_boosts stay uncapped so tester accounts can still be maxed.
 MAX_PERSONAL_BOOST = 500   # each of data[uid]["boosts"] luck / sell / xp
 MAX_TRIBE_BOOST    = 200   # each of a tribe's luck_boost / sell_price_boost / xp_boost
+MAX_TEMP_BOOST     = 200   # combined timed luck / sell / xp boosts (items, crates, scratch pads) per stat
+HEALING_BUY_CAP    = 15    # healing items you can hold before the shop stops selling more
 
 # Old shop names -> current ones (stale buttons + saved purchase counts still resolve).
 SHOP_ITEM_RENAMES = {"Crate Charm": "Shard Charm"}
@@ -4737,6 +4739,11 @@ HEALING_ITEMS["Field Medkit"]["emoji"] = EMOJI.get("potion_bottle") or HEALING_I
 # would let a low-level alt buy cheap and resell to a high-level player.
 ITEM_STACK_CAP = 10   # max copies of any one item a player can hold
 
+# Gift Box: pays out coins 70% of the time (a multiple of crate_value_scale) and otherwise a short
+# Luck boost. It costs 3x the scale, so the coin side must average well under 3x / 0.7 = 4.3x.
+GIFT_BOX_COIN_CHANCE = 0.7
+GIFT_BOX_COIN_X      = (1.5, 5.0)       # avg 3.25x -> 2.28x expected per box, ~76% of the 3x price
+
 ITEMS = {
     "Smoke Bomb": {
         "emoji": "💨", "tradable": False,
@@ -4744,7 +4751,7 @@ ITEMS = {
     },
     "Ammo Pouch": {
         "emoji": "🎒", "tradable": False,
-        "description": "Restocks your currently equipped ammo.",
+        "description": "Restocks 20 of the basic, coin-priced ammo for your weapon type (never gem ammo).",
     },
     "Camp Rations": {
         "emoji": "🍖", "tradable": False,

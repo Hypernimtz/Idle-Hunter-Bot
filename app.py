@@ -88,7 +88,8 @@ from game_data import (
     CRATE_TIERS, CRATE_REWARDS, open_crate, crate_value_scale, roll_catch_drops,
     hunt_crate_chance, pick_biome_animal,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
-    MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST,
+    MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
+    GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
     CRAFT_QUEUE_LEVEL_STEP, CRAFT_QUEUE_PER_STEP, CRAFT_QUEUE_HARD_CAP, craft_queue_cap,
     CRATE_GEMSTONE_CHANCE, MYTH_SHARD_KILL_CHANCE,
@@ -3218,8 +3219,10 @@ def _sum_active_boosts(boost_list: list) -> dict:
     return boosts
 
 def get_active_temp_boosts(user_id: str) -> dict:
-    """Return combined active temp boost percentages."""
-    return _sum_active_boosts(data[user_id].get("temp_boosts", []))
+    """Return combined active temp boost percentages, capped at MAX_TEMP_BOOST per stat so
+    stacked flares / scents / crate boosts can't pile up without limit."""
+    tot = _sum_active_boosts(data[user_id].get("temp_boosts", []))
+    return {k: min(v, MAX_TEMP_BOOST) for k, v in tot.items()}
 
 # ─────────────────────────────────────────────
 # PERSISTENCE
@@ -17553,6 +17556,10 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 bought = shop_bought_count(data[owner_id], item_name)
                 if boost_key and bought >= item["max_qty"]:
                     ok, err = False, f"Max {item_name} already owned."
+                elif boost_key in ("luck", "sell", "xp") and \
+                        data[owner_id].get("boosts", {}).get(boost_key, 0) >= MAX_PERSONAL_BOOST:
+                    ok, err = False, (f"Your permanent {boost_key.title()} boost is already at the "
+                                      f"+{MAX_PERSONAL_BOOST}% cap — this wouldn't do anything.")
                 else:
                     price = shop_boost_price(item_name, bought)
                     ok, err = _shop_purchase(owner_id, item["currency"], price, "shop boost", f"{item_name} #{bought + 1}")
@@ -17573,7 +17580,10 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 return
             async with user_transaction(owner_id):
                 price = healing_item_price(item_name, data[owner_id].get("level", 1))
-                ok, err = _shop_purchase(owner_id, "money", price, "healing item", item_name)
+                if data[owner_id].get("healing_inv", {}).get(item_name, 0) >= HEALING_BUY_CAP:
+                    ok, err = False, f"{emoji('cross_mark')} You already carry the max ({HEALING_BUY_CAP}) **{item_name}**."
+                else:
+                    ok, err = _shop_purchase(owner_id, "money", price, "healing item", item_name)
                 if ok:
                     hi = data[owner_id].setdefault("healing_inv", {})
                     hi[item_name] = hi.get(item_name, 0) + 1
@@ -22129,6 +22139,18 @@ _TEMP_BOOST_ITEMS = {
     "Weather Vane":     ("xp", WEATHER_VANE_XP, WEATHER_VANE_MINUTES, "Wind's read"),
 }
 
+def _pouch_ammo_for(user_id: str) -> str | None:
+    """The ammo an Ammo Pouch restocks: the cheapest coin-priced ammo of the equipped ammo's
+    type (or of the equipped tool's type when no ammo is equipped). Never gem ammo, so a pouch
+    can't be used to turn coins into Phantom Arrows / Void Rounds / Nukes."""
+    d = data[user_id]
+    eq = d.get("equipped_ammo")
+    ammo_type = AMMO[eq]["ammo_type"] if eq in AMMO else get_tool_ammo_type(d.get("tool", "Bare Hands"))
+    basics = [(a["price"], n) for n, a in AMMO.items()
+              if a["ammo_type"] == ammo_type and a["currency"] == "money"]
+    return min(basics)[1] if basics else None
+
+
 async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: str, item_name: str):
     if item_count(user_id, item_name) <= 0:
         await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{item_name}**.", 0xE74C3C)
@@ -22179,12 +22201,18 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
                 msg = f"{it['emoji']} Smoke fills the air — you slip away from the **{animal}** clean, no HP lost."
 
         elif item_name == "Ammo Pouch":
-            ammo_name = data[user_id].get("equipped_ammo") or "Wooden Arrow"
-            if ammo_name not in AMMO:
-                ammo_name = "Wooden Arrow"
+            ammo_name = _pouch_ammo_for(user_id)
             inv = data[user_id].setdefault("ammo_inv", {})
-            inv[ammo_name] = inv.get(ammo_name, 0) + AMMO_POUCH_QTY
-            msg = f"{it['emoji']} You restock **+{AMMO_POUCH_QTY} {ammo_name}**."
+            if not ammo_name:
+                msg, color, consume = (f"{emoji('cross_mark')} Your weapon has no basic coin ammo to restock "
+                                       "(gem-priced ammo is never refilled by a pouch)."), 0xE74C3C, False
+            elif inv.get(ammo_name, 0) >= AMMO_MAX_STACK:
+                msg, color, consume = (f"{emoji('cross_mark')} You're already at the max stack "
+                                       f"({AMMO_MAX_STACK:,}) of **{ammo_name}**."), 0xE74C3C, False
+            else:
+                add = min(AMMO_POUCH_QTY, AMMO_MAX_STACK - inv.get(ammo_name, 0))
+                inv[ammo_name] = inv.get(ammo_name, 0) + add
+                msg = f"{it['emoji']} You restock **+{add} {ammo_name}**."
 
         elif item_name == "Camp Rations":
             idle = data[user_id].get("idle", {})
@@ -22201,8 +22229,8 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
 
         elif item_name == "Gift Box":
             level = data[user_id].get("level", 1)
-            if random.random() < 0.7:
-                amt = int(random.uniform(3, 8) * crate_value_scale(level))
+            if random.random() < GIFT_BOX_COIN_CHANCE:
+                amt = int(random.uniform(*GIFT_BOX_COIN_X) * crate_value_scale(level))
                 add_money(user_id, amt, "gift box")
                 msg = f"{it['emoji']} You open it — **◈ {amt:,}**!"
             else:
@@ -22219,9 +22247,13 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
 
         elif item_name in _TEMP_BOOST_ITEMS:
             stat, amount, minutes, verb = _TEMP_BOOST_ITEMS[item_name]
-            _grant_temp_luck_or_xp(user_id, stat, amount, minutes)
             stat_label = "Luck" if stat == "luck" else "XP"
-            msg = f"{it['emoji']} {verb} — **+{amount}% {stat_label}** for {minutes} min."
+            if get_active_temp_boosts(user_id).get(stat, 0) >= MAX_TEMP_BOOST:
+                msg, color, consume = (f"{emoji('cross_mark')} Your timed {stat_label} boosts are already maxed "
+                                       f"(**+{MAX_TEMP_BOOST}%**) — wait for some to run out."), 0xE74C3C, False
+            else:
+                _grant_temp_luck_or_xp(user_id, stat, amount, minutes)
+                msg = f"{it['emoji']} {verb} — **+{amount}% {stat_label}** for {minutes} min."
 
         elif item_name == "Danger Whistle":
             data[user_id]["_danger_whistle_active"] = True
@@ -22255,9 +22287,16 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
             if not idle.get("active") or idle.get("stacks", 0) <= 0:
                 msg, color, consume = f"{emoji('cross_mark')} You don't have an active Hunting Camp.", 0xE74C3C, False
             else:
-                idle["started_at"] = idle.get("started_at", time.time()) - HAUL_WAGON_HOURS * 3600
-                idle_tick(user_id)
-                msg = f"{it['emoji']} You roll the clock back **{HAUL_WAGON_HOURS}h** — your camp's haul jumps ahead."
+                idle_tick(user_id)                       # bank what's already earned first
+                room   = idle_capacity(user_id) - len(idle.get("haul", []))
+                gain   = min(idle_capacity(user_id), idle_catches_per_hour(user_id) * HAUL_WAGON_HOURS)
+                if room < max(2, gain * 0.25):           # nearly full: the wagon would mostly be wasted
+                    msg, color, consume = (f"{emoji('cross_mark')} Your haul is too full for a wagon to help "
+                                           f"({max(0, room)} free slot{'' if room == 1 else 's'}) — collect first."), 0xE74C3C, False
+                else:
+                    idle["started_at"] = idle.get("started_at", time.time()) - HAUL_WAGON_HOURS * 3600
+                    idle_tick(user_id)
+                    msg = f"{it['emoji']} You roll the clock back **{HAUL_WAGON_HOURS}h** — your camp's haul jumps ahead."
 
         else:
             msg, color, consume = f"{emoji('cross_mark')} `{item_name}` can't be used yet.", 0xE74C3C, False
