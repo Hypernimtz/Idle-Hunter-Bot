@@ -98,5 +98,10 @@
     "key": "2026-10-09-camp-trophy-timing",
     "title": "Camp trophy timing",
     "message": "- **Camp production trophies** (like Coarse Yowie Hair) now only boost the time they're actually running — using one no longer back-pays hours you'd already waited, and one that runs out mid-wait only counts for the part it covered"
+  },
+  {
+    "key": "2026-10-09-quest-fixes",
+    "title": "Quest fixes",
+    "message": "- **Quests never run out anymore** — claimed quests clear the next day and unfinished ones expire after a day or two, so new quests always keep rolling\n- **Your first hunt or sale of the day starts your quests** — no need to open the quest panel first\n- **Quests only ask for what you can do** — rarities, crates, biomes and tool tiers you can actually reach\n- **Weekly daily-quest goal is now 14 quests** (was 20)\n- **\"Claim your daily reward\" is always 1**, and \"Complete other quests today\" is at most 2 and only counts quests from today\n- **Quest money now follows your biome's earning power** — much smaller at low levels, steadier at high ones; sell-this-much quests are sized in catches (a level 1 sells ◈10,000, not ◈100,000)\n- Harder-rarity catch quests ask for fewer animals, and the weekly hunts quest tops out at 300"
   }
 ]

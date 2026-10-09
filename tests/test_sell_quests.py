@@ -28,10 +28,12 @@ def test_sell_all_advances_sell_quests():
     d.setdefault("money", 0)
     d["inv"] = ["Rabbit", "Rabbit", "Rabbit"]
     d["_pending_sell"] = 900
-    mk = lambda stat, target: {"stat": stat, "target": target, "progress": 0,
+    mk = lambda stat, target: {"stat": stat, "target": target, "progress": 0, "template": "catch_any",
                                "completed": False, "claimed": False, "requires": {}}
     d["quests"] = [mk("animals_sold_quest", 3), mk("money_earned_quest", 1000)]
     d["weekly_quests"] = [mk("money_earned_quest", 5000)]
+    d["quests_last_roll"] = app.today_utc()          # quests already rolled — progress must not re-roll them
+    d["weekly_quests_last_roll"] = app.time.time()
     app.sell_all_inv(uid)
     assert d["quests"][0]["completed"], d["quests"][0]
     assert d["quests"][1]["progress"] == 900 and not d["quests"][1]["completed"]

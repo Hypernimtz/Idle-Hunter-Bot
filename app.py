@@ -12731,6 +12731,19 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
 # QUEST HELPERS
 # ─────────────────────────────────────────────
  
+def _quest_tool_tier(user_id: str) -> int:
+    return get_tool_tier(data[user_id].get("tool", "Bare Hands"))
+
+
+def quest_rolls_if_needed(user_id: str):
+    """Make sure today's daily batch and this week's weekly batch exist. Called from
+    quest_progress, so a player's first hunt/sale of the day counts toward quests without
+    them having to open the quest panel first."""
+    if data[user_id].get("quests_last_roll") != today_utc():
+        quest_daily_roll_if_needed(user_id)
+    quest_weekly_roll_if_needed(user_id)
+
+
 def quest_daily_roll_if_needed(user_id: str):
     """
     If the player hasn't received their daily quest batch yet today,
@@ -12755,11 +12768,24 @@ def quest_daily_roll_if_needed(user_id: str):
     if d.get("quests_last_roll") == today:
         return   # already rolled today
 
-    # Drop expired/claimed quests that are more than 7 days old (housekeeping)
+    # Housekeeping, so the queue can never fill up and stop new quests from rolling:
+    #  - a claimed quest is cleared as soon as its day is over (the panel hides it anyway);
+    #  - an unfinished quest lives for today + yesterday, then expires unpaid;
+    #  - a finished-but-unclaimed one stays claimable for a week.
     from datetime import datetime, timezone, timedelta
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    d["quests"] = [q for q in active_quests
-                   if not q.get("claimed") or q.get("created_date", "") >= cutoff]
+    _now_utc  = datetime.now(timezone.utc)
+    yesterday = (_now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
+    claim_by  = (_now_utc - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    def _keep_daily(q):
+        made = q.get("created_date") or today        # undated (very old) quests get a fresh lease
+        if q.get("claimed"):
+            return made >= today
+        if q.get("completed"):
+            return made >= claim_by
+        return made >= yesterday
+
+    d["quests"] = [q for q in active_quests if _keep_daily(q)]
     # Drop quests that target an animal retired in the Earth-biome re-theme —
     # they can never progress. (Claimed ones are kept for the 7-day window above.)
     d["quests"] = [q for q in d["quests"]
@@ -12775,7 +12801,7 @@ def quest_daily_roll_if_needed(user_id: str):
  
     existing_templates = [q["template"] for q in active_quests if not q.get("claimed")]
     level  = d.get("level", 1)
-    new_qs = roll_daily_quests(level, existing_templates)
+    new_qs = roll_daily_quests(level, existing_templates, _quest_tool_tier(user_id))
  
     # Never exceed cap
     new_qs = new_qs[:slots_free]
@@ -12809,11 +12835,13 @@ def quest_weekly_roll_if_needed(user_id: str):
 
     active_quests = d.setdefault("weekly_quests", [])
 
-    # Drop quests claimed more than a week ago (housekeeping), and any
+    # A new week starts clean: claimed quests are cleared, unfinished ones expire unpaid, and a
+    # finished-but-unclaimed one stays claimable for one more week. Also drop any quest
     # targeting an animal retired from the current biome roster.
-    cutoff = now - WEEK_SECONDS
+    cutoff = now - 2 * WEEK_SECONDS
     d["weekly_quests"] = [q for q in active_quests
-                           if not q.get("claimed") or q.get("created_ts", now) >= cutoff]
+                           if q.get("completed") and not q.get("claimed")
+                           and q.get("created_ts", now) >= cutoff]
     d["weekly_quests"] = [q for q in d["weekly_quests"]
                            if q.get("claimed")
                            or not (q.get("requires", {}).get("animal")
@@ -12827,7 +12855,7 @@ def quest_weekly_roll_if_needed(user_id: str):
 
     existing_templates = [q["template"] for q in active_quests if not q.get("claimed")]
     level  = d.get("level", 1)
-    new_qs = roll_weekly_quests(level, existing_templates)
+    new_qs = roll_weekly_quests(level, existing_templates, _quest_tool_tier(user_id))
     for q in new_qs:
         q["created_ts"] = now
 
@@ -12852,6 +12880,7 @@ def quest_progress(user_id: str, stat: str, amount: int = 1, *, absolute: bool =
         tool_tier  – tier of current tool (for tool_tier_hunts)
         crate_name – name of opened crate (for crate_tier_opened)
     """
+    quest_rolls_if_needed(user_id)
     d = data[user_id]
     newly_completed = []
 
@@ -12935,7 +12964,8 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
         milestone_gems = 0
         milestone_hit  = None
         if list_key == "quests":
-            quest_progress(user_id, "quests_completed_today", 1)
+            if q.get("created_date") == today_utc():       # an older quest claimed today isn't "today's" work
+                quest_progress(user_id, "quests_completed_today", 1)
 
             # Weekly goal: DAILY_QUEST_WEEKLY_TARGET daily quests inside one
             # 7-day window → DAILY_QUEST_WEEKLY_GEMS gems, once per window.
@@ -21812,7 +21842,7 @@ _ITEM_SOURCE_LINES = {
     "Danger Whistle":   "Winning a danger encounter (~20%) · Rare Crates",
     "Rare Bait":        "Craft 3 Uncommon Crystals in `/craft` · Rare Crates",
     "Trail Map":        f"{emoji('gem')} Gem shop (~20 gems) · Legendary Crates",
-    "Weather Vane":     "The weekly 20-quest goal (alongside the gems) · Rare Crates",
+    "Weather Vane":     "The weekly daily-quest goal (alongside the gems) · Rare Crates",
     "Forge Coal":       f"{emoji('gem')} Gem shop (~15 gems) · craft 2 Common Crystals in `/craft`",
     "Lucky Hammer":     "Craft 1 Legendary Crystal in `/craft` · Mythic Crates",
     "War Horn":         "Tribe shop (your own gems)",

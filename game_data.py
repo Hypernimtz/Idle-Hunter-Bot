@@ -4175,7 +4175,8 @@ QUEST_TEMPLATES = [
         "description": "Earn **◈ {money_fmt}** from selling animals.",
         "icon":        emoji('money_bag'),
         "stat":        "money_earned_quest",
-        "base_count":  100_000,
+        "base_count":  100_000,   # fallback only; the real target is money_catches x crate_value_scale
+        "money_catches": 60,
         "base_xp":     600,
         "base_money":  8_000,
         # No max_count: a currency threshold scales with the player's actual
@@ -4221,7 +4222,7 @@ QUEST_TEMPLATES = [
         "base_count":  1,
         "base_xp":     500,
         "base_money":  5_000,
-        "max_count":   3,    # a "daily" quest spanning weeks defeats the point
+        "max_count":   1,    # one daily reward a day - a "daily" quest can't span several days
     },
     # ── Idle ──────────────────────────────────
     {
@@ -4244,7 +4245,7 @@ QUEST_TEMPLATES = [
         "base_xp":     1500,
         "base_money":  20_000,
         "bonus_gems":  5, "bonus_chance": 1.0,   # the capstone quest — always pays gems
-        "max_count":   4,    # QUESTS_PER_DAY=3 — this must stay reachable at all
+        "max_count":   2,    # it is one of QUESTS_PER_DAY=3 itself, so only 2 "other" quests exist to claim
     },
 ]
 
@@ -4275,7 +4276,7 @@ DAILY_QUEST_MILESTONES = [
 
 # Weekly daily-quest goal: claim DAILY_QUEST_WEEKLY_TARGET daily quests inside a
 # rolling 7-day window and get DAILY_QUEST_WEEKLY_GEMS gems, once per window.
-DAILY_QUEST_WEEKLY_TARGET = 20
+DAILY_QUEST_WEEKLY_TARGET = 14   # ~2 a day out of the 21 that drop - reachable without claiming every one
 DAILY_QUEST_WEEKLY_GEMS   = 50
 WEEKLY_QUEST_TEMPLATES = [
     {
@@ -4298,7 +4299,7 @@ WEEKLY_QUEST_TEMPLATES = [
         "base_xp":     4000,
         "base_money":  40_000,
         "bonus_gems":  4, "bonus_chance": 0.5,
-        "max_count":   600,
+        "max_count":   300,
     },
     {
         "id":          "weekly_money",
@@ -4306,6 +4307,7 @@ WEEKLY_QUEST_TEMPLATES = [
         "icon":        emoji('money_bag'),
         "stat":        "money_earned_quest",
         "base_count":  1_000_000,
+        "money_catches": 400,
         "base_xp":     3500,
         "base_money":  35_000,
         "bonus_gems":  5, "bonus_chance": 0.5,
@@ -4328,7 +4330,55 @@ WEEKLY_QUEST_TEMPLATES = [
 _QUEST_RARITY_POOL = ["uncommon", "rare", "epic", "legendary"]
  
  
-def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = None) -> dict:
+# base_money / QUEST_MONEY_DIVISOR = how many catches of the player's best biome a quest pays
+# (hunt_any: 5,000 / 2,000 = 2.5 catches for 10 hunts).
+QUEST_MONEY_DIVISOR = 2000
+
+# A rare+ crate tier is only quested if at least this % of drops at the player's best biome are it
+# (Common/Uncommon are always fair game).
+_QUEST_CRATE_MIN_WEIGHT = 15
+_QUEST_CRATE_MIN_WEIGHT_LEGENDARY = 10
+
+
+_QUEST_RARITY_COUNT_FACTOR = {"rare": 0.75, "epic": 0.5, "legendary": 0.25}
+
+
+def _round_nice(n: float) -> int:
+    """Round to 2 significant figures so generated targets read cleanly."""
+    n = int(n)
+    if n < 100:
+        return max(1, n)
+    mag = 10 ** (len(str(n)) - 2)
+    return max(1, round(n / mag) * mag)
+
+
+def _quest_reachable_biomes(level: int, tool_tier: int | None) -> list[str]:
+    """Biomes the player can hunt right now: level gate plus, when known, the tool-tier gate."""
+    out = [k for k, lvl in BIOME_LEVELS
+           if lvl <= max(level, 1) and (tool_tier is None or BIOME_TOOL_TIER.get(k, 1) <= tool_tier)]
+    return out or [BIOME_LEVELS[0][0]]
+
+
+def _quest_rarity_options(level: int, tool_tier: int | None) -> list[str]:
+    """Rarities (uncommon+) that exist in a reachable biome, so a Level 1 player is never
+    asked for Epics that Village doesn't contain."""
+    have = {ANIMAL_DATA[a].get("rarity") for k in _quest_reachable_biomes(level, tool_tier)
+            for a in BIOME_ANIMALS.get(k, []) if a in ANIMAL_DATA}
+    return [r for r in _QUEST_RARITY_POOL if r in have] or ["uncommon"]
+
+
+def _quest_crate_options(level: int, tool_tier: int | None) -> list[str]:
+    """Crate tiers the player can realistically be dropping, from the best reachable biome."""
+    best = _quest_reachable_biomes(level, tool_tier)[-1]
+    w = CRATE_TIER_WEIGHTS[_crate_tier_for_biome(best)]
+    opts = [f"{r.title()} Crate" for r in ("common", "uncommon", "rare", "epic", "legendary")
+            if r in ("common", "uncommon") or w.get(r, 0) >= (_QUEST_CRATE_MIN_WEIGHT_LEGENDARY if r == "legendary"
+                                                              else _QUEST_CRATE_MIN_WEIGHT)]
+    return opts or ["Common Crate"]
+
+
+def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = None,
+                   tool_tier: int | None = None) -> dict:
     """
     Build a single quest dict from a template + player level.
  
@@ -4363,8 +4413,7 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
     # ceiling of the Easy bracket got the exact same payout as a level 2
     # before this, which felt stale. +2% per level, so it's a real curve
     # across a whole tier band instead of 5 flat plateaus.
-    level_mult   = 1 + max(0, level) * 0.02
-    money_reward = int(t.get("base_money", 0) * tier["xp_mult"] * level_mult)
+    value_scale = crate_value_scale(level)
 
     # Harder templates get a shot at a gems or crate bonus on top of the
     # money/XP — rolled once at generation time (not claim time) so the
@@ -4384,9 +4433,19 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
     # Clamp count to a reasonable minimum, and to this template's own ceiling
     # (if any) — see the "max_count" note above QUEST_TEMPLATES. XP keeps
     # scaling with the full tier multiplier either way.
+    if t.get("money_catches"):
+        # A sell-this-much quest is sized in catches of the player's best biome, so
+        # a level-1 player isn't asked for 100k when a Village catch is worth ~170.
+        raw_count = _round_nice(t["money_catches"] * value_scale)
     raw_count = max(1, raw_count)
     if "max_count" in t:
         raw_count = min(raw_count, t["max_count"])
+
+    # Money pays a slice of what the work earns by hunting: base_money / QUEST_MONEY_DIVISOR
+    # catches of the best unlocked biome, times how big the target is. Level no longer
+    # inflates it on top of the biome value (that paid ~1.9M for 60 hunts at level 1000).
+    work = 1.0 if t.get("money_catches") else raw_count / max(1, t["base_count"])
+    money_reward = int(t.get("base_money", 0) / QUEST_MONEY_DIVISOR * value_scale * work)
  
     # Resolve 'requires' placeholders
     resolved = {}
@@ -4394,28 +4453,31 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
  
     if req.get("biome"):
         # Pick a random biome the player can reach
-        reachable = [(k, lvl) for k, lvl in BIOME_LEVELS if lvl <= max(level, 1)]
+        reachable = [(k, 0) for k in _quest_reachable_biomes(level, tool_tier)]
         chosen_biome = rng.choice(reachable)
         resolved["biome"]      = chosen_biome[0]
         resolved["biome_name"] = BIOME_NAMES.get(chosen_biome[0], chosen_biome[0].replace("_", " ").title())
  
     if req.get("animal"):
         # Pick an animal from any unlocked biome
-        all_unlocked = [a for k, lvl in BIOME_LEVELS if lvl <= max(level, 1)
+        all_unlocked = [a for k in _quest_reachable_biomes(level, tool_tier)
                           for a in BIOME_ANIMALS.get(k, [])]
         resolved["animal"] = rng.choice(all_unlocked) if all_unlocked else "Deer"
  
     if req.get("rarity"):
-        resolved["rarity"] = rng.choice(_QUEST_RARITY_POOL)
+        resolved["rarity"] = rng.choice(_quest_rarity_options(level, tool_tier))
+        # the higher the rarity, the fewer a hunter can reasonably land
+        raw_count = max(1, int(raw_count * _QUEST_RARITY_COUNT_FACTOR.get(resolved["rarity"], 1.0)))
  
     if req.get("tool_tier_min"):
         # Pick a random valid tier from 1 to a sensible max for the player
         max_tier = min(5, max(1, level // 100 + 1))
+        if tool_tier is not None:
+            max_tier = max(1, min(max_tier, tool_tier))     # never ask for a tier the player can't field
         resolved["tier"] = rng.randint(1, max_tier)
  
     if req.get("crate_tier"):
-        resolved["crate_tier"] = rng.choice(
-            ["Common Crate", "Uncommon Crate", "Rare Crate", "Epic Crate", "Legendary Crate"])
+        resolved["crate_tier"] = rng.choice(_quest_crate_options(level, tool_tier))
  
     # Render description
     fmt_vars = dict(resolved)
@@ -4452,7 +4514,7 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
     }
  
  
-def roll_daily_quests(level: int, existing_templates: list[str]) -> list[dict]:
+def roll_daily_quests(level: int, existing_templates: list[str], tool_tier: int | None = None) -> list[dict]:
     """
     Generate QUESTS_PER_DAY new quest dicts, avoiding template repeats
     already in the player's active queue.
@@ -4467,10 +4529,10 @@ def roll_daily_quests(level: int, existing_templates: list[str]) -> list[dict]:
  
     chosen = _r.sample(pool, min(QUESTS_PER_DAY, len(pool)))
     seed_base = int(_t.time())
-    return [generate_quest(t, level, seed=seed_base + i) for i, t in enumerate(chosen)]
+    return [generate_quest(t, level, seed=seed_base + i, tool_tier=tool_tier) for i, t in enumerate(chosen)]
 
 
-def roll_weekly_quests(level: int, existing_templates: list[str]) -> list[dict]:
+def roll_weekly_quests(level: int, existing_templates: list[str], tool_tier: int | None = None) -> list[dict]:
     """Same engine as roll_daily_quests, drawing from WEEKLY_QUEST_TEMPLATES."""
     import random as _r, time as _t
 
@@ -4480,7 +4542,7 @@ def roll_weekly_quests(level: int, existing_templates: list[str]) -> list[dict]:
 
     chosen = _r.sample(pool, min(QUESTS_PER_WEEK, len(pool)))
     seed_base = int(_t.time())
-    return [generate_quest(t, level, seed=seed_base + i) for i, t in enumerate(chosen)]
+    return [generate_quest(t, level, seed=seed_base + i, tool_tier=tool_tier) for i, t in enumerate(chosen)]
  
 
 
