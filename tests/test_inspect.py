@@ -358,6 +358,30 @@ def test_gifts_and_market_name_the_other_player():
     assert sent["detail"] == "to 32" and got["detail"] == "from 31"
 
 
+def test_economy_dashboard_skips_testers_and_admin_sources():
+    _reset()
+    tr._mk_user("41", money=1000)
+    tr._mk_user("42", money=1000)
+    app.data["42"]["is_tester"] = True
+    async def go():
+        app.add_money("41", 700, "hunt sale")
+        app.add_money("41", 5_000_000, "admin grant")           # admin source -> excluded
+        app.add_money("42", 900, "coinflip win")                # tester account -> excluded
+        app.spend_money("41", 200, "shop tool")
+        app.spend_money("42", 300, "coinflip bet")              # tester account -> excluded
+        await asyncio.sleep(0.05)
+        return await backend.economy_summary("money", exclude_users=["42"])
+    s = run(go())
+    assert s["minted_all"] == 700 and s["burned_all"] == 200, s
+    assert [r[0] for r in s["top_earn"]] == ["hunt sale"]
+    assert [r[0] for r in s["top_spend"]] == ["shop tool"]
+    # exclusions are opt-out, so raw figures stay reachable
+    raw = run(backend.economy_summary("money", exclude_admin=False))
+    assert raw["minted_all"] > 5_000_000
+    text = run(app._economy_dashboard_text())
+    assert "admin grant" not in text and "coinflip" not in text and "Excludes tester" in text
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

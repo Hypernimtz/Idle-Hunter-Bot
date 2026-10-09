@@ -671,16 +671,28 @@ async def flush_economy_buffer():
     await _write_economy_rows(buffer)
 
 
-async def economy_summary(currency: str = "money", top_n: int = 5) -> dict:
+async def economy_summary(currency: str = "money", top_n: int = 5,
+                          exclude_users=(), exclude_admin: bool = True) -> dict:
     """All-time and last-24h minted/burned totals for one currency, plus the
     top sources on each side (what's paying players, what's draining them).
-    Flushes the in-memory buffer first so nothing recent is missing."""
+    Flushes the in-memory buffer first so nothing recent is missing.
+
+    ``exclude_users`` (e.g. tester accounts) and ``exclude_admin`` (the
+    "admin grant" / "admin set" / "admin remove" sources) are left out of every
+    figure, so staff testing doesn't drown out what real players are doing."""
     await flush_economy_buffer()
     if _pool is None:
         return {"minted_all": 0, "burned_all": 0, "minted_24h": 0, "burned_24h": 0,
-                "top_earn": [], "top_spend": [], "last_event_at": None}
+                "top_earn": [], "top_spend": [], "top_earn_7d": [], "last_event_at": None}
+    where, params = "currency = ?", [currency]
+    if exclude_admin:
+        where += " AND source NOT LIKE 'admin %'"
+    users = [str(u) for u in exclude_users]
+    if users:
+        where += f" AND user_id NOT IN ({','.join('?' * len(users))})"
+        params += users
     async with _pool.execute(
-        """SELECT
+        f"""SELECT
              COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0),
              COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0),
              COALESCE(SUM(CASE WHEN delta > 0 AND created_at >= datetime('now', '-1 day')
@@ -688,29 +700,29 @@ async def economy_summary(currency: str = "money", top_n: int = 5) -> dict:
              COALESCE(SUM(CASE WHEN delta < 0 AND created_at >= datetime('now', '-1 day')
                           THEN -delta ELSE 0 END), 0),
              MAX(created_at)
-           FROM economy_log WHERE currency = ?""",
-        (currency,),
+           FROM economy_log WHERE {where}""",
+        params,
     ) as cur:
         minted_all, burned_all, minted_24h, burned_24h, last_event_at = await cur.fetchone()
     async with _pool.execute(
-        """SELECT source, SUM(delta) FROM economy_log
-           WHERE currency = ? AND delta > 0 GROUP BY source ORDER BY 2 DESC LIMIT ?""",
-        (currency, top_n),
+        f"""SELECT source, SUM(delta) FROM economy_log
+           WHERE {where} AND delta > 0 GROUP BY source ORDER BY 2 DESC LIMIT ?""",
+        params + [top_n],
     ) as cur:
         top_earn = await cur.fetchall()
     async with _pool.execute(
-        """SELECT source, -SUM(delta) FROM economy_log
-           WHERE currency = ? AND delta < 0 GROUP BY source ORDER BY 2 DESC LIMIT ?""",
-        (currency, top_n),
+        f"""SELECT source, -SUM(delta) FROM economy_log
+           WHERE {where} AND delta < 0 GROUP BY source ORDER BY 2 DESC LIMIT ?""",
+        params + [top_n],
     ) as cur:
         top_spend = await cur.fetchall()
     # Last-7-days earn sources — all-time totals are dominated by history from
     # before a rebalance, so this is the view that shows whether a nerf worked.
     async with _pool.execute(
-        """SELECT source, SUM(delta) FROM economy_log
-           WHERE currency = ? AND delta > 0 AND created_at >= datetime('now', '-7 days')
+        f"""SELECT source, SUM(delta) FROM economy_log
+           WHERE {where} AND delta > 0 AND created_at >= datetime('now', '-7 days')
            GROUP BY source ORDER BY 2 DESC LIMIT ?""",
-        (currency, top_n),
+        params + [top_n],
     ) as cur:
         top_earn_7d = await cur.fetchall()
     return {

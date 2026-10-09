@@ -22307,13 +22307,14 @@ def _currency_balance_block(field: str, icon: str, label: str) -> str:
     """One currency's balance distribution — sync, reads only live player data.
     Split out from the flow stats below so the (sync) /admin panel can still
     show this without needing to await a DB query."""
-    all_balances = sorted(d.get(field, 0) for d in data.values())
+    real = {u: d for u, d in data.items() if not d.get("is_tester")}   # testers are hidden everywhere else too
+    all_balances = sorted(d.get(field, 0) for d in real.values())
     n = len(all_balances)
     total = sum(all_balances)
     median = all_balances[n // 2] if n else 0
     p90    = all_balances[int(n * 0.9)]  if n else 0
     p99    = all_balances[int(n * 0.99)] if n else 0
-    top_holder = max(data.items(), key=lambda x: x[1].get(field, 0), default=(None, {}))
+    top_holder = max(real.items(), key=lambda x: x[1].get(field, 0), default=(None, {}))
     return (
         f"### {icon} {label}\n"
         f"**In circulation:** {icon} {total:,} across **{n:,}** players\n"
@@ -22325,7 +22326,8 @@ async def _currency_flow_block(currency: str, icon: str) -> str:
     """All-time and 24h earned/spent plus top sources, from the economy_log
     table — the source of truth for mint/burn, since balances alone can't
     tell you WHY they moved. Async: this is the part that needs the DB."""
-    s = await backend.economy_summary(currency)
+    testers = [u for u, d in data.items() if d.get("is_tester")]
+    s = await backend.economy_summary(currency, exclude_users=testers)
     net_all = s["minted_all"] - s["burned_all"]
     net_24h = s["minted_24h"] - s["burned_24h"]
 
@@ -22345,6 +22347,7 @@ async def _currency_flow_block(currency: str, icon: str) -> str:
 
     return (
         f"{last_line}"
+        f"-# Excludes tester accounts and `admin *` grants/sets/removals.\n"
         f"**All-time:** {emoji('green_ball')} Earned {icon} {s['minted_all']:,} · "
         f"{emoji('red_ball')} Spent {icon} {s['burned_all']:,} · Net {icon} {net_all:,}\n"
         f"**Last 24h:** {emoji('green_ball')} Earned {icon} {s['minted_24h']:,} · "
