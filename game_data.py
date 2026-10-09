@@ -961,6 +961,9 @@ _EMOJI_FALLBACK_ART = {
     "globe_with_meridians": "earth", "calendar": "daily", "mailbox": "mail",
     "x_mark": "cross_mark", "bell": "new_notif",
     "video_game": "badge_game_master_gold", "bug": "badge_bug_hunter",
+    # mythic-fight buttons (FIGHT_ACTIONS in app.py)
+    "fight_punch": "fist_punch", "fight_kick": "leg",
+    "fight_taunt": "face_triumph", "fight_flee": "runner",
 }
 # Badge keys that had no registry entry at all (SPECIAL_BADGES referenced them).
 # Unicode placeholders so upload-by-name (event fox / anchor / duck, recruiter,
@@ -1831,7 +1834,7 @@ SIGHTING_CLUE_FLAVORS = [
 # Kept deliberately small; grow it once the loop is proven.
 WORLD_CONDITIONS = {
     "heavy_rain": {
-        "name": "Heavy Rain", "emoji": "🌧️", "duration": 4 * 3600,
+        "name": "Heavy Rain", "emoji": EMOJI["rain_cloud"], "duration": 4 * 3600,
         "rare_mult": 1.15, "myth_mult": 1.05,
         "blurb": "Tracks set deep in the mud and scent hangs low. Rare wildlife is easier to close on.",
     },
@@ -1851,7 +1854,7 @@ WORLD_CONDITIONS = {
         "blurb": "Buyers are paying over the odds this week. Sell where the money is.",
     },
     "clear_skies": {
-        "name": "Clear Skies", "emoji": "☀️", "duration": 3 * 3600,
+        "name": "Clear Skies", "emoji": EMOJI["sun"], "duration": 3 * 3600,
         "xp_mult": 1.15,
         "blurb": "Perfect visibility and easy going. Every hunt teaches you a little more.",
     },
@@ -1861,7 +1864,7 @@ WORLD_CONDITIONS = {
         "blurb": "The big animals are restless and bold. Higher stakes, better rewards.",
     },
     "aurora": {
-        "name": "Aurora", "emoji": "🌌", "duration": 3 * 3600,
+        "name": "Aurora", "emoji": EMOJI["milky_way"], "duration": 3 * 3600,
         "rare_mult": 1.12, "xp_mult": 1.10,
         "blurb": "Lights in the sky and animals acting strange beneath them.",
     },
@@ -1884,19 +1887,19 @@ RARE_CATCH_MAX_WORLD     = 0.45
 # it's gone. A clean track buys you an edge in the fight that follows.
 TRACKING_ACTIONS = {
     "follow":  {"label": "Follow the trail", "emoji": "🐾", "risk": 12, "progress": 2},
-    "observe": {"label": "Watch and wait",   "emoji": "🔭", "risk": 0,  "progress": 1},
+    "observe": {"label": "Watch and wait",   "emoji": EMOJI["telescope"], "risk": 0,  "progress": 1},
     "flank":   {"label": "Circle around",    "emoji": "🌲", "risk": 22, "progress": 3},
-    "push":    {"label": "Push hard",        "emoji": "⚡", "risk": 40, "progress": 4},
+    "push":    {"label": "Push hard",        "emoji": EMOJI["high_voltage_sign"], "risk": 40, "progress": 4},
 }
 
 TRACKING_SCENES = [
     {"key": "prints",   "title": "🐾 Deep Prints",
      "text": "The tracks press deep and fresh into the ground, spaced wide. It was moving, and not long ago."},
-    {"key": "branches", "title": "🌿 Broken Branches",
+    {"key": "branches", "title": f"{EMOJI['herb']} Broken Branches",
      "text": "Green wood snapped at shoulder height. Whatever came through was tall and in no hurry to go around."},
     {"key": "river",    "title": "🏞️ A River Crossing",
      "text": "The trail meets fast water and picks up again on the far bank. It waded straight across."},
-    {"key": "blood",    "title": "🩸 A Blood Trail",
+    {"key": "blood",    "title": f"{EMOJI['drop_of_blood']} A Blood Trail",
      "text": "Dark spots on the leaves — not yours, not fresh prey. Something is hurt, or something ate well."},
     {"key": "sound",    "title": "🔊 Movement Ahead",
      "text": "Brush shifts a hundred metres out. No wind. It knows the woods better than you do."},
@@ -1904,7 +1907,7 @@ TRACKING_SCENES = [
      "text": "A tent torn open, a cold fire, gear thrown wide. The tracks lead away from it, unbothered."},
     {"key": "feathers", "title": "🪶 Scattered Feathers",
      "text": "A kill site, picked clean and abandoned. The trail continues, heavier now."},
-    {"key": "scratches","title": "🪵 Claw Marks",
+    {"key": "scratches","title": f"{EMOJI['wood']} Claw Marks",
      "text": "Gouges in the bark, far higher than they have any right to be. You're close."},
 ]
 
@@ -1964,10 +1967,10 @@ TRIBE_EXPEDITION_VOTE_MIN    = 15 * 60      # seconds before a route can be forc
 TRIBE_EXPEDITION_COOLDOWN_H  = 18          # hours after one finishes before the next
 TRIBE_EXPEDITIONS = {
     "abandoned_temple": {
-        "name": "The Abandoned Temple", "emoji": "🗿", "hours": 8,
+        "name": "The Abandoned Temple", "emoji": EMOJI["statue"], "hours": 8,
         "blurb": "A temple swallowed by jungle. Nobody who mapped it came back with the map.",
         "routes": {
-            "gate":    {"label": "The Front Gate", "emoji": "🚪",
+            "gate":    {"label": "The Front Gate", "emoji": EMOJI["door"],
                         "desc": "Direct and defended. Steady progress, fair reward.",
                         "goal_mult": 1.00, "xp": 900, "crate": "Rare Crate",
                         "title": "Temple-Breaker"},
@@ -1975,7 +1978,7 @@ TRIBE_EXPEDITIONS = {
                         "desc": "Longer, nastier, richer. Best rewards if you finish.",
                         "goal_mult": 1.35, "xp": 1500, "crate": "Epic Crate",
                         "title": "Deep Delver"},
-            "cliffs":  {"label": "The Cliff Path", "emoji": "🧗",
+            "cliffs":  {"label": "The Cliff Path", "emoji": EMOJI["person_climbing"],
                         "desc": "Exposed and slow, but you see everything coming.",
                         "goal_mult": 1.15, "xp": 1100, "crate": "Rare Crate",
                         "badge": "recruiter"},
@@ -1985,7 +1988,7 @@ TRIBE_EXPEDITIONS = {
         "name": "Follow the Great Migration", "emoji": "🦬", "hours": 6,
         "blurb": "The herds are crossing three regions. Shadow them and take what the land gives.",
         "routes": {
-            "front":  {"label": "Run With the Front", "emoji": "🏃",
+            "front":  {"label": "Run With the Front", "emoji": EMOJI["runner"],
                        "desc": "Fast and first to everything. Standard haul.",
                        "goal_mult": 1.00, "xp": 800, "crate": "Rare Crate",
                        "title": "Herd-Runner"},
@@ -2517,7 +2520,7 @@ def _slug(s: str) -> str:
 def creature_emoji(name: str) -> str:
     c = MYTHIC_CREATURES.get(name, {})
     slug = _slug(name)
-    return EMOJI.get(f"creature_{slug}") or EMOJI.get(f"myth_{slug}") or c.get("fallback_emoji", "🔮")
+    return EMOJI.get(f"creature_{slug}") or EMOJI.get(f"myth_{slug}") or c.get("fallback_emoji", EMOJI["crystal_ball"])
 
 def trophy_emoji(name: str) -> str:
     """Custom emoji for a trophy/drop item name (see TROPHY_EFFECTS), falling

@@ -53,5 +53,10 @@
     "key": "2026-10-08-vote-scratch-forge",
     "title": "Bigger vote rewards, a kinder Scratch Pad, and more forge slots",
     "message": "- **`/vote` rewards buffed:** an **Epic Crate** instead of a Rare Crate, more than **3× the cash** it used to pay, and **5 gems** on every vote — plus the Scratch Pad, every 12h\n- **Scratch Pad is easier:** one column removed, so it's **12 panels instead of 16** with the same 5 prizes and 3 scratches\n- **Scratch Pad prizes are bigger:** more cash, more gems, a stronger Luck boost — and new **Rare, Epic and even Legendary Crates**, plus a cash jackpot\n- **Forge slots grow with your level:** everyone starts with 20, then **+5 every 50 levels** up to 120 at level 1000. `/craft` shows how many you have and when the next ones unlock\n-# Every vote helps more hunters find the bot — thank you!"
+  },
+  {
+    "key": "2026-10-08-emoji-art-pass",
+    "title": "More custom icons across the game",
+    "message": "- **Mythic fights:** Punch, Kick, Taunt and Flee now use the custom icon art on their buttons and in the fight log\n- **Tracking:** the Watch and Push choices and the trail scenes show custom icons\n- **World conditions:** Heavy Rain, Clear Skies and Aurora have their own art\n- **Tribes:** expeditions, routes, recruits and the Perks button got custom icons too\n-# Purely visual — nothing about gameplay or rewards changed."
   }
 ]

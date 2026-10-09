@@ -451,7 +451,7 @@ EVENTS = {
         "kind": "community", "hours": EVENT_HOURS,
         "blurb": "The shop has been overrun. The ducks demand bread.",
         "actions": [f"{emoji('bow')} Hunt to find Bread Crumbs",
-                    "`🥖` Feed the flock to push the community goal",
+                    f"{emoji('baguette_bread')} Feed the flock to push the community goal",
                     "`🗳️` Vote to decide how the takeover ends"],
     },
 }
@@ -2756,7 +2756,7 @@ def _exp_finish(td: dict, tname: str) -> None:
             })
         exp["pending"] = pending
     else:
-        _tribe_log(td, f"`🥀` Expedition failed — **{spec.get('name','')}** ran out of time "
+        _tribe_log(td, f"{emoji('wilted_flower')} Expedition failed — **{spec.get('name','')}** ran out of time "
                        f"({exp.get('progress',0):,}/{exp.get('goal',0):,}).")
         exp["pending"] = []
         exp["done"] = True   # nothing to pay out
@@ -2851,7 +2851,7 @@ def build_expedition_components(user_id: str) -> list:
         if not can_lead:
             return _wrap(f"### {emoji('tribe')} Tribe Expeditions — {tname}\n"
                         f"No expedition running. A leader or officer can start one.{last}", [back])
-        opts = [{"label": s["name"], "value": k, "emoji": {"name": s["emoji"]},
+        opts = [{"label": s["name"], "value": k, "emoji": emoji_partial(s["emoji"]),
                  "description": s["blurb"][:100]} for k, s in TRIBE_EXPEDITIONS.items()]
         return _wrap(
             f"### {emoji('tribe')} Tribe Expeditions — {tname}\n"
@@ -2870,7 +2870,7 @@ def build_expedition_components(user_id: str) -> list:
         rbtns = []
         for rk, r in spec.get("routes", {}).items():
             lines.append(f"{r['emoji']} **{r['label']}** — {r['desc']}  ·  {tally.get(rk,0)} vote(s)")
-            rbtns.append({"type": 2, "style": 2, "label": r["label"], "emoji": {"name": r["emoji"]},
+            rbtns.append({"type": 2, "style": 2, "label": r["label"], "emoji": emoji_partial(r["emoji"]),
                           "custom_id": f"exped:vote:{rk}:{user_id}"})
         lines.append(f"\n-# Locks when most members vote, or <t:{int(exp['vote_ends_ts'])}:R>.")
         for i in range(0, len(rbtns), 3):
@@ -3071,7 +3071,7 @@ def _tribe_join_recruit(td: dict, uid: str) -> None:
             td["roles"][k].remove(uid)
     td["roles"].setdefault("recruits", []).append(uid)
     td["member_since"][uid] = int(time.time())
-    _tribe_log(td, f"`➕` <@{uid}> joined as a Recruit.")
+    _tribe_log(td, f"{emoji('plus')} <@{uid}> joined as a Recruit.")
 
 def _tribe_remove_member(td: dict, uid: str, *, note: str = "left") -> None:
     """Drop uid from every role list + weekly bookkeeping (lifetime contribution
@@ -5450,7 +5450,7 @@ def build_tracking_components(user_id: str, line: str = "") -> list:
 
     def _tb(act, style=2):
         s = TRACKING_ACTIONS[act]
-        return {"type": 2, "style": style, "label": s["label"], "emoji": {"name": s["emoji"]},
+        return {"type": 2, "style": style, "label": s["label"], "emoji": emoji_partial(s["emoji"]),
                 "custom_id": f"hunt:track:{act}:{trid}:{user_id}"}
 
     rows = [
@@ -5487,8 +5487,8 @@ def build_tracking_outcome_components(user_id: str, outcome: dict) -> list:
 
 _TRACK_BONUS_BLURB = {
     "ambush":  f"{emoji('target')} **Ambush** — you got the drop on it. It starts hurt and off-balance.",
-    "careful": "`🔭` **Careful approach** — you read its moves. It swings wild on the first exchange.",
-    "shaken":  "`😰` **Close call** — you spooked it once and it nearly ran. You're a little rattled.",
+    "careful": f"{emoji('telescope')} **Careful approach** — you read its moves. It swings wild on the first exchange.",
+    "shaken":  f"{emoji('face_sweat')} **Close call** — you spooked it once and it nearly ran. You're a little rattled.",
     "":        "",
 }
 
@@ -5989,7 +5989,7 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
                                     _abtn("power", "Power Attack", 1, "impact")]},
         {"type": 1, "components": [_abtn("defend", "Defend", 2, "shield"),
                                     _abtn("heal", "Heal", 2, "adhesive_bandage", disabled=not heal_avail),
-                                    _abtn("flee", "Flee", 4, "🏃")]},
+                                    _abtn("flee", "Flee", 4, "runner")]},
     ]}]
 
 def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
@@ -6572,7 +6572,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
         if R(1, 100) <= FIGHT_PUNCH_ACC + acc_b + pk_acc_b:
             dealt = R(7, 13) + tier // 2
             if b.pop("enrage", False):
-                dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
+                dealt = int(dealt * 1.5); log.append(f"{emoji('anger')} Opening exploited!")
             dealt = _land_hit(dealt)
             log.append(f"{_fa_icon('punch')} You hammer the {name} for **{dealt}**.")
         else:
@@ -6581,7 +6581,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
         if R(1, 100) <= FIGHT_KICK_ACC + acc_b + pk_acc_b:
             dealt = R(17, 27) + tier
             if b.pop("enrage", False):
-                dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
+                dealt = int(dealt * 1.5); log.append(f"{emoji('anger')} Opening exploited!")
             dealt = _land_hit(dealt)
             log.append(f"{_fa_icon('kick')} A crushing kick lands — **{dealt}**!")
         else:
@@ -6620,7 +6620,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
             if R(1, 100) <= FIGHT_SHOOT_ACC + acc_b:
                 dealt = R(24, 42) + tier
                 if b.pop("enrage", False):
-                    dealt = int(dealt * 1.5); log.append("`💢` Opening exploited!")
+                    dealt = int(dealt * 1.5); log.append(f"{emoji('anger')} Opening exploited!")
                 dealt = _land_hit(dealt)
                 log.append(f"{_fa_icon('shoot')} You unload {FIGHT_SHOOT_AMMO} rounds into it — **{dealt}** damage!")
             else:
@@ -9645,7 +9645,7 @@ def build_update_admin_components(admin_id: str, page: int = 0, note: str = "") 
             "min_values": 1, "max_values": 1, "flows": {}, "options": del_opts}]})
 
     blocks.append({"type": 1, "components": [
-        {"type": 2, "style": 3, "label": "Add Update", "emoji": {"name": "➕"},
+        {"type": 2, "style": 3, "label": "Add Update", "emoji": emoji_partial('plus'),
          "custom_id": f"updadm:add:{admin_id}"},
         {"type": 2, "style": 2, "label": "Refresh", "emoji": emoji_partial("refresh"),
          "custom_id": f"updadm:refresh:{admin_id}"},
@@ -11248,7 +11248,7 @@ def _pct(p: float) -> str:
 def build_slots_chances_panel(user_id: str) -> list:
     o = _slots_odds()
     lines = [
-        f"`➕` **Pair** (2 alike) — {_pct(o['pair_p'])} chance · pays **×{SLOT_PAIR_MULT}**",
+        f"{emoji('plus')} **Pair** (2 alike) — {_pct(o['pair_p'])} chance · pays **×{SLOT_PAIR_MULT}**",
         f"{emoji('sparkles')} **Triple** (3 alike) — {_pct(o['triple_p'])} chance combined:",
     ]
     for name, p, m in o["triples"]:
@@ -11345,7 +11345,7 @@ def build_roulette_panel(user_id: str, state: str = "bet", result: dict = None) 
     else:
         color = result["color"]; pick = result["pick"]
         bet = result["bet"]; won = result["won"]; payout = result["payout"]
-        color_ico = {"red": emoji('red_ball'), "black": "⚫", "green": emoji('green_ball')}.get(color, "⚪")
+        color_ico = {"red": emoji('red_ball'), "black": emoji('circle_black'), "green": emoji('green_ball')}.get(color, emoji('circle_white'))
         pick_lbl  = ROULETTE_BET_TYPES.get(pick, (pick,))[0]
         if won:
             content = (
@@ -11749,7 +11749,7 @@ def build_gift_sent_components(sender_id: str, recipient: discord.User,
 # ─────────────────────────────────────────────
 
 _TRIBE_ROLE_ICON = {"leader": TRIBE_EMOJIS["leader"], "officer": TRIBE_EMOJIS["officer"],
-                    "member": "`🧑`", "recruit": "`🌱`"}
+                    "member": "`🧑`", "recruit": emoji('seedling')}
 
 def build_tribe_components(user_id: str, tribe_name: str,
                             page: str = "main", sort_mode: str = "rank") -> list:
@@ -11855,11 +11855,11 @@ def build_tribe_components(user_id: str, tribe_name: str,
         if FEATURE_EXPEDITIONS:
             _exp = td.get("expedition")
             _exp_lbl = "Expedition (active)" if _exp and not _exp.get("done") else "Expedition"
-            row1.append({"type": 2, "style": 1, "label": _exp_lbl, "emoji": {"name": "⚔️"},
+            row1.append({"type": 2, "style": 1, "label": _exp_lbl, "emoji": emoji_partial('crossed_swords'),
                          "custom_id": f"exped:refresh:{user_id}"})
         nav_btn_rows.append({"type": 1, "components": row1})
 
-        row2 = [{"type": 2, "style": 2, "label": "Perks", "emoji": {"name": "🛠️"},
+        row2 = [{"type": 2, "style": 2, "label": "Perks", "emoji": emoji_partial('hammer_and_wrench'),
                  "custom_id": f"tribe:nav:shop:{user_id}"},
                 {"type": 2, "style": 1, "label": "Treasury", "emoji": {"name": "🏦"},
                  "custom_id": f"tribe:nav:treasury:{user_id}"},
@@ -11949,7 +11949,7 @@ def build_tribe_components(user_id: str, tribe_name: str,
             + _grp("`👑` Leader", groups["leader"])
             + _grp(f"{emoji('military_medal')} Officers", groups["officer"])
             + _grp("`🧑` Members", groups["member"])
-            + _grp("`🌱` Recruits", groups["recruit"], _prob)
+            + _grp(f"{emoji('seedling')} Recruits", groups["recruit"], _prob)
         )
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": content},
@@ -13196,7 +13196,7 @@ async def _modal_gate(interaction: discord.Interaction, user_id: str | None = No
     if data[uid]["verify"]["needed"]:
         await send_ephemeral_v2(
             interaction,
-            "### `🤖` Verification required\nRun `/verify` (or open `/menu`) before doing that.",
+            f"### {emoji('robot_face')} Verification required\nRun `/verify` (or open `/menu`) before doing that.",
             0xF39C12)
         return False
     return True
@@ -14062,7 +14062,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 save_config()
                 admin_audit(admin_id, "maint_warn_toggle", f"warning={maintenance_warning}")
                 note = (f"{emoji('yellow_ball')} Maintenance warning **on**." if maintenance_warning
-                        else "`⚪` Maintenance warning **off** (warned list cleared).")
+                        else f"{emoji('circle_white')} Maintenance warning **off** (warned list cleared).")
                 await smart_update_v2(interaction, build_admin_panel(admin_id, "maint", note))
                 return
             if arg == "v2_sighting":
@@ -20182,7 +20182,7 @@ async def tutorial_cmd(interaction: discord.Interaction):
 
 _ANNOUNCE_KIND_LABELS = {
     "event":     f"{emoji('earth')} WORLD EVENT",
-    "sighting":  "`🔎` SIGHTING",
+    "sighting":  f"{emoji('search_alt')} SIGHTING",
     "condition": f"{emoji('warning')} WORLD CONDITION",
     "result":    f"{emoji('trophy')} COMMUNITY RESULT",
 }
@@ -20317,7 +20317,7 @@ async def _broadcast_expedition_result(tname: str, success: bool) -> None:
         color = 0x1ABC9C
     else:
         body = announce_card(
-            "result", "🥀", f"{spec.get('name', 'Expedition')} Failed", subtitle=tname,
+            "result", emoji('wilted_flower'), f"{spec.get('name', 'Expedition')} Failed", subtitle=tname,
             flavor=f"**{tname}** ran out of time at {exp.get('progress', 0):,}/{exp.get('goal', 0):,}.",
         )
         color = 0x7F8C8D
@@ -21495,7 +21495,7 @@ async def build_inspect_user_components(admin_id: str, uid: str) -> list:
         tops = ", ".join(f"`{s}` {icon}{a:,}" for s, a in f.get("top", [])) or "—"
         return f"{icon} +{f.get('earned', 0):,} / −{f.get('spent', 0):,}  ·  top: {tops}"
     body = (
-        f"### 🔎 {get_username(uid)}  (`{uid}`)\n"
+        f"### {emoji('search_alt')} {get_username(uid)}  (`{uid}`)\n"
         f"Level **{d.get('level', 1):,}** · Prestige **{d.get('prestige', 0)}** · joined {d.get('joined_date', '?')} · "
         f"hunts **{d.get('stats', {}).get('lifetime_hunts', 0):,}** · caught **{d.get('total_caught', 0):,}**\n"
         f"◈ **{d.get('money', 0):,}** · 💎 **{d.get('gems', 0):,}** · tool **{d.get('tool', '?')}** · "
@@ -21540,7 +21540,7 @@ async def build_inspect_log_components(admin_id: str) -> list:
         {"type": 2, "style": 2, "label": "◀ Prev", "custom_id": f"insp:log:prev:{uid}:{admin_id}", "disabled": page == 0},
         {"type": 2, "style": 2, "label": f"{page + 1}/{pages}", "custom_id": f"insp:log:noop:{uid}:{admin_id}", "disabled": True},
         {"type": 2, "style": 2, "label": "Next ▶", "custom_id": f"insp:log:next:{uid}:{admin_id}", "disabled": page >= pages - 1},
-        {"type": 2, "style": 1, "label": "Profile", "emoji": {"name": "🔎"}, "custom_id": f"insp:user:{uid}:{admin_id}"},
+        {"type": 2, "style": 1, "label": "Profile", "emoji": emoji_partial('search_alt'), "custom_id": f"insp:user:{uid}:{admin_id}"},
     ]}
     return [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
         {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}, nav]}]
@@ -21681,7 +21681,7 @@ async def inspect_search_cmd(interaction: discord.Interaction, query: str, sort:
              for u, d in hits[:20]]
     more = f"\n-# …and {len(hits) - 20} more — narrow the search." if len(hits) > 20 else ""
     await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x3498DB, "spoiler": False, "components": [
-        {"type": 10, "content": f"### 🔎 {len(hits)} match(es) for `{query}`\n" + "\n".join(lines) + more}]}], ephemeral=True)
+        {"type": 10, "content": f"### {emoji('search_alt')} {len(hits)} match(es) for `{query}`\n" + "\n".join(lines) + more}]}], ephemeral=True)
 
 @inspect_group.command(name="export", description="Admin: download a player's full log as a text file")
 @app_commands.check(is_admin)
@@ -22540,7 +22540,7 @@ def build_admin_panel(admin_id: str, section: str = "home", note: str = "") -> l
         section = "home"
 
     blocks: list = [
-        {"type": 10, "content": f"## `🛠️` Admin Panel — {_ADMIN_SECTION_LABEL[section]}"},
+        {"type": 10, "content": f"## {emoji('hammer_and_wrench')} Admin Panel — {_ADMIN_SECTION_LABEL[section]}"},
         _admin_navsel(a, section),
     ]
     if note:
@@ -23875,7 +23875,7 @@ def _sighting_reveal_body(sg: dict) -> str:
         f"{emoji('gem')} {MYTH_REPEAT_GEMS_RANGE[0]}–{MYTH_REPEAT_GEMS_RANGE[1]}\n"
         f"-# Your first-ever mythic kill pays ◈ {myth_first_kill_bounty(name):,} + {emoji('gem')} {MYTH_FIRST_KILL_GEMS}\n"
         f"{emoji('trophy')} {c.get('drop', 'Unique Trophy')}\n\n"
-        f"`⚔️` Hunters in **{where}** may now encounter it.\n"
+        f"{emoji('crossed_swords')} Hunters in **{where}** may now encounter it.\n"
         f"`⏳` Available for the next {window_h}h."
     )
 
