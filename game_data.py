@@ -3758,6 +3758,13 @@ SPECIAL_BADGES = {
                          "blurb": "Twenty-five hunters owe their first shot to you."},
 }
 
+# The Hollow Star season's event badges (content in event_data.py). Unicode placeholders in the emoji
+# registry — upload art named `badge_<key>` and adopt_named_emojis() switches it on at restart.
+import event_data as _ED
+for _bk, (_lbl, _abbr, _glyph, _blurb) in _ED.EVENT_BADGES.items():
+    SPECIAL_BADGES[_bk] = {"label": _lbl, "abbr": _abbr, "emoji": f"badge_{_bk}", "blurb": _blurb}
+    EMOJI.setdefault(f"badge_{_bk}", _glyph)
+
 def badge_emoji(badge_key: str, tier: int) -> str:
     """Custom emoji for a badge tier — tier 1 = gold, 2 = platinum. '' if unset.
     Special (admin-granted) badges have no tiers and resolve to a single emoji."""

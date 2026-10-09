@@ -413,38 +413,10 @@ def invite_url() -> str:
 #   "activity"  — per-player mini-game (Thieving Fox, Shipwreck Scramble)
 #   "community" — shared goal + vote (Duck Takeover)
 
-ADMIN_BUFF_HOURS = 24
-
-ADMIN_BUFF_EVENT = {
-    "key":   "admin_buff",
-    "name":  "Admin's Day Off",
-    "emoji": "🎉",
-    "kind":  "buff",
-    "hours": ADMIN_BUFF_HOURS,
-    "blurb": "The admin clocked out and left every debug toggle flipped **ON**. "
-             "Nobody's watching the numbers. Enjoy it while it lasts, hunter.",
-    "perks": [
-        f"{emoji('clock')} Hunt cooldown **halved**",
-        f"{emoji('plane')} Travel is **instant**",
-        f"{emoji('crystal_rare')} Crystal crafting is **instant**",
-        f"{ph('🔫')} Ammo is **not consumed** while hunting",
-        f"{ph('💲')} Sell price **×2**",
-        f"{ph(emoji('sparkles'))} XP **×2**",
-        f"{ph(emoji('idle_camp'))} Idle camp: **×2** catch rate & **×2** storage",
-        f"{ph(emoji('gem'))} Shard drops **10% → 25%**, crate drops **5% → 15%**",
-        f"{ph('📅')} Daily reward **×2**",
-        f"{emoji('shop')} Shop **25% off** ammo, healing & items (not tools, vehicles or 💎 prices)",
-        f"{emoji('dice')} Gamble: **no cooldown between wagers**",
-        f"{ph('👹')} Mythic encounters **×3**, kill chance **+20**",
-        f"{emoji('gift')} A one-time **bonus check** the first time you play",
-    ],
-    "gift_money": 1_000_000,
-    "gift_gems":  25,
-    "gift_crate": "Rare Crate",
-}
+import event_data as ED
+from event_scenes import SCENES as EV_SCENES
 
 EVENTS = {
-    "admin_buff": ADMIN_BUFF_EVENT,
     "thieving_fox": {
         "key": "thieving_fox", "name": "The Thieving Fox", "emoji": "🦊",
         "kind": "activity", "hours": EVENT_HOURS,
@@ -467,13 +439,24 @@ EVENTS = {
                     "`🗳️` Vote to decide how the takeover ends"],
     },
 }
+# The 15 quest events of "The Hollow Star" (event_data.EVENT_SPECS) — one registry entry each.
+for _k, _s_ in ED.EVENT_SPECS.items():
+    EVENTS[_k] = {"key": _k, "name": _s_["name"], "emoji": _s_["emoji"], "kind": _s_["kind"],
+                  "hours": _s_["hours"], "blurb": _s_["blurb"], "actions": list(_s_["actions"])}
+ADMIN_404_KEY = "admin_404"
 
 _active_event: dict | None = None   # {"key","name","started_ts","ends_ts","by",…} or None
 
 def get_active_event() -> dict | None:
     """The running event, or None. Auto-clears when the window closes."""
     global _active_event
+    if _active_event and _active_event.get("key") == "admin_buff":
+        _active_event = None                      # the old Admin's Day Off no longer exists
     if _active_event and time.time() >= _active_event.get("ends_ts", 0):
+        try:
+            _ev3_finalize(_active_event)          # medals / banners / verdicts, exactly once
+        except Exception as e:
+            print("event finalize error:", e)
         _active_event = None
     return _active_event
 
@@ -485,7 +468,9 @@ def active_event_def() -> dict:
     return EVENTS.get(active_event_key(), {})
 
 def admin_buff_active() -> bool:
-    return active_event_key() == "admin_buff"
+    """Admin's Day Off is retired (its x2 income / half-price shop was too strong). Kept as a
+    hook that is always False so old call sites stay valid."""
+    return False
 
 def start_event(key: str, started_by: str = "system", automatic: bool = False) -> dict | None:
     global _active_event
@@ -496,7 +481,7 @@ def start_event(key: str, started_by: str = "system", automatic: bool = False) -
     ev = {
         "key": key, "name": spec["name"], "kind": spec["kind"],
         "started_ts": now, "ends_ts": now + spec.get("hours", 24) * 3600,
-        "by": str(started_by), "automatic": bool(automatic),
+        "by": str(started_by), "automatic": bool(automatic), "seed": secrets.token_hex(4),
     }
     if spec["kind"] == "community":
         ev["community"] = {"progress": 0, "goal": _event_community_goal()}
@@ -506,11 +491,16 @@ def start_event(key: str, started_by: str = "system", automatic: bool = False) -
     _active_event = ev
     return ev
 
-def start_admin_buff(admin_id: str) -> dict:      # kept for back-compat
-    return start_event("admin_buff", admin_id)
+def start_admin_buff(admin_id: str) -> dict:      # kept for back-compat -> Admin Error 404
+    return start_event(ADMIN_404_KEY, admin_id)
 
 def stop_active_event() -> None:
     global _active_event
+    if _active_event:
+        try:
+            _ev3_finalize(_active_event)
+        except Exception as e:
+            print("event finalize error:", e)
     _active_event = None
 
 def _event_community_goal() -> int:
@@ -583,39 +573,38 @@ async def _event_hunt_hook(user_id: str) -> None:
         ed["bread"] = banked_today + crumbs
         st["bread"] = st.get("bread", 0) + crumbs
 
-# Convenience multipliers — all 1×/no-op unless the buff event is live.
-def ev_sell_mult() -> float:      return 2.0 if admin_buff_active() else 1.0
-def ev_xp_mult() -> float:        return 2.0 if admin_buff_active() else 1.0
-def ev_daily_mult() -> float:     return 2.0 if admin_buff_active() else 1.0
-def ev_idle_rate_mult() -> float: return 2.0 if admin_buff_active() else 1.0
-def ev_idle_cap_mult() -> float:  return 2.0 if admin_buff_active() else 1.0
-def ev_hunt_cd_mult() -> float:   return 0.5 if admin_buff_active() else 1.0
-def ev_myth_encounter_mult() -> float: return 3.0 if admin_buff_active() else 1.0
-def ev_myth_kill_bonus() -> int:  return 20 if admin_buff_active() else 0
-def ev_shard_chance():            return 0.25 if admin_buff_active() else None   # None = use default
-def ev_crate_chance():            return 0.15 if admin_buff_active() else None
-def ev_ammo_free() -> bool:       return admin_buff_active()
-def ev_travel_free() -> bool:     return admin_buff_active()
-def ev_craft_instant() -> bool:   return admin_buff_active()
+# Event hooks. Every one is neutral: events no longer change income, prices, drop rates or
+# cooldowns (Admin's Day Off did, and it was far too strong). Kept as functions so the many
+# call sites stay as they are, and so a future event can turn one on deliberately.
+def ev_sell_mult() -> float:      return 1.0
+def ev_xp_mult() -> float:        return 1.0
+def ev_daily_mult() -> float:     return 1.0
+def ev_idle_rate_mult() -> float: return 1.0
+def ev_idle_cap_mult() -> float:  return 1.0
+def ev_hunt_cd_mult() -> float:   return 1.0
+def ev_myth_encounter_mult() -> float: return 1.0
+def ev_myth_kill_bonus() -> int:  return 0
+def ev_shard_chance():            return None   # None = use default
+def ev_crate_chance():            return None
+def ev_ammo_free() -> bool:       return False
+def ev_travel_free() -> bool:     return False
+def ev_craft_instant() -> bool:   return False
 
-EVENT_SHOP_DISCOUNT_PCT = 25
-# purchases that never get the Admin's Day Off discount (the long-term gear chase)
+# purchases that are never discounted (the long-term gear chase) — kept for the price hook
 _NO_EVENT_DISCOUNT_SOURCES = {"shop tool", "vehicle shop"}
 
 def ev_price(base: int, *, currency: str = "money", gear: bool = False) -> int:
-    """Shop price during Admin's Day Off: 25% off money-priced consumables (ammo, healing items,
-    items). Tools, vehicles and anything priced in 💎 are never discounted — half-price Cosmic
-    RPGs for gems was far too strong. Floored at 1."""
-    if not admin_buff_active() or gear or currency == "gems":
-        return base
-    return max(1, base * (100 - EVENT_SHOP_DISCOUNT_PCT) // 100)
+    """Shop price during an event. Events no longer discount anything; this stays as the one
+    place a price would be changed."""
+    return base
 
 def event_banner_line() -> str:
     ev = get_active_event()
     if not ev:
         return ""
-    spec = EVENTS.get(ev["key"], ADMIN_BUFF_EVENT)
-    return f"{spec.get('emoji', emoji('party_popper'))} **{ev['name']}** is live — ends <t:{int(ev['ends_ts'])}:R>"
+    spec = ED.EVENT_SPECS.get(ev["key"]) or EVENTS.get(ev["key"], {})
+    ico = ev_icon(spec) if spec.get("emoji") else emoji('party_popper')
+    return f"{ico} **{ev['name']}** is live — ends <t:{int(ev['ends_ts'])}:R>"
 
 # ═══════════════════════════════════════════════════════════════
 # WORLD CONDITIONS  ·  rotating per-region wildlife/weather state (V2)
@@ -970,7 +959,7 @@ def refresh_health(user_id: str) -> int:
         h["last_regen_ts"] = now
         return 0
     elapsed = max(0.0, now - h.get("last_regen_ts", now))
-    rate = CAMP_HP_REGEN_PER_MIN if player_is_resting(user_id) else HP_REGEN_PER_MIN
+    rate = (CAMP_HP_REGEN_PER_MIN if player_is_resting(user_id) else HP_REGEN_PER_MIN) * theme_regen_mult()   # Recovery Sunday
     rate *= 1 + trophy_effect_value(user_id, "hp_regen_pct") / 100   # Troll: Petrified Troll Nose
     healed = int(elapsed / 60 * rate)
     if healed <= 0:
@@ -1112,25 +1101,26 @@ def build_events_components(user_id: str) -> list:
     if not ev:
         return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
             {"type": 10, "content": (f"### {emoji('earth')} Global Events\n\n"
-                                     "-# No events are running right now.\n"
-                                     "-# Events are admin-triggered — check back later.")},
+                                     "-# No event is running right now — but the Wilds are never quiet.\n"
+                                     f"-# **{ED.SEASON['title']}** · {ED.SEASON['tagline']}\n"
+                                     f"{daily_theme_line()}")},
             {"type": 14, "divider": True, "spacing": 1},
-            _back_row(user_id),
+            _ev3_nav_row(user_id),
         ]}]
     key = ev.get("key", "")
+    if key in ED.EVENT_SPECS:
+        return _build_ev3_panel(user_id, ev, ED.EVENT_SPECS[key])
     if key == "thieving_fox":
         return _build_fox_panel(user_id)
     if key == "shipwreck":
         return _build_shipwreck_panel(user_id)
     if key == "duck":
         return _build_duck_panel(user_id)
-    # buff view
-    g = EVENTS.get(ev["key"], ADMIN_BUFF_EVENT)
+    g = EVENTS.get(ev["key"], {"emoji": "🎉", "blurb": "", "perks": []})
     content = (
         f"# {g['emoji']} {ev['name']}\n"
         f"{g['blurb']}\n\n"
-        f"-# Started <t:{int(ev.get('started_ts',0))}:R> · **ends <t:{int(ev['ends_ts'])}:R>**\n\n"
-        f"### What's flipped on\n" + "\n".join(f"- {p}" for p in g.get("perks", []))
+        f"-# Started <t:{int(ev.get('started_ts',0))}:R> · **ends <t:{int(ev['ends_ts'])}:R>**"
     )
     return [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -1420,6 +1410,1737 @@ def event_shop_buy(user_id: str, key: str, idx: int) -> str:
     if key == "shipwreck" and _grant_special_badge(user_id, "event_anchor"):
         out += " You also earn the **Wreck Diver** badge."
     return out
+
+
+# ═══════════════════════════════════════════════════════════════
+# EVENTS V3  ·  "The Hollow Star" — quest events, chronicle, cosmetics
+# ═══════════════════════════════════════════════════════════════
+# Content lives in event_data.py / event_scenes.py (pure data). This is the engine.
+# Rules every event obeys: no price cuts, no income multipliers, a fixed per-player token
+# budget (spec["token_cap"]) and at most spec["crates"] finished crates. Event tokens are
+# not tradable and only buy cosmetics (+ the one capped crate).
+#
+# Per-player event state lives in data[uid]["event"] (wiped whenever a new event starts);
+# permanent cosmetics/lore live in data[uid]["chronicle"] / ["keepsakes"] / earned_titles /
+# special_badges.
+
+
+EV3_SCENES_PER_RUN = 5
+EV3_METER_MAX = 6
+
+
+def _ev3_pair() -> tuple[dict, dict] | None:
+    ev = get_active_event()
+    if not ev:
+        return None
+    spec = ED.EVENT_SPECS.get(ev.get("key", ""))
+    return (ev, spec) if spec else None
+
+
+def _ev3_seed(ev: dict) -> str:
+    return str(ev.get("seed") or int(ev.get("started_ts", 0)))
+
+
+def _ev3_day(ev: dict) -> int:
+    return max(0, int((time.time() - ev.get("started_ts", time.time())) // 86400))
+
+
+def _ev3_rng(ev: dict, *parts) -> random.Random:
+    return random.Random(f"{_ev3_seed(ev)}|{ev.get('key')}|" + "|".join(str(p) for p in parts))
+
+
+def _ev3_unlocked_biomes(uid: str) -> list[str]:
+    lvl = data.get(uid, {}).get("level", 1)
+    return [b for b, req in BIOME_LEVELS if lvl >= req] or ["village"]
+
+
+def _ev3_st(uid: str) -> dict | None:
+    st = _player_event(uid)
+    if st is None:
+        return None
+    st.setdefault("tok", 0)
+    st.setdefault("spent", 0)
+    st.setdefault("prog", 0)
+    st.setdefault("crates", 0)
+    st.setdefault("items", 0)
+    for k in ("story", "bought", "claimed"):
+        st.setdefault(k, [])
+    return st
+
+
+def _ev3_daily(uid: str, ev: dict) -> dict:
+    st = _ev3_st(uid)
+    di = _ev3_day(ev)
+    dd = st.setdefault("daily", {})
+    if dd.get("d") != di:
+        dd.clear()
+        dd["d"] = di
+    return dd
+
+
+def _ev3_balance(st: dict) -> int:
+    return st.get("tok", 0) - st.get("spent", 0)
+
+
+# ── cosmetics ────────────────────────────────────────────────
+
+def _grant_keepsake(uid: str, key: str) -> bool:
+    ks = data[uid].setdefault("keepsakes", [])
+    if key in ks or key not in ED.KEEPSAKES:
+        return False
+    ks.append(key)
+    return True
+
+
+def keepsake_line(uid: str) -> str:
+    ks = data.get(uid, {}).get("keepsakes") or []
+    return " ".join(ED.KEEPSAKES[k][0] for k in ks if k in ED.KEEPSAKES)
+
+
+def _ev3_grant(uid: str, r: dict) -> list[str]:
+    got = []
+    if r.get("title") or r.get("badge"):
+        got += _grant_event_reward(uid, title=r.get("title", ""), badge=r.get("badge", ""))
+    if r.get("keepsake") and _grant_keepsake(uid, r["keepsake"]):
+        e, label, _ = ED.KEEPSAKES[r["keepsake"]]
+        got.append(f"the **{label}** keepsake {e}")
+    return got
+
+
+def _ev3_reach(uid: str) -> int:
+    return len(_ev3_unlocked_biomes(uid))
+
+
+def _ev3_effective_at(uid: str, spec: dict, at: int) -> int:
+    """A region-survey event can't ask a level-30 hunter for 13 pieces."""
+    if spec.get("mode") == "survey":
+        return max(1, min(at, _ev3_reach(uid)))
+    return at
+
+
+def _ev3_unlock_chapter(uid: str, spec: dict, idx: int) -> str:
+    st = _ev3_st(uid)
+    if idx not in st["story"]:
+        st["story"].append(idx)
+    lst = data[uid].setdefault("chronicle", {}).setdefault(spec["key"], [])
+    if idx not in lst:
+        lst.append(idx)
+    ch = spec["story"][idx]
+    return f"{emoji('book')} **New chapter — {ch['title']}**\n-# {ch['text']}"
+
+
+def _ev3_unlocks(uid: str, spec: dict) -> list[str]:
+    """Story chapters + cosmetic rewards the player's progress has now earned."""
+    st = _ev3_st(uid)
+    lines: list[str] = []
+    if spec["mech"] != "community":
+        for i, ch in enumerate(spec["story"]):
+            if i not in st["story"] and st["prog"] >= _ev3_effective_at(uid, spec, ch["at"]):
+                lines.append(_ev3_unlock_chapter(uid, spec, i))
+    for at, r in spec["rewards"]:
+        tag = f"rw{at}"
+        if tag not in st["claimed"] and st["prog"] >= _ev3_effective_at(uid, spec, at):
+            st["claimed"].append(tag)
+            got = _ev3_grant(uid, r)
+            if got:
+                lines.append(f"{emoji('sports_medal')} Unlocked " + " + ".join(got) + ".")
+    return lines
+
+
+def _ev3_award(uid: str, spec: dict, n: int) -> list[str]:
+    """Add event tokens (= progress) within the fixed budget. Returns unlock lines."""
+    st = _ev3_st(uid)
+    n = max(0, min(int(n), spec["token_cap"] - st["prog"]))
+    if n <= 0:
+        return []
+    st["tok"] += n
+    st["prog"] += n
+    mark_user_dirty(uid)
+    return _ev3_unlocks(uid, spec)
+
+
+def _ev3_intro_seen(uid: str, spec: dict) -> bool:
+    lst = data[uid].setdefault("chronicle", {}).setdefault(spec["key"], [])
+    if -1 in lst:
+        return True
+    lst.append(-1)
+    mark_user_dirty(uid)
+    return False
+
+
+# ── shop ─────────────────────────────────────────────────────
+
+def _ev3_buy(uid: str, spec: dict, idx: int) -> str:
+    st = _ev3_st(uid)
+    shop = spec.get("shop", [])
+    if st is None or not (0 <= idx < len(shop)):
+        return f"{emoji('cross_mark')} Nothing to buy."
+    it = shop[idx]
+    if idx in st["bought"]:
+        return f"{emoji('cross_mark')} You already bought that."
+    if _ev3_balance(st) < it["cost"]:
+        return f"{emoji('cross_mark')} Not enough {spec['token'][1]}s."
+    if it.get("crate"):
+        if st["crates"] >= spec.get("crates", 0):
+            return f"{emoji('cross_mark')} This event's crate limit is reached."
+    if it.get("title") and it["title"] in data[uid].get("earned_titles", []):
+        return f"{emoji('cross_mark')} You already own the title **\"{it['title']}\"**."
+    if it.get("keepsake") and it["keepsake"] in data[uid].get("keepsakes", []):
+        return f"{emoji('cross_mark')} You already own that keepsake."
+    st["spent"] += it["cost"]
+    st["bought"].append(idx)
+    if it.get("crate"):
+        st["crates"] += 1
+        ci = data[uid].setdefault("crate_inv", {})
+        ci[it["crate"]] = ci.get(it["crate"], 0) + 1
+        return f"{emoji('check_mark')} Bought **{it['crate']}**."
+    got = _ev3_grant(uid, {k: it[k] for k in ("title", "keepsake") if it.get(k)})
+    mark_user_dirty(uid)
+    return f"{emoji('check_mark')} Unlocked " + " + ".join(got) + "."
+
+
+# ── puzzles (all deterministic from the event seed — no stored answers) ──
+
+def _ev3_wanted(ev: dict, day: int) -> dict:
+    rng = _ev3_rng(ev, "wanted", day)
+    biome = rng.choice(sorted(ED.BIOME_CLUES))
+    name, look = rng.choice(ED.FUGITIVES)
+    c = ED.BIOME_CLUES[biome]
+    return {"biome": biome, "name": name, "look": look, "clues": [
+        f"A trapper swears he saw **{name}** — *{look}* — somewhere the land is: {c[0]}",
+        f"A second sighting narrows it: {c[1]}",
+        f"The last witness won't say more than this: {c[2]}"]}
+
+
+def _ev3_pick_animals(rng: random.Random, n_decoys: int = 3, *, distinct_sound: bool = False) -> tuple[str, str, list[str]]:
+    biome = rng.choice(sorted(BIOME_ANIMALS))
+    roster = [a for a in BIOME_ANIMALS[biome] if a in ANIMAL_DATA]
+    ans = rng.choice(roster)
+    pool = sorted({a for b in BIOME_ANIMALS for a in BIOME_ANIMALS[b] if a in ANIMAL_DATA})
+    ans_snd = _ev3_sound(ans)
+    decoys: list[str] = []
+    for a in rng.sample(roster, len(roster)) + rng.sample(pool, len(pool)):
+        if a == ans or a in decoys or a[0] == ans[0] or any(a[0] == d[0] for d in decoys):
+            continue
+        if distinct_sound and (_ev3_sound(a) == ans_snd or _ev3_sound(a) in {_ev3_sound(d) for d in decoys}):
+            continue
+        decoys.append(a)
+        if len(decoys) == n_decoys:
+            break
+    options = [ans] + decoys
+    rng.shuffle(options)
+    return biome, ans, options
+
+
+def _ev3_sound(animal: str) -> str:
+    low = animal.lower()
+    for kw, snd in ED.SOUND_BY_KEYWORD:
+        if kw in low:
+            return snd
+    return ED.SOUND_FALLBACK.get(ANIMAL_DATA.get(animal, {}).get("rarity", "common"), "a rustle in the dark")
+
+
+def _ev3_tracks(ev: dict, day: int, slot: int) -> dict:
+    rng = _ev3_rng(ev, "tracks", day, slot)
+    biome, ans, options = _ev3_pick_animals(rng)
+    rar = ANIMAL_DATA[ans].get("rarity", "common")
+    beh = animal_combat_stats(ans)["behavior"]
+    return {"answer": ans, "options": options, "clues": [
+        f"The prints were pressed into ground that is: *{ED.BIOME_CLUES[biome][1]}*",
+        f"Whatever left them {ED.BEHAVIOR_PHRASE.get(beh, 'keeps to itself')} — {ED.RARITY_PHRASE.get(rar, 'a find')}.",
+        f"A scrap of fur snagged on a thorn. Its name has **{len(ans)}** letters and begins with **{ans[0]}**."]}
+
+
+def _ev3_night(ev: dict, day: int, slot: int) -> dict:
+    rng = _ev3_rng(ev, "night", day, slot)
+    biome, ans, options = _ev3_pick_animals(rng, distinct_sound=True)
+    return {"answer": ans, "options": options, "clues": [
+        f"From the dark, you hear {_ev3_sound(ans)}.",
+        f"It came from a place where: *{ED.BIOME_CLUES[biome][0]}*",
+        f"A lantern flick shows a shape. Its name begins with **{ans[0]}** and has **{len(ans)}** letters."]}
+
+
+def _ev3_clue_puzzle(ev: dict, spec: dict, day: int, slot: int) -> dict:
+    mode = spec["mode"]
+    if mode == "wanted":
+        w = _ev3_wanted(ev, day)
+        return {"answer": w["biome"], "clues": w["clues"], "title": f"Wanted: {w['name']}",
+                "prompt": "Where is it hiding? Stake out a region:", "kind": "region"}
+    if mode == "tracks":
+        t = _ev3_tracks(ev, day, slot)
+        return {**t, "title": "A new set of prints", "prompt": "What left these tracks?", "kind": "animal"}
+    n = _ev3_night(ev, day, slot)
+    return {**n, "title": f"Call #{slot + 1}", "prompt": "What is calling?", "kind": "animal"}
+
+
+def _ev3_impostor(ev: dict, spec: dict) -> dict:
+    rng = _ev3_rng(ev, "impostor")
+    names = spec["suspects"]
+    attrs = list(ED.IMPOSTOR_ATTRS)
+    table, culprit = [], 0
+    for _ in range(300):
+        culprit = rng.randrange(len(names))
+        table = [{a: rng.choice(ED.IMPOSTOR_ATTRS[a]) for a in attrs} for _ in names]
+        same = [i for i in range(len(names)) if all(table[i][a] == table[culprit][a] for a in attrs)]
+        if same == [culprit]:
+            break
+    clues = [("The saboteur " + ED.IMPOSTOR_PHRASE[a].format(v=table[culprit][a]) + ".") for a in attrs]
+    return {"names": names, "table": table, "culprit": culprit, "clues": clues}
+
+
+# ── mechanic: collect (meteor / cartographer / migration) ────
+
+def _ev3_impact_regions(uid: str, ev: dict, spec: dict) -> list[str]:
+    unlocked = _ev3_unlocked_biomes(uid)
+    rng = _ev3_rng(ev, "impact", _ev3_day(ev), uid)
+    return rng.sample(unlocked, min(spec["params"]["regions_per_day"], len(unlocked)))
+
+
+def _ev3_migration_today(uid: str, ev: dict, spec: dict) -> list[tuple[str, str]]:
+    unlocked = _ev3_unlocked_biomes(uid)
+    rng = _ev3_rng(ev, "migrate", _ev3_day(ev), uid)
+    n = spec["params"]["species_per_day"]
+    dests = rng.sample(unlocked, min(n, len(unlocked)))
+    while len(dests) < n:
+        dests.append(rng.choice(unlocked))
+    out = []
+    for dest in dests:
+        cands = sorted({a for b, lst in BIOME_ANIMALS.items() if b != dest for a in lst
+                        if a not in BIOME_ANIMALS[dest] and a in ANIMAL_DATA})
+        out.append((rng.choice(cands), dest))
+    return out
+
+
+def _ev3_collect(uid: str, ev: dict, spec: dict, biome: str) -> list[str]:
+    st = _ev3_st(uid)
+    dd = _ev3_daily(uid, ev)
+    p = spec.get("params", {})
+    mode = spec["mode"]
+    lines: list[str] = []
+    if mode == "impact":
+        if (biome in _ev3_impact_regions(uid, ev, spec) and dd.get("found", 0) < spec["day_cap"]
+                and random.random() < p["chance"]):
+            dd["found"] = dd.get("found", 0) + 1
+            lines.append(f"☄️ **You find a Star Fragment** half-buried in a fresh crater!")
+            lines += _ev3_award(uid, spec, 1)
+    elif mode == "survey":
+        sv = st.setdefault("survey", {})
+        sv[biome] = sv.get(biome, 0) + 1
+        if sv[biome] == p["hunts_per_piece"]:
+            lines.append(f"{ED.EVENT_SPECS['cartographer']['emoji']} **You recover the {BIOME_NAMES.get(biome, biome)} map piece!**")
+            lines += _ev3_award(uid, spec, 1)
+    elif mode == "migrate":
+        here = [a for a, b in _ev3_migration_today(uid, ev, spec) if b == biome]
+        if here and dd.get("found", 0) < spec["day_cap"] and random.random() < p["chance"]:
+            sp = random.choice(here)
+            dd["found"] = dd.get("found", 0) + 1
+            jr = st.setdefault("journal_sp", [])
+            if sp not in jr:
+                jr.append(sp)
+            lines.append(f"🦌 **Sighting!** A **{sp}** — a long way from home — logged in your journal.")
+            lines += _ev3_award(uid, spec, 1)
+    return lines
+
+
+# ── mechanic: scenes (fog / 404 / storm) ─────────────────────
+
+def _ev3_scene(spec: dict, sid: str) -> dict:
+    return next(s for s in EV_SCENES[spec["scene_pool"]] if s["id"] == sid)
+
+
+def _ev3_scenes_start(uid: str, ev: dict, spec: dict) -> str:
+    st, dd = _ev3_st(uid), _ev3_daily(uid, ev)
+    if st.get("run"):
+        return ""
+    if dd.get("runs", 0) >= spec["attempts_day"]:
+        return f"{emoji('cross_mark')} No attempts left today — come back tomorrow."
+    dd["runs"] = dd.get("runs", 0) + 1
+    ids = [s["id"] for s in random.sample(EV_SCENES[spec["scene_pool"]], EV3_SCENES_PER_RUN)]
+    st["run"] = {"ids": ids, "i": 0, "a": 3, "b": 3, "last": ""}
+    mark_user_dirty(uid)
+    return ""
+
+
+def _ev3_scenes_choose(uid: str, ev: dict, spec: dict, ci: int) -> dict:
+    st = _ev3_st(uid)
+    run = st.get("run")
+    if not run or not (0 <= ci < 3):
+        return {"text": "", "ended": None, "lines": []}
+    scene = _ev3_scene(spec, run["ids"][run["i"]])
+    label, outcome, da, db = scene["choices"][ci]
+    run["a"] = max(0, min(EV3_METER_MAX, run["a"] + da))
+    run["b"] = max(0, min(EV3_METER_MAX, run["b"] + db))
+    run["i"] += 1
+    run["last"] = f"**{label}** — {outcome}"
+    mA, mB = spec["meters"]
+    ended = None
+    if run["a"] <= 0 or run["b"] <= 0:
+        ended = "fail"
+    elif run["i"] >= EV3_SCENES_PER_RUN:
+        ended = "win"
+    out = {"text": run["last"], "ended": ended, "lines": []}
+    if ended:
+        flawless = ended == "win" and run["a"] >= 4 and run["b"] >= 4
+        pts = (spec["win_progress"] + (spec["flawless_bonus"] if flawless else 0)) if ended == "win" else spec["fail_progress"]
+        st["runs_done"] = st.get("runs_done", 0) + 1
+        out["lines"] = _ev3_award(uid, spec, pts)
+        out.update(pts=pts, flawless=flawless, a=run["a"], b=run["b"])
+        st["run"] = None
+    mark_user_dirty(uid)
+    return out
+
+
+# ── mechanic: clue (wanted / tracks / night) ─────────────────
+
+def _ev3_clue_slots(spec: dict) -> int:
+    return spec.get("puzzles_day", 1)
+
+
+def _ev3_clue_state(uid: str, ev: dict, slot: int) -> dict:
+    dd = _ev3_daily(uid, ev)
+    return dd.setdefault("cl", {}).setdefault(str(slot), {"n": 1, "done": False, "pts": 0})
+
+
+def _ev3_clue_answer(uid: str, ev: dict, spec: dict, slot: int, value: str) -> dict:
+    cs = _ev3_clue_state(uid, ev, slot)
+    if cs["done"]:
+        return {"msg": f"{emoji('cross_mark')} You've already settled that one today.", "lines": []}
+    puz = _ev3_clue_puzzle(ev, spec, _ev3_day(ev), slot)
+    cs["done"] = True
+    if value == puz["answer"]:
+        pts = max(1, 4 - cs["n"])
+        cs["pts"] = pts
+        lines = _ev3_award(uid, spec, pts)
+        name = BIOME_NAMES.get(puz["answer"], puz["answer"])
+        return {"msg": f"{emoji('check_mark')} **Correct — {name}!** You needed **{cs['n']}** clue(s): **+{pts} {spec['token'][1]}{'s' if pts != 1 else ''}**.", "lines": lines}
+    name = BIOME_NAMES.get(puz["answer"], puz["answer"])
+    return {"msg": f"{emoji('cross_mark')} Not quite — it was **{name}**. Try tomorrow's.", "lines": []}
+
+
+# ── mechanic: deduce (impostor) ──────────────────────────────
+
+def _ev3_deduce_clues_visible(ev: dict) -> int:
+    return min(3, _ev3_day(ev) + 1)
+
+
+def _ev3_deduce_examine(uid: str, ev: dict, spec: dict) -> dict:
+    dd = _ev3_daily(uid, ev)
+    if dd.get("examined"):
+        return {"msg": f"{emoji('cross_mark')} You've already studied today's testimony.", "lines": []}
+    dd["examined"] = True
+    return {"msg": f"{emoji('search_alt')} You go over the testimony again: **+1 clue point**.", "lines": _ev3_award(uid, spec, 1)}
+
+
+def _ev3_deduce_accuse(uid: str, ev: dict, spec: dict, idx: int) -> dict:
+    st = _ev3_st(uid)
+    puz = _ev3_impostor(ev, spec)
+    if st.get("accused_right"):
+        return {"msg": f"{emoji('cross_mark')} The case is closed.", "lines": []}
+    if st.get("tries", 0) >= 2:
+        return {"msg": f"{emoji('cross_mark')} You're out of accusations.", "lines": []}
+    if not (0 <= idx < len(puz["names"])):
+        return {"msg": "Unknown suspect.", "lines": []}
+    st["tries"] = st.get("tries", 0) + 1
+    if idx == puz["culprit"]:
+        st["accused_right"] = True
+        pts = 7 if st["tries"] == 1 else 4
+        return {"msg": f"{emoji('check_mark')} **It was {puz['names'][idx]}!** Case closed: **+{pts} clue points**.",
+                "lines": _ev3_award(uid, spec, pts)}
+    left = 2 - st["tries"]
+    return {"msg": f"{emoji('cross_mark')} **{puz['names'][idx]}** has a solid alibi. "
+                   f"{'One accusation left.' if left else 'No accusations left.'}", "lines": []}
+
+
+# ── mechanic: pick (mysterious supply crate) ─────────────────
+
+def _ev3_pick_boxes(uid: str, ev: dict) -> list[int]:
+    rng = _ev3_rng(ev, "boxes", _ev3_day(ev))
+    return rng.sample(range(len(ED.SUPPLY_BOXES)), 3)
+
+
+def _ev3_pick_open(uid: str, ev: dict, spec: dict, slot: int) -> dict:
+    st, dd = _ev3_st(uid), _ev3_daily(uid, ev)
+    if dd.get("picked"):
+        return {"msg": f"{emoji('cross_mark')} You've already taken today's box.", "lines": []}
+    boxes = _ev3_pick_boxes(uid, ev)
+    if not (0 <= slot < 3):
+        return {"msg": "Unknown box.", "lines": []}
+    box = ED.SUPPLY_BOXES[boxes[slot]]
+    rng = random.Random()
+    dd["picked"] = True
+    st["opened"] = st.get("opened", 0) + 1
+    flavor = rng.choice(ED.SUPPLY_BOX_FLAVOR)
+    kind = box["kind"]
+    bits, lines = [], []
+    tokens = 0
+    if kind == "tokens":
+        tokens = rng.randint(box["lo"], box["hi"])
+    elif kind == "item":
+        if st["items"] < spec.get("item_cap", 0):
+            st["items"] += 1
+            item = rng.choice(box["pool"])
+            if item in HEALING_ITEMS:
+                inv = data[uid].setdefault("healing_inv", {})
+                inv[item] = inv.get(item, 0) + 1
+            else:
+                add_item(uid, item, 1)
+            bits.append(f"a **{item}**")
+        else:
+            tokens = 6
+    elif kind == "cosmetic":
+        if _grant_keepsake(uid, "sealed_tag"):
+            e, label, _ = ED.KEEPSAKES["sealed_tag"]
+            bits.append(f"the **{label}** keepsake {e}")
+        else:
+            tokens = 8
+    elif kind == "crate":
+        if st["crates"] < spec.get("crates", 0):
+            st["crates"] += 1
+            ci = data[uid].setdefault("crate_inv", {})
+            ci["Common Crate"] = ci.get("Common Crate", 0) + 1
+            bits.append("a **Common Crate**")
+        else:
+            tokens = 8
+    if tokens:
+        got = min(tokens, spec["token_cap"] - st["prog"])
+        bits.append(f"**{got} {spec['token'][1]}{'s' if got != 1 else ''}**" if got > 0 else "(you've hit this event's token budget)")
+        lines += _ev3_award(uid, spec, tokens)
+    days = _ev3_days_total(spec)
+    if st["opened"] >= days and "box_all" not in st["claimed"]:
+        st["claimed"].append("box_all")
+        extra = _ev3_grant(uid, {"badge": "event_supply"})
+        if extra:
+            lines.append(f"{emoji('sports_medal')} Opened every box: unlocked " + " + ".join(extra) + ".")
+    mark_user_dirty(uid)
+    return {"msg": f"{flavor} " + " and ".join(bits) + ".", "lines": lines}
+
+
+def _ev3_days_total(spec: dict) -> int:
+    return max(1, int(spec["hours"] // 24))
+
+
+# ── mechanic: community (campfire festival) ──────────────────
+
+def _ev3_fire_state(ev: dict, spec: dict) -> dict:
+    c = ev.setdefault("community", {})
+    if "goal" not in c:
+        now = time.time()
+        recent = sum(1 for d in data.values() if now - d.get("_last_hunt_ts", 0) < 48 * 3600)
+        c["goal"] = spec["goal_per_player"] * max(spec["goal_min_players"], recent)
+        c["progress"] = 0
+    return c
+
+
+def _ev3_fire_stage(ev: dict, spec: dict) -> tuple[int, str]:
+    c = _ev3_fire_state(ev, spec)
+    pct = int(100 * min(1, c["progress"] / max(1, c["goal"])))
+    name = spec["stages"][0][1]
+    for at, nm in spec["stages"]:
+        if pct >= at:
+            name = nm
+    return pct, name
+
+
+def _ev3_fire_progress(uid: str, ev: dict, spec: dict, source: str, biome: str) -> list[str]:
+    dd = _ev3_daily(uid, ev)
+    ch = dd.setdefault("chal", {})
+    if source == "hunt":
+        ch["hunt10"] = ch.get("hunt10", 0) + 1
+        if biome:
+            bl = dd.setdefault("biomes", [])
+            if biome not in bl:
+                bl.append(biome)
+            ch["biomes3"] = len(bl)
+    elif source in ("daily", "task", "fight"):
+        key = {"daily": "daily", "task": "quest", "fight": "fight"}[source]
+        ch[key] = ch.get(key, 0) + 1
+    return []
+
+
+def _ev3_fire_ready(uid: str, ev: dict, spec: dict) -> list[dict]:
+    dd = _ev3_daily(uid, ev)
+    done = dd.get("claimed", [])
+    ch = dd.get("chal", {})
+    return [c for c in spec["challenges"] if c["key"] not in done and ch.get(c["key"], 0) >= c["need"]]
+
+
+def _ev3_fire_gather(uid: str, ev: dict, spec: dict) -> dict:
+    st, dd = _ev3_st(uid), _ev3_daily(uid, ev)
+    ready = _ev3_fire_ready(uid, ev, spec)
+    if not ready:
+        return {"msg": f"{emoji('cross_mark')} No finished challenges to collect wood for yet.", "lines": []}
+    room = spec["wood_cap_day"] - dd.get("wood", 0)
+    got = 0
+    for c in ready:
+        take = min(c["wood"], max(0, room - got))
+        got += take
+        dd.setdefault("claimed", []).append(c["key"])
+    dd["wood"] = dd.get("wood", 0) + got
+    st["wood"] = st.get("wood", 0) + got
+    mark_user_dirty(uid)
+    return {"msg": f"🪵 You gather **{got}** firewood from {len(ready)} challenge(s).", "lines": []}
+
+
+def _ev3_fire_donate(uid: str, ev: dict, spec: dict) -> dict:
+    st = _ev3_st(uid)
+    n = st.get("wood", 0)
+    if n <= 0:
+        return {"msg": f"{emoji('cross_mark')} You're not carrying any firewood.", "lines": []}
+    c = _ev3_fire_state(ev, spec)
+    st["wood"] = 0
+    st["donated"] = st.get("donated", 0) + n
+    before = _ev3_fire_stage(ev, spec)[0]
+    c["progress"] += n
+    after = _ev3_fire_stage(ev, spec)[0]
+    lines = _ev3_award(uid, spec, n)
+    lines += _ev3_fire_chapters(uid, ev, spec)
+    msg = f"🔥 You feed **{n}** firewood to the fire."
+    if after > before:
+        msg += f"\n-# The fire climbs to **{_ev3_fire_stage(ev, spec)[1]}** ({after}%)."
+    return {"msg": msg, "lines": lines}
+
+
+def _ev3_fire_chapters(uid: str, ev: dict, spec: dict) -> list[str]:
+    """Campfire chapters unlock on the COMMUNITY's progress, for anyone who has donated."""
+    st = _ev3_st(uid)
+    if st.get("donated", 0) <= 0:
+        return []
+    pct = _ev3_fire_stage(ev, spec)[0]
+    out = []
+    for i, ch in enumerate(spec["story"]):
+        if i not in st["story"] and pct >= ch["at"]:
+            out.append(_ev3_unlock_chapter(uid, spec, i))
+    return out
+
+
+def _ev3_fire_chest(uid: str, ev: dict, spec: dict) -> dict:
+    st = _ev3_st(uid)
+    if st.get("donated", 0) < spec["contrib_min"]:
+        return {"msg": f"{emoji('cross_mark')} Donate **{spec['contrib_min']}** wood to earn the participation chest.", "lines": []}
+    if st.get("chest") or st["crates"] >= spec.get("crates", 0):
+        return {"msg": f"{emoji('cross_mark')} You already claimed your participation chest.", "lines": []}
+    st["chest"] = True
+    st["crates"] += 1
+    ci = data[uid].setdefault("crate_inv", {})
+    ci["Uncommon Crate"] = ci.get("Uncommon Crate", 0) + 1
+    mark_user_dirty(uid)
+    return {"msg": f"{emoji('gift')} Your participation chest holds an **Uncommon Crate**. Thanks for tending the fire!", "lines": []}
+
+
+# ── mechanic: tournament ─────────────────────────────────────
+
+def _ev3_trn_round(ev: dict, day: int, rnd: int) -> tuple[str, str]:
+    rng = _ev3_rng(ev, "trn", day, rnd)
+    return rng.choice(sorted(ED.TOURNEY_WIND)), rng.choice(sorted(ED.TOURNEY_RANGE))
+
+
+def _ev3_trn_shoot(uid: str, ev: dict, spec: dict, tech: str) -> dict:
+    dd = _ev3_daily(uid, ev)
+    st = _ev3_st(uid)
+    rounds = dd.setdefault("rounds", [])
+    if len(rounds) >= spec["rounds_day"]:
+        return {"msg": f"{emoji('cross_mark')} You've fired all {spec['rounds_day']} rounds today.", "lines": []}
+    if tech not in ED.TOURNEY_TECHNIQUES:
+        return {"msg": "Unknown technique.", "lines": []}
+    wind, rng_ = _ev3_trn_round(ev, _ev3_day(ev), len(rounds))
+    best, close = ED.TOURNEY_TABLE[(wind, rng_)]
+    pts = 3 if tech == best else 1 if tech == close else 0
+    rounds.append(pts)
+    lines = _ev3_award(uid, spec, pts)
+    board = ev.setdefault("board", {})
+    ent = board.setdefault(uid, {"pts": 0, "ts": 0, "name": get_username(uid)})
+    ent["pts"] += pts
+    ent["ts"] = time.time()
+    ent["name"] = get_username(uid)
+    word = {3: "**Dead centre!**", 1: "Close — inside the rings.", 0: "A miss."}[pts]
+    return {"msg": f"🏹 {ED.TOURNEY_TECHNIQUES[tech]} against {ED.TOURNEY_WIND[wind].lower()} at {ED.TOURNEY_RANGE[rng_]}: {word} **+{pts}**", "lines": lines}
+
+
+def _ev3_trn_board(ev: dict, n: int = 5) -> list[tuple[str, dict]]:
+    rows = [(u, e) for u, e in ev.get("board", {}).items()
+            if not data.get(u, {}).get("is_tester")]
+    rows.sort(key=lambda kv: (-kv[1]["pts"], kv[1]["ts"]))
+    return rows[:n]
+
+
+# ═══ Finalisation: medals, banners, fire verdict (runs once when an event ends) ═══
+
+def _ev3_finalize(ev: dict) -> None:
+    spec = ED.EVENT_SPECS.get(ev.get("key", ""))
+    if not spec or ev.get("finalized"):
+        return
+    ev["finalized"] = True
+    if spec["mech"] == "tournament":
+        for place, (uid, ent) in enumerate(_ev3_trn_board(ev, 3), 1):
+            if ent["pts"] < 9 or uid not in data:
+                continue
+            title = spec["medals"].get(place)
+            if title:
+                _grant_event_reward(uid, title=title, badge="event_tournament")
+                mark_user_dirty(uid)
+        for uid, ent in ev.get("board", {}).items():
+            if uid in data and ent["pts"] >= 9:
+                _grant_event_reward(uid, badge="")
+    elif spec["mech"] == "conquest":
+        _ev3_conquest_finalize(ev, spec)
+
+
+# ═══ Activity hook — every system that already awards tribe XP also feeds the live event ═══
+
+async def _ev3_activity(uid: str, source: str, *, catches: int = 0, biome: str = "", result: dict | None = None) -> None:
+    pair = _ev3_pair()
+    if not pair:
+        return
+    ev, spec = pair
+    lines: list[str] = []
+    try:
+        async with user_transaction(uid):
+            st = _ev3_st(uid)
+            if st is None:
+                return
+            mech = spec["mech"]
+            if mech == "collect" and source == "hunt" and biome:
+                lines += _ev3_collect(uid, ev, spec, biome)
+            elif mech == "community":
+                _ev3_fire_progress(uid, ev, spec, source, biome)
+            elif mech == "relay":
+                lines += _ev3_relay_activity(uid, ev, spec, source, catches)
+            elif mech == "conquest":
+                lines += _ev3_conquest_activity(uid, ev, spec, source, catches, biome)
+    except Exception as e:                       # an event glitch must never break a hunt
+        print("event activity error:", e)
+        return
+    if lines and result is not None:
+        result.setdefault("event_lines", []).extend(lines)
+
+
+async def track_activity(uid: str, source: str, *, catches: int = 0, biome: str = "",
+                         result: dict | None = None) -> None:
+    """One call for 'this player just did something that counts': tribe XP, the live
+    event and today's theme all hear about it."""
+    await award_tribe_xp(uid, source, catches=catches, biome=biome)
+    if source == "hunt":
+        await _event_hunt_hook(uid)              # (Duck Takeover bread crumbs)
+    await _ev3_activity(uid, source, catches=catches, biome=biome, result=result)
+    await _theme_activity(uid, source, catches=catches, biome=biome)
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# EVENTS V3  ·  panels
+# ═══════════════════════════════════════════════════════════════
+
+_ev3_chron_view: dict[str, str] = {}
+
+
+def _ev3_select(cid: str, placeholder: str, options: list[dict], disabled: bool = False) -> dict:
+    return {"type": 1, "components": [{"type": 3, "custom_id": cid, "placeholder": placeholder,
+                                       "min_values": 1, "max_values": 1, "flows": {},
+                                       "disabled": disabled, "options": options[:25]}]}
+
+
+def _ev3_flash(uid: str, text: str) -> None:
+    st = _ev3_st(uid)
+    if st is not None and text:
+        st["flash"] = (st.get("flash", "") + ("\n" if st.get("flash") else "") + text)[:1500]
+
+
+def _ev3_take_flash(uid: str) -> str:
+    st = _ev3_st(uid)
+    if not st or not st.get("flash"):
+        return ""
+    txt, st["flash"] = st["flash"], ""
+    return txt
+
+
+def _ev3_meter_bar(v: int) -> str:
+    return "▰" * v + "▱" * (EV3_METER_MAX - v)
+
+
+def _ev3_head(uid: str, ev: dict, spec: dict, st: dict) -> str:
+    tok_name = spec["token"][0]
+    bar, pct = ui_progress(st["prog"], spec["token_cap"])
+    last = (spec["story"][st["story"][-1]] if st["story"] else None)
+    story = (f"\n-# {emoji('book')} *{last['title']}* — {last['text']}" if last else "")
+    left_h = max(0, (ev["ends_ts"] - time.time()) // 3600)
+    return (f"# {ev_icon(spec)} {spec['name']}\n{spec['blurb']}\n"
+            f"-# Chapter {spec['chapter']} of *{ED.SEASON['title']}* · ends <t:{int(ev['ends_ts'])}:R>\n\n"
+            f"**{tok_name}:** {st['prog']}/{spec['token_cap']} {bar} · to spend: **{_ev3_balance(st)}**{story}")
+
+
+def _ev3_nav_row(uid: str, spec: dict | None = None, extra: list | None = None) -> dict:
+    btns = list(extra or [])
+    if spec and spec.get("shop"):
+        btns.append({"type": 2, "style": 2, "label": "Shop", "emoji": emoji_partial("shop"),
+                     "custom_id": f"ev3:shop:{uid}"})
+    btns += [{"type": 2, "style": 2, "label": "Chronicle", "emoji": emoji_partial("book"),
+              "custom_id": f"ev3:chron:open:{uid}"},
+             {"type": 2, "style": 2, "label": "Today", "emoji": emoji_partial("calendar"),
+              "custom_id": f"ev3:theme:{uid}"},
+             {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:menu:{uid}"}]
+    return {"type": 1, "components": btns[:5]}
+
+
+def _ev3_collect_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    dd = _ev3_daily(uid, ev)
+    p = spec.get("params", {})
+    mode = spec["mode"]
+    if mode == "impact":
+        regs = _ev3_impact_regions(uid, ev, spec)
+        txt = ("**Today's impact sites** (hunt there to search for fragments):\n"
+               + "\n".join(f"{BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES.get(b, b)}**" for b in regs)
+               + f"\n-# Found today: **{dd.get('found', 0)}/{spec['day_cap']}** · {int(p['chance'] * 100)}% per hunt at a site")
+    elif mode == "survey":
+        sv = st.get("survey", {})
+        need = p["hunts_per_piece"]
+        lines = []
+        for b in _ev3_unlocked_biomes(uid):
+            n = sv.get(b, 0)
+            lines.append(f"{emoji('check_mark') if n >= need else '▫️'} {BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES.get(b, b)}** — {min(n, need)}/{need}")
+        txt = f"**Survey progress** (hunt {need}× in a region for its piece):\n" + "\n".join(lines)
+    else:
+        today = _ev3_migration_today(uid, ev, spec)
+        txt = ("**Today's migrations** (hunt in the region to sight them):\n"
+               + "\n".join(f"{animal_emoji(a)} **{a}** → {BIOME_EMOJIS.get(b, '')} {BIOME_NAMES.get(b, b)}" for a, b in today)
+               + f"\n-# Sightings today: **{dd.get('found', 0)}/{spec['day_cap']}** · journal: **{len(st.get('journal_sp', []))}** species")
+    return txt, []
+
+
+def _ev3_scenes_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    mA, mB = spec["meters"]
+    dd = _ev3_daily(uid, ev)
+    run = st.get("run")
+    left = spec["attempts_day"] - dd.get("runs", 0)
+    res = st.get("lastres")
+    if not run:
+        txt = ""
+        if res:
+            txt += res + "\n\n"
+        txt += f"-# Attempts left today: **{left}/{spec['attempts_day']}** · {EV3_SCENES_PER_RUN} scenes per run · keep **{mA}** and **{mB}** above zero."
+        if spec["key"] == "admin_404":
+            txt += "\n" + random.choice(spec["glitch_lines"])
+        btn = {"type": 2, "style": 3, "label": "Start" if spec["key"] != "admin_404" else "Open Debug Session",
+               "custom_id": f"ev3:scn:start:{uid}", "disabled": left <= 0}
+        return txt, [{"type": 1, "components": [btn]}]
+    scene = _ev3_scene(spec, run["ids"][run["i"]])
+    txt = (f"**Scene {run['i'] + 1}/{EV3_SCENES_PER_RUN}**\n{scene['text']}\n\n"
+           f"{mA}: {_ev3_meter_bar(run['a'])} **{run['a']}** · {mB}: {_ev3_meter_bar(run['b'])} **{run['b']}**")
+    if run.get("last"):
+        txt = f"-# {run['last']}\n\n" + txt
+    btns = [{"type": 2, "style": 1, "label": c[0][:80], "custom_id": f"ev3:scn:c{i}:{uid}"}
+            for i, c in enumerate(scene["choices"])]
+    return txt, [{"type": 1, "components": btns}]
+
+
+def _ev3_clue_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    day = _ev3_day(ev)
+    slots = _ev3_clue_slots(spec)
+    txt_parts, rows = [], []
+    active = None
+    for slot in range(slots):
+        cs = _ev3_clue_state(uid, ev, slot)
+        puz = _ev3_clue_puzzle(ev, spec, day, slot)
+        if cs["done"]:
+            nm = BIOME_NAMES.get(puz["answer"], puz["answer"])
+            txt_parts.append(f"{emoji('check_mark') if cs['pts'] else emoji('cross_mark')} **{puz['title']}** — it was **{nm}**"
+                             + (f" · +{cs['pts']}" if cs["pts"] else ""))
+        elif active is None:
+            active = (slot, cs, puz)
+        else:
+            txt_parts.append(f"▫️ **{puz['title']}** — waiting")
+    if active:
+        slot, cs, puz = active
+        shown = puz["clues"][:cs["n"]]
+        body = (f"### {puz['title']}\n" + "\n".join(f"**Clue {i + 1}.** {c}" for i, c in enumerate(shown))
+                + f"\n\n{puz['prompt']}\n-# Fewer clues = more points (3 / 2 / 1). One try.")
+        txt_parts.insert(0, body)
+        if puz["kind"] == "region":
+            opts = [{"label": BIOME_NAMES[b][:100], "value": b, "emoji": emoji_partial(BIOME_EMOJIS.get(b, "")) if BIOME_EMOJIS.get(b) else {}}
+                    for b, _ in BIOME_LEVELS]
+        else:
+            opts = [{"label": a[:100], "value": a} for a in puz["options"]]
+        rows.append(_ev3_select(f"ev3:clue:ans:{slot}:{uid}", "Make your call…", opts))
+        rows.append({"type": 1, "components": [{"type": 2, "style": 2, "label": "Reveal another clue",
+                    "custom_id": f"ev3:clue:more:{slot}:{uid}", "disabled": cs["n"] >= 3}]})
+    elif not txt_parts:
+        txt_parts.append("-# Nothing to solve right now.")
+    else:
+        txt_parts.append("-# That's today's puzzle done. A new one arrives tomorrow.")
+    return "\n".join(txt_parts), rows
+
+
+def _ev3_deduce_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    puz = _ev3_impostor(ev, spec)
+    vis = _ev3_deduce_clues_visible(ev)
+    dd = _ev3_daily(uid, ev)
+    sheet = "\n".join(f"**{n}** — {puz['table'][i]['tool']} · {puz['table'][i]['place']} · {puz['table'][i]['item']}"
+                      for i, n in enumerate(puz["names"]))
+    clues = "\n".join(f"**Testimony {i + 1}.** {puz['clues'][i]}" for i in range(vis))
+    later = f"\n-# {3 - vis} more statement(s) arrive on later days." if vis < 3 else ""
+    state = ""
+    if st.get("accused_right"):
+        state = f"\n{emoji('check_mark')} **Case closed — it was {puz['names'][puz['culprit']]}.**"
+    else:
+        state = f"\n-# Accusations left: **{2 - st.get('tries', 0)}/2**."
+    txt = f"**What each suspect was seen with:**\n{sheet}\n\n{clues}{later}{state}"
+    rows = []
+    if not st.get("accused_right") and st.get("tries", 0) < 2:
+        rows.append(_ev3_select(f"ev3:imp:accuse:{uid}", "Accuse a suspect…",
+                                [{"label": n, "value": str(i)} for i, n in enumerate(puz["names"])]))
+    rows.append({"type": 1, "components": [{"type": 2, "style": 2, "label": "Study today's testimony (+1)",
+                 "custom_id": f"ev3:imp:look:{uid}", "disabled": bool(dd.get("examined")) or bool(st.get("accused_right"))}]})
+    return txt, rows
+
+
+def _ev3_pick_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    dd = _ev3_daily(uid, ev)
+    boxes = _ev3_pick_boxes(uid, ev)
+    names = "ABC"
+    txt = ("**Today's sealed boxes** — take one:\n"
+           + "\n".join(f"**Box {names[i]}** — {ED.SUPPLY_BOXES[b]['hint']}" for i, b in enumerate(boxes))
+           + f"\n-# Boxes opened: **{st.get('opened', 0)}/{_ev3_days_total(spec)}** · normal items from boxes are capped at {spec.get('item_cap', 0)} per event.")
+    if dd.get("picked"):
+        txt += "\n\n*You've taken today's box. Another set arrives tomorrow.*"
+    btns = [{"type": 2, "style": 1, "label": f"Box {names[i]}", "custom_id": f"ev3:pick:{i}:{uid}",
+             "disabled": bool(dd.get("picked"))} for i in range(3)]
+    return txt, [{"type": 1, "components": btns}]
+
+
+def _ev3_fire_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    c = _ev3_fire_state(ev, spec)
+    pct, stage = _ev3_fire_stage(ev, spec)
+    dd = _ev3_daily(uid, ev)
+    ch = dd.get("chal", {})
+    done = dd.get("claimed", [])
+    lines = []
+    for chal in spec["challenges"]:
+        n = min(ch.get(chal["key"], 0), chal["need"])
+        mark = emoji("check_mark") if chal["key"] in done else ("🟢" if n >= chal["need"] else "▫️")
+        lines.append(f"{mark} {chal['label']} — {n}/{chal['need']} · 🪵 {chal['wood']}")
+    ready = bool(_ev3_fire_ready(uid, ev, spec))
+    txt = (f"**The fire: {stage}** ({pct}%)\n{_progress_bar(c['progress'], c['goal'])}\n"
+           f"-# {c['progress']:,}/{c['goal']:,} firewood from the whole community\n\n"
+           f"**Today's challenges**\n" + "\n".join(lines)
+           + f"\n\n🪵 Carrying: **{st.get('wood', 0)}** · donated by you: **{st.get('donated', 0)}**"
+           + f"\n-# Wood gathered today: {dd.get('wood', 0)}/{spec['wood_cap_day']}")
+    btns = [{"type": 2, "style": 3, "label": "Gather wood", "custom_id": f"ev3:fire:gather:{uid}", "disabled": not ready},
+            {"type": 2, "style": 1, "label": "Feed the fire", "custom_id": f"ev3:fire:donate:{uid}",
+             "disabled": st.get("wood", 0) <= 0},
+            {"type": 2, "style": 2, "label": "Participation chest", "emoji": emoji_partial("gift"),
+             "custom_id": f"ev3:fire:chest:{uid}",
+             "disabled": st.get("donated", 0) < spec["contrib_min"] or bool(st.get("chest"))}]
+    return txt, [{"type": 1, "components": btns}]
+
+
+def _ev3_trn_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    dd = _ev3_daily(uid, ev)
+    rounds = dd.get("rounds", [])
+    n = len(rounds)
+    board = _ev3_trn_board(ev, 5)
+    b_txt = "\n".join(f"{i}. `{e['name']}` — {e['pts']}" for i, (u, e) in enumerate(board, 1)) or "-# Nobody has shot yet."
+    mine = ev.get("board", {}).get(uid, {}).get("pts", 0)
+    if n >= spec["rounds_day"]:
+        head = f"**All {spec['rounds_day']} rounds fired today** — {sum(rounds)} points today. Come back tomorrow."
+        rows = []
+    else:
+        wind, rng_ = _ev3_trn_round(ev, _ev3_day(ev), n)
+        head = (f"**Round {n + 1}/{spec['rounds_day']}** — {ED.TOURNEY_WIND[wind]}, {ED.TOURNEY_RANGE[rng_]}.\n"
+                f"-# {random.choice(ED.TOURNEY_TIPS)} Standard bow, standard arrows.")
+        rows = [{"type": 1, "components": [
+            {"type": 2, "style": 1, "label": lbl, "custom_id": f"ev3:trn:{k}:{uid}"}
+            for k, lbl in ED.TOURNEY_TECHNIQUES.items()]}]
+    txt = f"{head}\n\n**Leaderboard**\n{b_txt}\n-# You: **{mine}** pts · medals go to the top three when the tournament ends."
+    return txt, rows
+
+
+def _build_ev3_panel(uid: str, ev: dict, spec: dict) -> list:
+    st = _ev3_st(uid)
+    first = not _ev3_intro_seen(uid, spec)
+    mech = spec["mech"]
+    body_fn = {"collect": _ev3_collect_body, "scenes": _ev3_scenes_body, "clue": _ev3_clue_body,
+               "deduce": _ev3_deduce_body, "pick": _ev3_pick_body, "community": _ev3_fire_body,
+               "tournament": _ev3_trn_body, "relay": _ev3_relay_body, "conquest": _ev3_conquest_body}[mech]
+    try:
+        body, rows = body_fn(uid, ev, spec, st)
+    except Exception as e:                                    # never leave the panel blank
+        print("event panel error:", spec["key"], e)
+        body, rows = "-# The event is warming up — try again in a moment.", []
+    flash = _ev3_take_flash(uid)
+    head = _ev3_head(uid, ev, spec, st)
+    if first:
+        head = f"{spec['intro']}\n\n" + head
+    content = (f"{flash}\n\n" if flash else "") + head
+    out = [{"type": 10, "content": content[:3900]}, {"type": 14, "divider": True, "spacing": 1},
+           {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}]
+    out += rows
+    out.append(_ev3_nav_row(uid, spec))
+    return [{"type": 17, "accent_color": 0x6C5CE7, "spoiler": False, "components": out}]
+
+
+def _build_ev3_shop(uid: str, spec: dict, note: str = "") -> list:
+    st = _ev3_st(uid)
+    rows = [{"type": 10, "content": f"### {spec['emoji']} {spec['name']} — Shop\n"
+                                    f"-# You have **{_ev3_balance(st)}** {spec['token'][1]}s. Cosmetics only"
+                                    f"{' (plus one capped crate)' if spec.get('crates') else ''} — tokens can't be traded or converted.\n"
+                                    + (f"\n{note}" if note else "")},
+            {"type": 14, "divider": True, "spacing": 1}]
+    for i, it in enumerate(spec.get("shop", [])):
+        bought = i in st["bought"]
+        can = _ev3_balance(st) >= it["cost"] and not bought
+        rows.append({"type": 9, "components": [{"type": 10, "content": f"**{it['label']}** — {it['cost']} {spec['token'][1]}s"
+                                                                       + (" · ✅ owned" if bought else "")}],
+                     "accessory": {"type": 2, "style": 1 if can else 2, "label": "Buy",
+                                   "custom_id": f"ev3:buy:{i}:{uid}", "disabled": not can}})
+    rows.append({"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"ev3:open:{uid}"}]})
+    return [{"type": 17, "accent_color": 0x6C5CE7, "spoiler": False, "components": rows}]
+
+
+# ── Chronicle: the story so far ──────────────────────────────
+
+def _ev3_chron_entries() -> list[tuple[str, str]]:
+    out = [("prologue", f"Prologue — {ED.SEASON['title']}")]
+    for i, k in enumerate(ED.STORY_ORDER, 1):
+        sp = ED.EVENT_SPECS[k]
+        out.append((k, f"{i}. {sp['name']}"))
+    out.append(("epilogue", "Epilogue — The Wilds Remember"))
+    return out
+
+
+def build_chronicle(uid: str, key: str = "") -> list:
+    key = key or _ev3_chron_view.get(uid) or "prologue"
+    _ev3_chron_view[uid] = key
+    chron = data.get(uid, {}).get("chronicle", {})
+    if key == "prologue":
+        body = f"## {ED.SEASON['title']}\n*{ED.SEASON['tagline']}*\n\n{ED.SEASON['prologue']}"
+        cast = "\n".join(f"**{n}** — {t}" for n, t in ED.CAST.items())
+        body += f"\n\n### Who's who\n{cast}"
+    elif key == "epilogue":
+        done = sum(1 for k in ED.STORY_ORDER if len(chron.get(k, [])) > 1)
+        body = (f"## Epilogue\n" + (ED.SEASON["epilogue"] if done >= 8 else
+                "*The last page is blank. Play more of the season's events to write it.*")
+                + f"\n\n-# {done}/{len(ED.STORY_ORDER)} chapters touched.")
+    else:
+        sp = ED.EVENT_SPECS[key]
+        got = chron.get(key, [])
+        parts = [f"## {sp['emoji']} {sp['name']}\n-# Chapter {sp['chapter']} of {len(ED.STORY_ORDER)}"]
+        if -1 in got:
+            parts.append(sp["intro"])
+        else:
+            parts.append("*You haven't played this chapter yet.*")
+        for i, ch in enumerate(sp["story"]):
+            if i in got:
+                parts.append(f"### {ch['title']}\n{ch['text']}")
+            else:
+                parts.append(f"### 🔒 {'?' * 8}\n-# Unlocks through {sp['name']}.")
+        body = "\n\n".join(parts)
+    ks = data.get(uid, {}).get("keepsakes", [])
+    ks_line = ("\n\n**Keepsakes:** " + " ".join(f"{ED.KEEPSAKES[k][0]} {ED.KEEPSAKES[k][1]}" for k in ks if k in ED.KEEPSAKES)) if ks else ""
+    opts = []
+    for k, lbl in _ev3_chron_entries():
+        n = len([c for c in chron.get(k, []) if c >= 0]) if k in ED.EVENT_SPECS else 0
+        total = len(ED.EVENT_SPECS[k]["story"]) if k in ED.EVENT_SPECS else 0
+        opts.append({"label": lbl[:100], "value": k, "default": k == key,
+                     "description": (f"{n}/{total} chapters unlocked" if total else "")[:100]})
+    rows = [{"type": 10, "content": (body + ks_line)[:3900]}, {"type": 14, "divider": True, "spacing": 1},
+            _ev3_select(f"ev3:chron:sel:{uid}", "Turn to a chapter…", opts),
+            {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Events", "custom_id": f"ev3:open:{uid}"}]}]
+    return [{"type": 17, "accent_color": 0x6C5CE7, "spoiler": False, "components": rows}]
+
+
+
+
+# ═══ Dispatcher ═════════════════════════════════════════════════
+
+async def _handle_ev3(interaction: discord.Interaction, parts: list, values: list) -> bool:
+    """`ev3:<sub>:...:<uid>` — every quest-event button / select. Returns True when handled."""
+    owner_id = parts[-1]
+    if str(interaction.user.id) != owner_id:
+        await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+        return True
+    init_user(owner_id)
+    sub = parts[1]
+
+    if sub == "chron":
+        if parts[2] == "sel" and values:
+            _ev3_chron_view[owner_id] = values[0]
+        await smart_update_v2(interaction, build_chronicle(owner_id))
+        return True
+    if sub == "theme":
+        await smart_update_v2(interaction, build_theme_panel(owner_id))
+        return True
+    if sub == "themeact":
+        async with user_transaction(owner_id):
+            note = _theme_action(owner_id, parts[2], values)
+        await smart_update_v2(interaction, build_theme_panel(owner_id, note))
+        return True
+
+    pair = _ev3_pair()
+    if not pair:
+        await smart_update_v2(interaction, build_events_components(owner_id))
+        return True
+    ev, spec = pair
+
+    if sub == "open":
+        await smart_update_v2(interaction, _build_ev3_panel(owner_id, ev, spec))
+        return True
+    if sub == "shop":
+        await smart_update_v2(interaction, _build_ev3_shop(owner_id, spec))
+        return True
+    if sub == "buy":
+        async with user_transaction(owner_id):
+            note = _ev3_buy(owner_id, spec, int(parts[2]))
+        await smart_update_v2(interaction, _build_ev3_shop(owner_id, spec, note))
+        return True
+
+    if sub in ("relay", "conq"):
+        res = await _ev3_tribe_action(owner_id, ev, spec, sub, parts[2:-1], values)
+        async with user_transaction(owner_id):
+            extra = "\n".join(res.get("lines", []))
+            _ev3_flash(owner_id, (res.get("msg", "") + ("\n" + extra if extra else "")).strip())
+        await smart_update_v2(interaction, _build_ev3_panel(owner_id, ev, spec))
+        return True
+
+    async with user_transaction(owner_id):
+        if _ev3_st(owner_id) is None:
+            return True
+        res: dict = {"msg": "", "lines": []}
+        if sub == "scn":
+            if parts[2] == "start":
+                m = _ev3_scenes_start(owner_id, ev, spec)
+                _ev3_flash(owner_id, m)
+            elif parts[2].startswith("c") and parts[2][1:].isdigit():
+                out = _ev3_scenes_choose(owner_id, ev, spec, int(parts[2][1:]))
+                if out.get("ended"):
+                    mA, mB = spec["meters"]
+                    head = (f"{emoji('check_mark')} **You made it through!**" if out["ended"] == "win"
+                            else f"{emoji('cross_mark')} **You had to turn back.**")
+                    st = _ev3_st(owner_id)
+                    st["lastres"] = (f"{head} {out['text']}\n{mA}: **{out['a']}** · {mB}: **{out['b']}** → "
+                                     f"**+{out['pts']} {spec['token'][1]}{'s' if out['pts'] != 1 else ''}**"
+                                     + (" ✨ *flawless*" if out["flawless"] else ""))
+                res["lines"] = out.get("lines", [])
+        elif sub == "clue":
+            slot = int(parts[3])
+            if parts[2] == "more":
+                cs = _ev3_clue_state(owner_id, ev, slot)
+                if not cs["done"] and cs["n"] < 3:
+                    cs["n"] += 1
+            elif parts[2] == "ans" and values:
+                res = _ev3_clue_answer(owner_id, ev, spec, slot, values[0])
+        elif sub == "imp":
+            if parts[2] == "look":
+                res = _ev3_deduce_examine(owner_id, ev, spec)
+            elif parts[2] == "accuse" and values and values[0].isdigit():
+                res = _ev3_deduce_accuse(owner_id, ev, spec, int(values[0]))
+        elif sub == "pick":
+            res = _ev3_pick_open(owner_id, ev, spec, int(parts[2]))
+        elif sub == "fire":
+            fn = {"gather": _ev3_fire_gather, "donate": _ev3_fire_donate, "chest": _ev3_fire_chest}.get(parts[2])
+            if fn:
+                res = fn(owner_id, ev, spec)
+        elif sub == "trn":
+            res = _ev3_trn_shoot(owner_id, ev, spec, parts[2])
+        extra = "\n".join(res.get("lines", []))
+        _ev3_flash(owner_id, (res.get("msg", "") + ("\n" + extra if extra else "")).strip())
+        mark_user_dirty(owner_id)
+    await smart_update_v2(interaction, _build_ev3_panel(owner_id, ev, spec))
+    return True
+
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# DAILY THEMES  ·  a small, capped, different thing to do each weekday
+# ═══════════════════════════════════════════════════════════════
+# Mon Explorer's (travel x0.5) · Tue Training (+10% hunt XP, 40 hunts) · Wed Workshop (-20% craft
+# time, 5 crafts) · Thu Tribe (+25% contract tribe XP, 250/tribe) · Fri Most Wanted (region
+# puzzle) · Sat Monster Rampage (shared world boss) · Sun Recovery (2x HP regen + one free heal).
+# They never stack with prices or income. State: data[uid]["theme_day"] (per player, per day)
+# and _theme_state (the shared Friday / Saturday boards, persisted in runtime_state).
+
+_theme_state: dict = {"fri": {}, "sat": {}}
+
+
+def current_theme() -> dict:
+    return ED.DAILY_THEMES[datetime.now(timezone.utc).weekday()]
+
+
+def ev_icon(spec: dict) -> str:
+    """An event's / theme's icon: the registry's custom art when it exists, else its unicode glyph."""
+    art = emoji(spec.get("icon", "")) if spec.get("icon") else ""
+    return art if art.startswith("<") else spec["emoji"]
+
+
+def theme_key() -> str:
+    return current_theme()["key"]
+
+
+def daily_theme_line() -> str:
+    t = current_theme()
+    return f"{ev_icon(t)} **{t['name']}** — {t['blurb']}"
+
+
+def _theme_day(uid: str) -> dict:
+    td = data[uid].setdefault("theme_day", {})
+    today = today_utc()
+    if td.get("d") != today:
+        td.clear()
+        td.update({"d": today, "hunts": 0, "crafts": 0})
+    return td
+
+
+def theme_travel_mult() -> float:
+    return ED.EXPLORER_TRAVEL_MULT if theme_key() == "explorer" else 1.0
+
+
+def theme_xp_mult(uid: str) -> float:
+    """+10% hunt XP on a player's first TRAINING_HUNT_CAP hunts of the day (Tuesday)."""
+    if theme_key() != "training" or uid not in data:
+        return 1.0
+    return 1.0 + ED.TRAINING_XP_BONUS if _theme_day(uid)["hunts"] < ED.TRAINING_HUNT_CAP else 1.0
+
+
+def theme_craft_mult(uid: str, *, consume: bool = False) -> float:
+    """-20% crafting time on the first WORKSHOP_CRAFT_CAP crafts of the day (Wednesday)."""
+    if theme_key() != "workshop" or uid not in data:
+        return 1.0
+    td = _theme_day(uid)
+    if td["crafts"] >= ED.WORKSHOP_CRAFT_CAP:
+        return 1.0
+    if consume:
+        td["crafts"] += 1
+    return 1.0 - ED.WORKSHOP_TIME_CUT
+
+
+def theme_regen_mult() -> float:
+    return ED.RECOVERY_REGEN_MULT if theme_key() == "recovery" else 1.0
+
+
+def theme_contract_bonus(td: dict, base_xp: int) -> int:
+    """Tribe Thursday: +25% on a contract's tribe XP, at most TRIBE_THURSDAY_CAP per tribe per day."""
+    if theme_key() != "tribe":
+        return 0
+    box = td.setdefault("thu", {})
+    today = today_utc()
+    if box.get("d") != today:
+        box.clear()
+        box.update({"d": today, "n": 0})
+    add = min(int(base_xp * ED.TRIBE_THURSDAY_BONUS), ED.TRIBE_THURSDAY_CAP - box["n"])
+    if add <= 0:
+        return 0
+    box["n"] += add
+    return add
+
+
+async def _theme_activity(uid: str, source: str, *, catches: int = 0, biome: str = "") -> None:
+    if source != "hunt" or uid not in data:
+        return
+    try:
+        _theme_day(uid)["hunts"] += 1
+        mark_user_dirty(uid)
+    except Exception as e:
+        print("theme activity error:", e)
+
+
+# ── Friday: Most Wanted ──────────────────────────────────────
+
+def _fri_state() -> dict:
+    fs = _theme_state.setdefault("fri", {})
+    today = today_utc()
+    if fs.get("d") != today:
+        rng = random.Random(f"fri:{today}")
+        biome = rng.choice(sorted(ED.BIOME_CLUES))
+        name, look = rng.choice(ED.FUGITIVES)
+        c = ED.BIOME_CLUES[biome]
+        fs.clear()
+        fs.update({"d": today, "biome": biome, "name": name, "look": look, "finders": [], "tried": [],
+                   "clues": [f"Word from the camp: **{name}** — *{look}* — has slipped out of sight. It likes land that is: {c[0]}",
+                             f"A scout adds: {c[1]}", f"The last thing anyone heard: {c[2]}"]})
+    return fs
+
+
+def _fri_action(uid: str, action: str, values: list) -> str:
+    if theme_key() != "wanted":
+        return f"{emoji('cross_mark')} Most Wanted only runs on Fridays."
+    fs, td = _fri_state(), _theme_day(uid)
+    fri = td.setdefault("fri", {"n": 1, "done": False})
+    if action == "fri_more":
+        if not fri["done"] and fri["n"] < 3:
+            fri["n"] += 1
+        return ""
+    if action != "fri_ans" or not values:
+        return ""
+    if fri["done"]:
+        return f"{emoji('cross_mark')} You've already made your call today."
+    fri["done"] = True
+    right = values[0] == fs["biome"]
+    msgs = []
+    if right:
+        if uid not in fs["finders"] and len(fs["finders"]) < ED.FRIDAY_FIRST_FINDERS:
+            fs["finders"].append(uid)
+            n = len(fs["finders"])
+            _grant_event_reward(uid, title=ED.FRIDAY_TITLE)
+            msgs.append(f"{emoji('trophy')} **You're finder #{n}!** Title **\"{ED.FRIDAY_TITLE}\"** is yours.")
+        else:
+            msgs.append(f"{emoji('check_mark')} Right region — **{BIOME_NAMES.get(fs['biome'])}**. The first finders are already in the record.")
+    else:
+        msgs.append(f"{emoji('cross_mark')} Wrong region. It was **{BIOME_NAMES.get(fs['biome'])}**.")
+    if td.get("fri_paid") != fs["d"]:
+        td["fri_paid"] = fs["d"]
+        ci = data[uid].setdefault("crate_inv", {})
+        ci[ED.FRIDAY_PARTICIPATION_CRATE] = ci.get(ED.FRIDAY_PARTICIPATION_CRATE, 0) + 1
+        msgs.append(f"{emoji('gift')} Participation reward: **1× {ED.FRIDAY_PARTICIPATION_CRATE}** (one per player per Friday).")
+    return "\n".join(msgs)
+
+
+# ── Saturday: Monster Rampage ────────────────────────────────
+
+def _sat_active_players() -> int:
+    now = time.time()
+    return sum(1 for d in data.values() if now - d.get("_last_hunt_ts", 0) < 48 * 3600 and not d.get("is_tester"))
+
+
+def _sat_state() -> dict:
+    ss = _theme_state.setdefault("sat", {})
+    today = today_utc()
+    if ss.get("d") != today:
+        R = ED.RAMPAGE
+        rng = random.Random(f"sat:{today}")
+        biome = rng.choice([b for b, _ in BIOME_LEVELS])
+        active = max(5, _sat_active_players())
+        hp = max(R["boss_hp_min"], R["boss_hp_per_player"] * active)
+        ss.clear()
+        ss.update({"d": today, "biome": biome, "boss_max": hp, "boss_hp": hp,
+                   "minions": 5 + active // 4, "waves": 0, "damage": {}, "eng": {}, "claimed": [],
+                   "defeated": False, "active": active})
+    return ss
+
+
+def _sat_scale(biome: str) -> float:
+    return 1 + 0.07 * (BIOME_TOOL_TIER.get(biome, 1) - 1)
+
+
+def _sat_engage(uid: str) -> str:
+    ss = _sat_state()
+    R = ED.RAMPAGE
+    td = _theme_day(uid)
+    sat = td.setdefault("sat", {"eng": 0, "last": 0.0})
+    if player_in_combat(uid):
+        return f"{emoji('warning')} Finish your current fight first."
+    if ss["defeated"]:
+        return f"{emoji('check_mark')} The Colossus husk is already down — claim your reward!"
+    if sat["eng"] >= R["engagements_day"]:
+        return f"{emoji('cross_mark')} You've used all **{R['engagements_day']}** engagements today."
+    wait = R["cooldown_s"] - (time.time() - sat["last"])
+    if wait > 0:
+        return f"{emoji('cooldown')} Catch your breath — **{wait:.0f}s** until the next engagement."
+    refresh_health(uid)
+    hp, mx = player_hp(uid)
+    if hp <= 15:
+        return f"{emoji('warning')} You're too wounded to fight (**{hp}/{mx} HP**). Heal up first."
+    tool = data[uid].get("tool", "Bare Hands")
+    lo, hi = tool_combat_damage(tool)
+    acc = tool_combat_accuracy(tool)
+    scale = _sat_scale(ss["biome"])
+    h = data[uid]["health"]
+    sat["eng"] += 1
+    sat["last"] = time.time()
+    ss["eng"][uid] = ss["eng"].get(uid, 0) + 1
+    lines = []
+    if ss["minions"] > 0:
+        mhp = int(R["minion_hp"] * scale)
+        taken = 0
+        killed = False
+        for _ in range(5):
+            if random.random() < acc:
+                mhp -= random.randint(lo, hi)
+            if mhp <= 0:
+                killed = True
+                break
+            dmg = int(random.randint(*R["minion_dmg"]) * scale)
+            taken += dmg
+            h["hp"] = max(1, h["hp"] - dmg)
+            if h["hp"] <= 1:
+                break
+        if killed:
+            ss["minions"] -= 1
+            ss["damage"][uid] = ss["damage"].get(uid, 0) + 1
+            lines.append(f"👹 You cut down a **{R['minion']}** (-{taken} HP). **{ss['minions']}** left.")
+            if ss["minions"] == 0:
+                lines.append("-# The way to the Colossus is open — hit it directly!")
+        else:
+            lines.append(f"{emoji('warning')} The {R['minion']} drives you back (-{taken} HP) — it's still standing.")
+    else:
+        dealt = taken = 0
+        for _ in range(3):
+            if random.random() < acc:
+                dealt += random.randint(lo, hi)
+            dmg = int(random.randint(*R["boss_dmg"]) * scale)
+            taken += dmg
+            h["hp"] = max(1, h["hp"] - dmg)
+            if h["hp"] <= 1:
+                break
+        ss["boss_hp"] = max(0, ss["boss_hp"] - dealt)
+        ss["damage"][uid] = ss["damage"].get(uid, 0) + dealt
+        lines.append(f"💥 You hit the **{R['boss']}** for **{dealt}** (-{taken} HP). "
+                     f"**{ss['boss_hp']:,}/{ss['boss_max']:,}** left.")
+        frac = ss["boss_hp"] / ss["boss_max"]
+        waves = sum(1 for t in R["summon_at"] if frac <= t)
+        if ss["boss_hp"] > 0 and waves > ss["waves"]:
+            ss["waves"] = waves
+            ss["minions"] += R["summon_per_wave"] + ss["active"] // 10
+            lines.append(f"{emoji('siren')} **The Colossus roars and summons {ss['minions']} more {R['minion']}s!**")
+        if ss["boss_hp"] <= 0:
+            ss["defeated"] = True
+            lines.append(f"{emoji('trophy')} **THE COLOSSUS HUSK FALLS!** Everyone who fought ≥{R['min_engagements_reward']} times can claim a reward.")
+    h["last_regen_ts"] = time.time()
+    mark_user_dirty(uid)
+    return "\n".join(lines)
+
+
+def _sat_claim(uid: str) -> str:
+    ss = _sat_state()
+    R = ED.RAMPAGE
+    if not ss["defeated"]:
+        return f"{emoji('cross_mark')} The husk is still standing."
+    if ss["eng"].get(uid, 0) < R["min_engagements_reward"]:
+        return f"{emoji('cross_mark')} You need **{R['min_engagements_reward']}** engagements to share the reward."
+    if uid in ss["claimed"]:
+        return f"{emoji('cross_mark')} You already claimed today's reward."
+    ss["claimed"].append(uid)
+    ci = data[uid].setdefault("crate_inv", {})
+    ci[R["reward_crate"]] = ci.get(R["reward_crate"], 0) + 1
+    got = _grant_event_reward(uid, title=R["first_kill_title"], badge=R["badge"])
+    st = data[uid].setdefault("stats", {})
+    st["rampage_kills"] = st.get("rampage_kills", 0) + 1
+    if st["rampage_kills"] >= 3 and _grant_keepsake(uid, R["keepsake"]):
+        got.append(f"the **{ED.KEEPSAKES[R['keepsake']][1]}** keepsake")
+    extra = (" You also earned " + " + ".join(got) + ".") if got else ""
+    return f"{emoji('gift')} Reward claimed: **1× {R['reward_crate']}**.{extra}"
+
+
+# ── actions + panel ──────────────────────────────────────────
+
+def _theme_action(uid: str, action: str, values: list) -> str:
+    k = theme_key()
+    if action in ("fri_more", "fri_ans"):
+        return _fri_action(uid, action, values)
+    if action == "sat_engage" and k == "rampage":
+        return _sat_engage(uid)
+    if action == "sat_claim" and k == "rampage":
+        return _sat_claim(uid)
+    if action == "sun_heal" and k == "recovery":
+        td = _theme_day(uid)
+        if td.get("sun_heal"):
+            return f"{emoji('cross_mark')} You've already used today's free heal."
+        if player_in_combat(uid):
+            return f"{emoji('warning')} You can't rest in the middle of a fight."
+        refresh_health(uid)
+        data[uid]["health"]["hp"] = effective_max_hp(uid)
+        td["sun_heal"] = True
+        mark_user_dirty(uid)
+        return f"{emoji('hp') or '❤️'} The camp patches you up — **fully healed**."
+    return ""
+
+
+def build_theme_panel(uid: str, note: str = "") -> list:
+    t = current_theme()
+    k = t["key"]
+    td = _theme_day(uid)
+    lines = [f"# {ev_icon(t)} {t['name']}", t["blurb"], f"-# {t['limit']}", f"-# *{t['lore']}*"]
+    rows: list = []
+    if k == "training":
+        lines.append(f"\nTraining XP used: **{min(td['hunts'], ED.TRAINING_HUNT_CAP)}/{ED.TRAINING_HUNT_CAP}** hunts")
+    elif k == "workshop":
+        lines.append(f"\nFast crafts used: **{min(td['crafts'], ED.WORKSHOP_CRAFT_CAP)}/{ED.WORKSHOP_CRAFT_CAP}**")
+    elif k == "tribe":
+        tn = data[uid].get("tribe")
+        used = tribe_data.get(tn, {}).get("thu", {}).get("n", 0) if tn and tribe_data.get(tn, {}).get("thu", {}).get("d") == today_utc() else 0
+        lines.append(f"\nYour tribe's bonus today: **{used}/{ED.TRIBE_THURSDAY_CAP}** XP" if tn else "\n-# Join a tribe to use this.")
+    elif k == "wanted":
+        fs = _fri_state()
+        fri = td.setdefault("fri", {"n": 1, "done": False})
+        lines.append(f"\n### Today's fugitive")
+        if fri["done"]:
+            lines.append("\n".join(fs["clues"][:fri["n"]]))
+            lines.append(f"-# You've made your call. The record: " +
+                         (", ".join(f"`{get_username(u)}`" for u in fs["finders"]) or "no finders yet") + ".")
+        else:
+            lines.append("\n".join(f"**Clue {i + 1}.** {c}" for i, c in enumerate(fs["clues"][:fri["n"]])))
+            lines.append("\nWhere is it hiding? One call per Friday — first three correct are remembered; everyone who tries gets a participation reward.")
+            opts = [{"label": BIOME_NAMES[b][:100], "value": b} for b, _ in BIOME_LEVELS]
+            rows.append(_ev3_select(f"ev3:themeact:fri_ans:{uid}", "Name the region…", opts))
+            rows.append({"type": 1, "components": [{"type": 2, "style": 2, "label": "Reveal another clue",
+                         "custom_id": f"ev3:themeact:fri_more:{uid}", "disabled": fri["n"] >= 3}]})
+    elif k == "rampage":
+        ss = _sat_state()
+        R = ED.RAMPAGE
+        sat = td.setdefault("sat", {"eng": 0, "last": 0.0})
+        bar, pct = ui_progress(ss["boss_max"] - ss["boss_hp"], ss["boss_max"])
+        top = sorted(ss["damage"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+        lines.append(f"\n### {BIOME_EMOJIS.get(ss['biome'], '')} Rampage in the {BIOME_NAMES.get(ss['biome'])}")
+        lines.append(f"**{R['boss']}**\n{bar} {pct} · **{ss['boss_hp']:,}/{ss['boss_max']:,}** HP")
+        if ss["defeated"]:
+            lines.append(f"{emoji('trophy')} **Defeated.** Reward needs {R['min_engagements_reward']}+ engagements.")
+        elif ss["minions"] > 0:
+            lines.append(f"👹 **{ss['minions']} {R['minion']}s** stand between you and the Colossus — clear them first.")
+        else:
+            lines.append(f"{emoji('target')} **No minions left — the Colossus is exposed!** It summons more at 75% / 50% / 25%.")
+        lines.append(f"-# Your engagements: **{sat['eng']}/{R['engagements_day']}** · {R['cooldown_s']}s between fights · it costs HP (never a knockout)")
+        if top:
+            lines.append("**Top fighters**\n" + "\n".join(f"-# {i}. `{get_username(u)}` — {d:,}" for i, (u, d) in enumerate(top, 1)))
+        wait = max(0, R["cooldown_s"] - (time.time() - sat["last"]))
+        rows.append({"type": 1, "components": [
+            {"type": 2, "style": 4, "label": "Engage" if ss["minions"] or not ss["defeated"] else "Engage",
+             "emoji": emoji_partial("fight_punch"), "custom_id": f"ev3:themeact:sat_engage:{uid}",
+             "disabled": ss["defeated"] or sat["eng"] >= R["engagements_day"]},
+            {"type": 2, "style": 3, "label": "Claim reward", "emoji": emoji_partial("gift"),
+             "custom_id": f"ev3:themeact:sat_claim:{uid}",
+             "disabled": not ss["defeated"] or uid in ss["claimed"] or ss["eng"].get(uid, 0) < R["min_engagements_reward"]}]})
+    elif k == "recovery":
+        hp, mx = player_hp(uid)
+        lines.append(f"\n{emoji('hp') or '❤️'} **{hp}/{mx}** HP")
+        rows.append({"type": 1, "components": [{"type": 2, "style": 3, "label": "Free full heal",
+                     "emoji": emoji_partial("adhesive_bandage"), "custom_id": f"ev3:themeact:sun_heal:{uid}",
+                     "disabled": bool(td.get("sun_heal")) or hp >= mx}]})
+    week = " · ".join((f"**{ev_icon(d)} {d['name'].split()[0]}**" if i == datetime.now(timezone.utc).weekday()
+                       else f"{ev_icon(d)} {d['name'].split()[0]}") for i, d in ED.DAILY_THEMES.items())
+    lines.append(f"\n-# This week: {week}")
+    body = ((note + "\n\n") if note else "") + "\n".join(lines)
+    nav = {"type": 1, "components": [
+        {"type": 2, "style": 2, "label": "Chronicle", "emoji": emoji_partial("book"), "custom_id": f"ev3:chron:open:{uid}"},
+        {"type": 2, "style": 2, "label": "◀ Events", "custom_id": f"ev3:open:{uid}"}]}
+    return [{"type": 17, "accent_color": 0xF39C12, "spoiler": False, "components": [
+        {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}, *rows, nav]}]
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIBE EVENTS  ·  Tribe Relay + Biome Conquest
+# ═══════════════════════════════════════════════════════════════
+# Both work for a tribe of two or three genuinely active members. State lives on the tribe
+# dict (td["relay"], td["conq"]) and is reset whenever a new event starts (keyed on started_ts).
+
+def _ev3_tribe_of(uid: str) -> tuple[str | None, dict | None]:
+    tn = data.get(uid, {}).get("tribe")
+    td = tribe_data.get(tn) if tn else None
+    return (tn, td) if td else (None, None)
+
+
+# ── Tribe Relay ──────────────────────────────────────────────
+
+def _relay_len(td: dict) -> int:
+    return max(3, min(5, len(_tribe_current_members(td))))
+
+
+def _relay_state(td: dict, ev: dict, spec: dict) -> dict:
+    rs = td.get("relay")
+    if not rs or rs.get("k") != ev["started_ts"]:
+        members = [m for m in _tribe_current_members(td) if m and m != "0"]
+        rs = td["relay"] = {"k": ev["started_ts"], "leg": 0, "holder": members[0] if members else "",
+                            "hunts": 0, "laps": 0, "carried": {}, "last": time.time(), "log": []}
+    return rs
+
+
+def _ev3_relay_activity(uid: str, ev: dict, spec: dict, source: str, catches: int) -> list[str]:
+    tn, td = _ev3_tribe_of(uid)
+    if not td or source != "hunt":
+        return []
+    rs = _relay_state(td, ev, spec)
+    if rs["holder"] != uid or rs["hunts"] >= spec["leg_hunts"]:
+        return []
+    rs["hunts"] += 1
+    rs["last"] = time.time()
+    backend.mark_tribes_dirty(tn)
+    if rs["hunts"] >= spec["leg_hunts"]:
+        return [f"🚩 **Your leg is run!** Open `/events` and pass the baton on."]
+    return []
+
+
+async def _ev3_relay_pass(uid: str, ev: dict, spec: dict, target: str, reassign: bool = False) -> dict:
+    tn, td = _ev3_tribe_of(uid)
+    if not td:
+        return {"msg": f"{emoji('cross_mark')} Join a tribe to carry the baton.", "lines": []}
+    out = {"msg": "", "lines": []}
+    async with user_tribe_transaction(uid, tn):
+        td = tribe_data.get(tn)
+        if not td or data[uid].get("tribe") != tn:
+            return {"msg": f"{emoji('cross_mark')} You're no longer in that tribe.", "lines": []}
+        rs = _relay_state(td, ev, spec)
+        members = set(_tribe_current_members(td))
+        if target not in members or target == "0":
+            return {"msg": f"{emoji('cross_mark')} That member isn't in the tribe.", "lines": []}
+        if reassign:
+            if tribe_role_of(uid, tn) not in ("leader", "officer"):
+                return {"msg": f"{emoji('cross_mark')} Only a leader or officer can reassign the baton.", "lines": []}
+            if time.time() - rs["last"] < 6 * 3600:
+                return {"msg": f"{emoji('cross_mark')} The baton must sit idle for 6 hours before it can be reassigned.", "lines": []}
+            rs["holder"], rs["hunts"], rs["last"] = target, 0, time.time()
+            _tribe_log(td, f"{emoji('flag')} <@{uid}> reassigned the relay baton to <@{target}>.")
+            return {"msg": f"{emoji('check_mark')} Baton reassigned.", "lines": []}
+        if rs["holder"] != uid:
+            return {"msg": f"{emoji('cross_mark')} You don't have the baton.", "lines": []}
+        if rs["hunts"] < spec["leg_hunts"]:
+            return {"msg": f"{emoji('cross_mark')} Finish your leg first ({rs['hunts']}/{spec['leg_hunts']} hunts).", "lines": []}
+        if target == uid:
+            return {"msg": f"{emoji('cross_mark')} The baton has to change hands — pick a tribemate.", "lines": []}
+        rs["carried"][uid] = rs["carried"].get(uid, 0) + 1
+        rs["leg"] += 1
+        st = _ev3_st(uid)
+        out["lines"] += _ev3_award(uid, spec, spec["token_per_leg"])
+        lap_done = rs["leg"] >= _relay_len(td)
+        if lap_done:
+            rs["laps"] += 1
+            rs["leg"] = 0
+            xp = spec["lap_xp"] if rs["laps"] <= 6 else 0           # fixed budget: six rewarded laps
+            if xp:
+                td["xp"] += xp
+                _tribe_apply_levelups(td)
+            _tribe_log(td, f"{emoji('flag')} **Relay lap {rs['laps']} complete!**" + (f" (+{xp} tribe XP)" if xp else ""))
+            out["msg"] = f"{emoji('trophy')} **Lap {rs['laps']} complete!**" + (f" The tribe earns **+{xp} XP**." if xp else "")
+        else:
+            out["msg"] = f"{emoji('check_mark')} Baton passed to <@{target}>."
+        rs["holder"], rs["hunts"], rs["last"] = target, 0, time.time()
+        rs["log"] = (rs["log"] + [uid])[-8:]
+    return out
+
+
+def _ev3_relay_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    tn, td = _ev3_tribe_of(uid)
+    if not td:
+        return "-# The relay is a tribe event. **Join or create a tribe** (`/tribe menu`) — two active members is enough.", []
+    members = [m for m in _tribe_current_members(td) if m and m != "0"]
+    if len(members) < 2:
+        return "-# A relay needs at least **two** tribe members — one to run and one to receive the baton.", []
+    rs = _relay_state(td, ev, spec)
+    L = _relay_len(td)
+    bar, pct = ui_progress(rs["hunts"], spec["leg_hunts"])
+    mine = rs["holder"] == uid
+    ready = rs["hunts"] >= spec["leg_hunts"]
+    legs = " → ".join(("🚩" if i < rs["leg"] else "▫️") for i in range(L))
+    carried = ", ".join(f"`{get_username(u)}` ×{n}" for u, n in sorted(rs["carried"].items(), key=lambda kv: -kv[1])[:5]) or "nobody yet"
+    txt = (f"**{tn}'s relay** — lap **{rs['laps'] + 1}** · leg **{rs['leg'] + 1}/{L}**\n{legs}\n\n"
+           f"Baton holder: <@{rs['holder']}>{' **(you)**' if mine else ''}\n"
+           f"Their leg: {bar} {pct} · **{rs['hunts']}/{spec['leg_hunts']}** hunts\n"
+           f"-# Carried so far: {carried}. No member may carry two legs in a row. A lap pays **{spec['lap_xp']}** tribe XP (first 6 laps).")
+    rows = []
+    others = [m for m in members if m != uid]
+    if mine:
+        opts = [{"label": get_username(m)[:100], "value": m} for m in others][:25]
+        if opts:
+            rows.append(_ev3_select(f"ev3:relay:pass:{uid}", "Pass the baton to…", opts, disabled=not ready))
+    elif time.time() - rs["last"] >= 6 * 3600 and tribe_role_of(uid, tn) in ("leader", "officer"):
+        opts = [{"label": get_username(m)[:100], "value": m} for m in members][:25]
+        rows.append(_ev3_select(f"ev3:relay:reassign:{uid}", "Baton idle 6h+ — reassign to…", opts))
+        txt += "\n-# The baton has been idle — you can reassign it."
+    return txt, rows
+
+
+# ── Biome Conquest ───────────────────────────────────────────
+
+def _conq_state(td: dict, ev: dict) -> dict:
+    cs = td.get("conq")
+    if not cs or cs.get("k") != ev["started_ts"]:
+        cs = td["conq"] = {"k": ev["started_ts"], "lit": [], "catches": {}, "who": {}, "pending": {}}
+    return cs
+
+
+def _conq_target(td: dict, spec: dict, biome: str) -> int:
+    req = dict(BIOME_LEVELS).get(biome, 1)
+    can = sum(1 for m in _tribe_current_members(td)
+              if m and m != "0" and data.get(m, {}).get("level", 1) >= req)
+    return spec["per_hunter_catches"] * max(spec["min_hunters"], min(8, can))
+
+
+def _conq_reachable(td: dict) -> list[str]:
+    top = max((data.get(m, {}).get("level", 1) for m in _tribe_current_members(td) if m and m != "0"), default=1)
+    return [b for b, req in BIOME_LEVELS if top >= req]
+
+
+def _conq_board(ev: dict) -> list[tuple[str, int]]:
+    rows = []
+    for tn, td in tribe_data.items():
+        cs = td.get("conq")
+        if cs and cs.get("k") == ev["started_ts"] and cs["lit"]:
+            rows.append((tn, len(cs["lit"])))
+    rows.sort(key=lambda kv: (-kv[1], kv[0]))
+    return rows
+
+
+def _ev3_conquest_activity(uid: str, ev: dict, spec: dict, source: str, catches: int, biome: str) -> list[str]:
+    tn, td = _ev3_tribe_of(uid)
+    lines = []
+    if td:
+        cs = _conq_state(td, ev)
+        pend = cs["pending"].pop(uid, 0)
+        if pend:                                             # tokens earned from beacons teammates lit
+            lines += _ev3_award(uid, spec, pend)
+        if source == "hunt" and biome and biome not in cs["lit"] and catches > 0:
+            cs["catches"][biome] = cs["catches"].get(biome, 0) + catches
+            who = cs["who"].setdefault(biome, {})
+            who[uid] = who.get(uid, 0) + catches
+            if cs["catches"][biome] >= _conq_target(td, spec, biome):
+                cs["lit"].append(biome)
+                for m in who:
+                    cs["pending"][m] = cs["pending"].get(m, 0) + 1
+                cs["pending"].pop(uid, None)
+                lines += _ev3_award(uid, spec, 1)
+                _tribe_log(td, f"🏴 **The {BIOME_NAMES.get(biome, biome)} beacon is lit!** ({len(cs['lit'])} for the tribe)")
+                lines.append(f"🏴 **You light the {BIOME_NAMES.get(biome, biome)} beacon for {tn}!**")
+                backend.mark_tribes_dirty(tn)
+    return lines
+
+
+def _ev3_conquest_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
+    tn, td = _ev3_tribe_of(uid)
+    if not td:
+        return "-# Conquest is a tribe event. **Join or create a tribe** (`/tribe menu`) — three active hunters can win it.", []
+    cs = _conq_state(td, ev)
+    lines = []
+    for b in _conq_reachable(td):
+        tgt = _conq_target(td, spec, b)
+        n = cs["catches"].get(b, 0)
+        if b in cs["lit"]:
+            lines.append(f"{emoji('check_mark')} {BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES.get(b, b)}** — beacon lit")
+        else:
+            lines.append(f"▫️ {BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES.get(b, b)}** — {min(n, tgt)}/{tgt} catches")
+    board = _conq_board(ev)
+    b_txt = "\n".join(f"{i}. **{t}** — {p}" for i, (t, p) in enumerate(board[:5], 1)) or "-# No beacons lit yet."
+    mine = next((p for t, p in board if t == tn), 0)
+    pend = cs["pending"].get(uid, 0)
+    txt = (f"**{tn}** — **{len(cs['lit'])}** beacon(s) lit · target scales to your tribe's active hunters (min {spec['min_hunters']})\n"
+           + "\n".join(lines)
+           + f"\n\n**Leaderboard**\n{b_txt}\n-# Top three tribes win banner colours and titles when Conquest ends."
+           + (f"\n-# {pend} point(s) from beacons your tribe lit will land on your next hunt." if pend else ""))
+    return txt, []
+
+
+def _ev3_conquest_finalize(ev: dict, spec: dict) -> None:
+    board = _conq_board(ev)
+    for place, (tn, pts) in enumerate(board[:3], 1):
+        if pts < 3 or tn not in tribe_data:
+            continue
+        td = tribe_data[tn]
+        key = spec["banners"][place]
+        owned = td.setdefault("banners_owned", [])
+        if key not in owned:
+            owned.append(key)
+        td["banner"] = key
+        _tribe_log(td, f"🏴 **Biome Conquest: {spec['placements'][place]}!** ({pts} beacons) — the "
+                       f"{ED.CONQUEST_BANNERS[key][0]} banner is yours.")
+        for m in _tribe_current_members(td):
+            if m in data:
+                cs = td.get("conq", {})
+                if cs.get("k") == ev["started_ts"] and (m in cs.get("pending", {}) or any(m in w for w in cs.get("who", {}).values())):
+                    _grant_event_reward(m, title=spec["placements"][place], badge="event_conquest")
+                    mark_user_dirty(m)
+        backend.mark_tribes_dirty(tn)
+
+
+async def _ev3_tribe_action(owner_id: str, ev: dict, spec: dict, sub: str, args: list, values: list) -> dict:
+    if sub == "relay" and spec["mech"] == "relay" and values:
+        reassign = args and args[0] == "reassign"
+        return await _ev3_relay_pass(owner_id, ev, spec, values[0], reassign=bool(reassign))
+    return {"msg": "", "lines": []}
 
 # ─────────────────────────────────────────────
 # INCORRENT USER MESSAGE
@@ -2342,8 +4063,10 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
             if ct["progress"] != before and not ct["done"] and ct["progress"] >= ct["target"]:
                 ct["done"] = True
                 completed_contracts.append(i)
-                td["xp"] += TRIBE_XP_CONTRACT[i]
-                _tribe_log(td, f"{emoji('check_mark')} Contract complete: **{ct['label']}** (+{TRIBE_XP_CONTRACT[i]} tribe XP)")
+                _thu = theme_contract_bonus(td, TRIBE_XP_CONTRACT[i])      # Tribe Thursday
+                td["xp"] += TRIBE_XP_CONTRACT[i] + _thu
+                _tribe_log(td, f"{emoji('check_mark')} Contract complete: **{ct['label']}** (+{TRIBE_XP_CONTRACT[i]} tribe XP"
+                               + (f", +{_thu} Tribe Thursday" if _thu else "") + ")")
 
         if amount > 0:
             td["xp"] += amount
@@ -2813,7 +4536,8 @@ def _tribe_emblem(td: dict) -> str:
     return TRIBE_EMBLEMS.get(td.get("emblem", ""), {}).get("emoji", "")
 
 def _tribe_accent(user_id: str, td: dict) -> int:
-    col = TRIBE_BANNER_COLORS.get(td.get("banner", ""))
+    b = td.get("banner", "")
+    col = TRIBE_BANNER_COLORS.get(b) or ED.CONQUEST_BANNERS.get(b)
     return col[1] if col else _accent(user_id)
 
 def _cosmetic_buy(tname: str, uid: str, kind: str, key: str) -> tuple[bool, str]:
@@ -2838,6 +4562,9 @@ def _cosmetic_buy(tname: str, uid: str, kind: str, key: str) -> tuple[bool, str]
     else:
         spec = TRIBE_BANNER_COLORS.get(key)
         price, label, unlock = (TRIBE_BANNER_PRICE, spec[0], 3) if spec else (0, "", 0)
+        if not spec and key in td.get("banners_owned", []) and key in ED.CONQUEST_BANNERS:
+            spec = ED.CONQUEST_BANNERS[key]                  # earned in Biome Conquest — free to re-equip
+            price, label, unlock = 0, spec[0], 1
     if not spec:
         return False, "Unknown choice."
     if td[field] == key:
@@ -4943,28 +6670,21 @@ async def check_everything(interaction: discord.Interaction, user_id: str):
     _rookie_goal_scan(user_id)
 
 async def maybe_grant_event_gift(interaction: discord.Interaction, user_id: str):
-    """One-time welcome bonus, granted the first time a player is seen
-    during the event."""
+    """Admin Error 404 greets each player once. There is no gift any more — a free bonus check
+    was the old Day Off's biggest hole — just the joke."""
     ev = get_active_event()
-    if not ev or ev.get("key") != "admin_buff":
+    if not ev or ev.get("key") != ADMIN_404_KEY:
         return
     d = data.get(user_id)
     if not d or d.get("_event_gift") == ev["started_ts"]:
         return
     d["_event_gift"] = ev["started_ts"]
-    g = ADMIN_BUFF_EVENT
-    async with user_transaction(user_id):
-        add_money(user_id, g["gift_money"], "event gift")
-        d["total_money_earned"] = d.get("total_money_earned", 0) + g["gift_money"]
-        add_gems(user_id, g["gift_gems"], "event gift")
-        ci = d.setdefault("crate_inv", {})
-        ci[g["gift_crate"]] = ci.get(g["gift_crate"], 0) + 1
+    mark_user_dirty(user_id)
     try:
         await send_ephemeral_v2(interaction,
-            f"### {g['emoji']} Welcome Bonus Check\n"
-            f"The admin left this on your desk on the way out:\n"
-            f"-# **◈ {g['gift_money']:,}** · {emoji('gem')} **{g['gift_gems']}** · {emoji('crate_sample')} **1× {g['gift_crate']}**\n"
-            f"-# {event_banner_line()}", 0x2ECC71)
+            f"### 🐞 `ERROR 404`\nThe Admin's console is printing again. Nothing is on sale and nothing pays double — "
+            f"but your ammo counter says *banana* and the loading bar is lying.\n"
+            f"-# {event_banner_line()} · open `/events` to file bug reports.", 0x6C5CE7)
     except Exception:
         pass
 
@@ -4975,11 +6695,10 @@ async def maybe_grant_event_gift(interaction: discord.Interaction, user_id: str)
 def travel_time_min(from_biome: str, to_biome: str) -> int:
     """Minutes to travel between two biomes — scales with east–west distance on
     the world map, capped at TRAVEL_MAX_MIN (opposite edges)."""
-    if ev_travel_free():
-        return 0                      # buff event — the company jet
     a = biome_region(from_biome).get("map_x", 50)
     b = biome_region(to_biome).get("map_x", 50)
-    return max(1, min(TRAVEL_MAX_MIN, round(abs(a - b) * (TRAVEL_MAX_MIN / 100.0))))
+    mins = max(1, min(TRAVEL_MAX_MIN, round(abs(a - b) * (TRAVEL_MAX_MIN / 100.0))))
+    return max(1, round(mins * theme_travel_mult()))      # Explorer's Monday: half the time
 
 def is_traveling(user_id: str) -> bool:
     t = data[user_id].get("travel")
@@ -5157,7 +6876,7 @@ def queue_crystal_craft(user_id: str, rarity: str) -> dict:
         mark_user_dirty(user_id)
         return {"ok": True, "rarity": rarity, "done_ts": time.time(), "queued": len(q), "instant": True}
     start = max([time.time()] + [e.get("done_ts", 0) for e in q])
-    done_ts = start + CRYSTAL_CRAFT_SECONDS
+    done_ts = start + CRYSTAL_CRAFT_SECONDS * theme_craft_mult(user_id, consume=True)   # Workshop Wednesday
     q.append({"rarity": rarity, "done_ts": done_ts})
     mark_user_dirty(user_id)
     return {"ok": True, "rarity": rarity, "done_ts": done_ts, "queued": len(q)}
@@ -5421,7 +7140,7 @@ def run_hunt(user_id: str) -> dict:
     total_val = 0
 
     _sell_ev = ev_sell_mult() * world_mods["sell_mult"]
-    _xp_ev   = ev_xp_mult()   * world_mods["xp_mult"]
+    _xp_ev   = ev_xp_mult()   * world_mods["xp_mult"] * theme_xp_mult(user_id)   # Training Tuesday
     _rare_p  = min(RARE_CATCH_MAX_WORLD if world_mods["rare_mult"] > 1 else 1.0,
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
                    + trophy_effect_value(user_id, "perfect_catch_pp") / 100)   # Grindylow: Webbed Claw
@@ -7712,6 +9431,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
         now_bits.append(_sg_line)
     if get_active_event():
         now_bits.append(event_banner_line())
+    now_bits.append(daily_theme_line())
     stacks = d.get("idle", {}).get("stacks", 0)
     if stacks:
         idle_haul = idle_pending_preview(user_id)
@@ -7906,6 +9626,9 @@ def build_profile_components(user_id: str, display_name: str,
     badge_line     = f"{badge_str}\n\n" if badge_str else ""
     gem_str        = gemstone_line(user_id)
     gem_disp       = f"{gem_str}\n" if gem_str else ""
+    _ks_line       = keepsake_line(user_id)
+    if _ks_line:
+        gem_disp  += f"{_ks_line}\n"            # event keepsakes (profile decorations)
 
     viewing_note = f"-# {emoji('eyes')} You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
     tester_note  = f"-# {emoji('test_tube')} **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
@@ -8201,6 +9924,8 @@ def build_hunt_components(user_id: str, result: dict) -> list:
         drop_bits.append(f"{emoji('crate_sample')} **Auto-opened:** {_ao}")
     if result.get("party_line"):
         extra_bits.append(f"-# {result['party_line']}")
+    for _ln in result.get("event_lines", []):
+        extra_bits.append("-# " + _ln.replace("\n", " "))
     _ae = result.get("animal_encounter")
     if _ae and _ae.get("kind") == "fled":
         extra_bits.append(f"-# `💨` A **{_ae['animal']}** caught your scent and bolted before you got close.")
@@ -9386,9 +11111,8 @@ _SHOP_BOOST_ICONS = {"luck": "luck", "sell": "sell_boost", "xp": "xp_boost", "cr
 
 def build_shop_components(user_id: str, tab: str = "boosts") -> list:
     d = data[user_id]
-    _ev_note = (f"\n{ADMIN_BUFF_EVENT['emoji']} **Admin's Day Off** — ammo, healing & items are **{EVENT_SHOP_DISCOUNT_PCT}% off** "
-                    f"(tools, vehicles and 💎 prices are unchanged)"
-                if admin_buff_active() else
+    _ev_note = ("\n-# `🐞` ERROR 404: discount not found. (Prices are exactly what they say.)"
+                if active_event_key() == ADMIN_404_KEY else
                 "\n-# `🦆` The ducks have taken the shop. They're letting you browse. For now."
                 if active_event_key() == "duck" else "")
     shop_header = ui_header(emoji('shop'), "SHOP", f"{ui_money(d['money'])} · {emoji('gem')} {d['gems']}") + _ev_note
@@ -13650,7 +15374,7 @@ async def maybe_notify_event_start(interaction: discord.Interaction, user_id: st
     bot after it started — once per event, whichever command or button they hit.
     (The "Admin's Day Off" buff is skipped: its welcome-bonus card is the notice.)"""
     ev = get_active_event()
-    if not ev or ev.get("key") == "admin_buff" or not interaction.response.is_done():
+    if not ev or ev.get("key") == ADMIN_404_KEY or not interaction.response.is_done():
         return
     d = data.get(user_id)
     if not d or d.get("_event_seen") == ev["started_ts"]:
@@ -14051,6 +15775,8 @@ def _encode_runtime_state() -> dict:
         "last_condition_announce_ts": _last_condition_announce_ts,
         "event_scheduler":  dict(_event_scheduler),
         "territory":        dict(_territory),
+        "themes":           dict(_theme_state),
+        "duels":            {k: v for k, v in _duels.items() if v.get("status") in ("pending", "active")},
         "last_weekly_lb_tag": _last_weekly_lb_tag,
         "alive_ts": int(time.time() // 60 * 60),   # changes once a minute -> rewritten once a minute
         "outages":  [list(o) for o in _outages],
@@ -14118,6 +15844,12 @@ def load_runtime_state() -> None:
     _saved_ev = raw.get("event")
     if _saved_ev and _saved_ev.get("ends_ts", 0) > cutoff:
         _active_event = _saved_ev
+    _du = raw.get("duels")
+    if isinstance(_du, dict):
+        _duels.update({k: v for k, v in _du.items() if isinstance(v, dict) and v.get("status") in ("pending", "active")})
+    _th = raw.get("themes")
+    if isinstance(_th, dict):
+        _theme_state.update(fri=_th.get("fri") or {}, sat=_th.get("sat") or {})
     _tr = raw.get("territory")
     if isinstance(_tr, dict):
         _territory.update(tag=str(_tr.get("tag", "")),
@@ -14407,6 +16139,11 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         await _gw_component(interaction, parts)
         return
 
+    # ── /fight — TRAIL STANDOFF (public buttons, no baked-in owner) ──
+    if parts[0] == "fight":
+        await _fight_component(interaction, parts)
+        return
+
     # ── PUBLIC ANNOUNCEMENT BUTTONS ───────────
     # No baked-in owner — anyone in the server can click these, so the
     # clicking user IS the target, derived fresh each time rather than
@@ -14433,9 +16170,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             async with user_transaction(clicker):
                 result = run_hunt(clicker)
             if result.get("ok"):
-                await award_tribe_xp(clicker, "hunt", catches=len(result.get("catches", [])),
-                                     biome=result.get("biome", ""))
-                await _event_hunt_hook(clicker)
+                await track_activity(clicker, "hunt", catches=len(result.get("catches", [])),
+                                     biome=result.get("biome", ""), result=result)
                 await _guild_goal_contribute(interaction, clicker, len(result.get("catches", [])))
             if result.get("boss_pending"):
                 panel = build_myth_encounter_components(clicker, result["creature"])
@@ -14498,7 +16234,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     await smart_update_v2(interaction, build_admin_panel(
                         admin_id, "events", f"{emoji('cross_mark')} An event is already running — stop it first."))
                     return
-                ekey = (values[0] if values else "") if kind == "eventsel" else "admin_buff"
+                ekey = (values[0] if values else "") if kind == "eventsel" else ADMIN_404_KEY
                 ev = start_event(ekey, admin_id)
                 if not ev:
                     await smart_update_v2(interaction, build_admin_panel(
@@ -14764,7 +16500,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, reason_msg, 0xE74C3C)
                 return
  
-            await award_tribe_xp(owner_id, "task")
+            await track_activity(owner_id, "task")
 
             xp_msg = f"+{result['xp']:,} XP"
             if result.get("money"):
@@ -14816,7 +16552,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, reason_msg, 0xE74C3C)
             return
 
-        await award_tribe_xp(owner_id, "task")
+        await track_activity(owner_id, "task")
 
         xp_msg = f"+{result['xp']:,} XP"
         if result.get("money"):
@@ -14921,7 +16657,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             async with user_transaction(owner_id):
                 res = queue_crystal_craft(owner_id, rarity)
             if res.get("ok") and res.get("instant"):
-                notice = (f"{ADMIN_BUFF_EVENT['emoji']} Instant fuse — a {CRYSTAL_ICONS[rarity]} "
+                notice = (f"{emoji('check_mark')} Instant fuse — a {CRYSTAL_ICONS[rarity]} "
                           f"**{_rarity_label(rarity)} Crystal** is ready now.")
             elif res.get("ok"):
                 notice = (f"{emoji('check_mark')} Fusing a {CRYSTAL_ICONS[rarity]} **{_rarity_label(rarity)} Crystal** — "
@@ -14960,6 +16696,11 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_craft_components(owner_id, notice))
             return
 
+        return
+
+    # ── EVENTS V3 (quest events, chronicle, daily theme) ──
+    if parts[0] == "ev3":
+        await _handle_ev3(interaction, parts, values)
         return
 
     # ── GLOBAL EVENT MINI-GAMES ───────────────
@@ -15156,9 +16897,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             async with user_transaction(actor):
                 result = run_hunt(actor)
             if result.get("ok"):
-                await award_tribe_xp(actor, "hunt", catches=len(result.get("catches", [])),
-                                     biome=result.get("biome", ""))
-                await _event_hunt_hook(actor)
+                await track_activity(actor, "hunt", catches=len(result.get("catches", [])),
+                                     biome=result.get("biome", ""), result=result)
                 await _guild_goal_contribute(interaction, actor, len(result.get("catches", [])))
             if result.get("verify"):
                 await send_ephemeral_v2(interaction,
@@ -15239,7 +16979,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await smart_update_v2(interaction, build_myth_fight_components(owner_id))
                 return
             if outcome.get("kind") == "kill":
-                await award_tribe_xp(owner_id, "myth_kill", biome=data[owner_id].get("biome", ""))
+                await track_activity(owner_id, "myth_kill", biome=data[owner_id].get("biome", ""))
                 await _guild_goal_contribute(interaction, owner_id, 1)
             await smart_update_v2(interaction, build_myth_outcome_components(owner_id, outcome))
             await check_everything(interaction, owner_id)
@@ -15293,6 +17033,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                            if f and f.get("kind") == "animal" and f.get("eid") == eid
                            else {"kind": "none"})
             k = outcome.get("kind")
+            if k == "win":
+                await _ev3_activity(owner_id, "fight")
             if k == "none":
                 await smart_update_v2(interaction,
                     build_menu_components(owner_id, interaction.user.display_name))
@@ -15355,9 +17097,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 async with user_transaction(owner_id):
                     result = run_hunt(owner_id)
                 if result.get("ok"):
-                    await award_tribe_xp(owner_id, "hunt", catches=len(result.get("catches", [])),
-                                         biome=result.get("biome", ""))
-                    await _event_hunt_hook(owner_id)
+                    await track_activity(owner_id, "hunt", catches=len(result.get("catches", [])),
+                                         biome=result.get("biome", ""), result=result)
                     await _guild_goal_contribute(interaction, owner_id, len(result.get("catches", [])))
                 if result.get("verify"):
                     await send_ephemeral_v2(interaction,
@@ -15645,7 +17386,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         async with user_transaction(owner_id):
             tr = start_travel(owner_id, biome_key)
         if tr["mins"] <= 0:
-            body = (f"{ADMIN_BUFF_EVENT['emoji']} **Admin's Day Off** — you're whisked straight to "
+            body = (f"{emoji('plane')} You arrive at "
                     f"**{BIOME_NAMES.get(biome_key, biome_key)}** ({biome_location_line(biome_key)}). "
                     f"Hunt away.")
             color = 0x2ECC71
@@ -16153,7 +17894,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
 
         _hp_result = None
         if claimed:
-            await award_tribe_xp(owner_id, "daily")
+            await track_activity(owner_id, "daily")
             _hp_result = hunters_path_maybe_complete(owner_id)
         await check_achievements_and_badges(interaction, owner_id)
         await smart_update_v2(
@@ -18557,9 +20298,8 @@ async def hunt_cmd(interaction: discord.Interaction):
         result = run_hunt(user_id)  # Still synchronous, no await needed
 
     if result.get("ok"):
-        await award_tribe_xp(user_id, "hunt", catches=len(result.get("catches", [])),
-                             biome=result.get("biome", ""))
-        await _event_hunt_hook(user_id)
+        await track_activity(user_id, "hunt", catches=len(result.get("catches", [])),
+                             biome=result.get("biome", ""), result=result)
         await _guild_goal_contribute(interaction, user_id, len(result.get("catches", [])))
 
     if result.get("verify"):
@@ -19740,10 +21480,10 @@ async def id_cmd(interaction: discord.Interaction, user: discord.User = None):
 # /info  — encyclopedia: biomes · tools · ammo · animals
 # ─────────────────────────────────────────────
 
-_INFO_CATEGORIES = ("biomes", "tools", "ammo", "animals", "myths", "badges", "items")
+_INFO_CATEGORIES = ("biomes", "tools", "ammo", "animals", "myths", "badges", "items", "story", "events")
 _INFO_CAT_LABELS = {"biomes": "Biomes", "tools": "Tools", "ammo": "Ammo",
                     "animals": "Animals", "myths": "Mythical Creatures", "badges": "Badges",
-                    "items": "Items"}
+                    "items": "Items", "story": "Story: The Hollow Star", "events": "Events & Daily Themes"}
 
 # game_data.py has no per-biome flavour text of its own — keep short blurbs here.
 _INFO_BIOME_BLURB = {
@@ -19801,6 +21541,14 @@ def _info_entries(category: str) -> list[tuple[str, str]]:
                 + [(k, f"{b['label']} (special)") for k, b in SPECIAL_BADGES.items()])
     if category == "items":
         return [(n, n) for n in sorted(list(ITEMS) + list(HEALING_ITEMS))]
+    if category == "story":
+        return ([("prologue", f"Prologue — {ED.SEASON['title']}")]
+                + [(k, f"{i}. {ED.EVENT_SPECS[k]['name']}") for i, k in enumerate(ED.STORY_ORDER, 1)]
+                + [("epilogue", "Epilogue — The Wilds Remember")])
+    if category == "events":
+        return ([("rules", "How events work")]
+                + [(k, ED.EVENT_SPECS[k]["name"]) for k in ED.STORY_ORDER]
+                + [(f"theme:{d['key']}", d["name"]) for _, d in sorted(ED.DAILY_THEMES.items())])
     return []
 
 
@@ -20062,7 +21810,78 @@ def _info_render_item(key: str):
     ]
     return f"# {it['emoji']} {key}", "-# Consumable item", "\n".join(lines), None
 
+_MECH_BLURB = {
+    "collect": "Hunt as normal — the event drops its own collectibles while you do.",
+    "scenes": "A short run of five scenes with two meters; every choice trades one for the other.",
+    "clue": "A puzzle with clues you can reveal one at a time. Fewer clues, more points. One try.",
+    "deduce": "A multi-day whodunit: testimony arrives each day, then you accuse.",
+    "pick": "One sealed box a day, chosen from three using the hints on the tags.",
+    "community": "A shared goal for the whole server, fed by daily challenges.",
+    "tournament": "Skill rounds with the same bow for everyone. Read the wind, pick the technique.",
+    "relay": "A tribe event: pass the baton hand to hand — no member carries two legs in a row.",
+    "conquest": "A tribe event: light a beacon in every region. Targets scale to your active hunters.",
+}
+
+def _info_render_story(key: str):
+    if key == "prologue":
+        cast = "\n".join(f"**{n}** — {t}" for n, t in ED.CAST.items())
+        return (f"# {ED.SEASON['title']}", f"-# {ED.SEASON['tagline']}",
+                f"{ED.SEASON['prologue']}\n\n### Who's who\n{cast}\n\n"
+                f"-# Play the events to unlock each chapter — your **Chronicle** is in `/events`.", None)
+    if key == "epilogue":
+        return ("# Epilogue — The Wilds Remember", "-# The last page",
+                "Finish enough of the season's chapters in your Chronicle and the last page writes itself.", None)
+    sp = ED.EVENT_SPECS[key]
+    chapters = "\n".join(f"-# {i}. **{c['title']}**" for i, c in enumerate(sp["story"], 1))
+    return (f"# {ev_icon(sp)} {sp['name']}",
+            f"-# Chapter {sp['chapter']} of {len(ED.STORY_ORDER)} · *{ED.SEASON['title']}*",
+            f"{sp['intro']}\n\n**Chapters to unlock**\n{chapters}\n\n"
+            f"-# Story spoilers stay in your Chronicle until you earn them.", None)
+
+def _info_render_event(key: str):
+    if key == "rules":
+        return ("# How events work", "-# The rules every event follows",
+                "- Events change **what you do**, never what things cost: no price cuts, no doubled income, no free ammo.\n"
+                "- Every event has a **fixed reward budget** per player — a token cap, at most one capped crate.\n"
+                "- Event tokens can't be traded or turned into gold, and they only buy **cosmetics**: titles, badges and "
+                "profile keepsakes.\n"
+                "- Each event is a **chapter** of *The Hollow Star*. Progress unlocks story in your Chronicle.\n"
+                "- Alongside admin-run events there's a **daily theme** every weekday (small, capped, never stacking with prices).\n"
+                "- Tribe events (Relay, Conquest) are built so **three active members** can win.", None)
+    if key.startswith("theme:"):
+        t = next(d for d in ED.DAILY_THEMES.values() if d["key"] == key[6:])
+        day = next(n for n, d in ED.DAILY_THEMES.items() if d["key"] == key[6:])
+        names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        return (f"# {ev_icon(t)} {t['name']}", f"-# Every {names[day]} (UTC)",
+                f"{t['blurb']}\n\n**Limits:** {t['limit']}\n\n*{t['lore']}*", None)
+    sp = ED.EVENT_SPECS[key]
+    rewards = []
+    for at, r in sp["rewards"]:
+        bits = []
+        if r.get("title"):
+            bits.append(f'title "{r["title"]}"')
+        if r.get("badge"):
+            bits.append(f"the **{gd_special_label(r['badge'])}** badge")
+        if r.get("keepsake"):
+            e, label, _ = ED.KEEPSAKES[r["keepsake"]]
+            bits.append(f"keepsake {e} {label}")
+        rewards.append(f"-# At **{at}** {sp['token'][1]}s: " + " + ".join(bits))
+    crate_txt = f", plus at most {sp['crates']} crate" if sp.get("crates") else ", and no crates"
+    body = (f"{sp['blurb']}\n\n**How it plays:** {_MECH_BLURB.get(sp['mech'], '')}\n"
+            + "\n".join(f"- {a}" for a in sp["actions"])
+            + f"\n\n**Budget:** up to **{sp['token_cap']}** {sp['token'][0]} per player{crate_txt}."
+            + "\n**Rewards**\n" + "\n".join(rewards)
+            + f"\n\n-# Runs about {sp['hours']}h · chapter {sp['chapter']} of *{ED.SEASON['title']}*.")
+    return f"# {ev_icon(sp)} {sp['name']}", f"-# Admin-run quest event", body, None
+
+def gd_special_label(badge_key: str) -> str:
+    return SPECIAL_BADGES.get(badge_key, {}).get("label", badge_key)
+
 def _info_render(category: str, key: str):
+    if category == "story":
+        return _info_render_story(key)
+    if category == "events":
+        return _info_render_event(key)
     if category == "biomes":
         return _info_render_biome(key)
     if category == "tools":
@@ -23106,7 +24925,7 @@ def build_admin_panel(admin_id: str, section: str = "home", note: str = "") -> l
     elif section == "events":
         ev = get_active_event()
         if ev:
-            spec = EVENTS.get(ev["key"], ADMIN_BUFF_EVENT)
+            spec = EVENTS.get(ev["key"], {"emoji": "🎉", "blurb": ""})
             extra = ("\n\n" + "\n".join(f"-# {p}" for p in spec.get("perks", []))
                      if spec.get("perks") else f"\n-# {spec.get('blurb','')}")
             blocks.append({"type": 10, "content":
@@ -24613,6 +26432,569 @@ async def automatic_event_scheduler():
 @automatic_event_scheduler.error
 async def _aese(error): print("Automatic event scheduler error:", error)
 
+
+# ═══════════════════════════════════════════════════════════════
+# /fight  ·  TRAIL STANDOFF — a hide-and-seek duel between two hunters
+# ═══════════════════════════════════════════════════════════════
+# Six rounds; the roles swap every round. The PREY secretly picks one of four hiding spots,
+# the HUNTER secretly picks a spot to search and a method:
+#     Sharpshot — hits only that exact spot ......... 3 points
+#     Sweep     — that spot AND the next one ........ 1 point
+# A prey that isn't found scores 1. Nobody may use the same spot two rounds running, so
+# patterns are punished. Most points wins; ties go to sudden death (2 more rounds), then a
+# draw refunds both. Everybody uses the same rules and no gear — it's a mind game, not a
+# wallet contest.
+#
+# Stakes are escrowed (spent) when the duel starts; the winner takes the pot minus a 10% burned
+# "Warden's toll". Limits: a level floor, a max bet from the casino cap, 8 duels a day and
+# 2 per pair a day (so it can't be used to funnel money between alts). Duels live in
+# runtime_state.json; anything still running after a restart is refunded in full.
+
+FD_ROUNDS = 6
+FD_SUDDEN_DEATH = 2
+FD_ROUND_SEC = 90
+FD_PENDING_SEC = 120
+FD_TAX = 0.10
+FD_MIN_BET = 500
+FD_MIN_LEVEL = 5
+FD_DAILY_LIMIT = 8
+FD_PAIR_DAILY = 2
+FD_SHARP_PTS, FD_SWEEP_PTS, FD_EVADE_PTS = 3, 1, 1
+FD_SPOTS = [("Thicket", "🌿"), ("Boulders", "🪨"), ("Creek", "💧"), ("Treeline", "🌲")]
+FD_METHODS = {"sharp": ("Sharpshot", f"exact spot only · {FD_SHARP_PTS} pts"),
+              "sweep": ("Sweep", f"the spot and the next one · {FD_SWEEP_PTS} pt")}
+FD_TITLES = [(10, "Standoff Survivor"), (25, "Trailbreaker"), (60, "Apex Stalker")]
+FD_ELO_K = 24
+
+_duels: dict[str, dict] = {}
+_fd_locks: dict[str, asyncio.Lock] = {}
+
+
+def _fd_lock(did: str) -> asyncio.Lock:
+    return _fd_locks.setdefault(did, asyncio.Lock())
+
+
+def _fd_other(d: dict, uid: str) -> str:
+    return d["b"] if uid == d["a"] else d["a"]
+
+
+def _fd_roles(d: dict) -> tuple[str, str]:
+    """(hunter, prey) for the current round."""
+    hunter = d["first"] if d["round"] % 2 == 1 else _fd_other(d, d["first"])
+    return hunter, _fd_other(d, hunter)
+
+
+def _fd_busy(uid: str) -> bool:
+    return any(x["status"] in ("pending", "active") and uid in (x["a"], x["b"]) for x in _duels.values())
+
+
+def _fd_day(uid: str) -> dict:
+    fd = data[uid].setdefault("duel_day", {})
+    today = today_utc()
+    if fd.get("d") != today:
+        fd.clear()
+        fd.update({"d": today, "n": 0, "pairs": {}})
+    return fd
+
+
+def _fd_stats(uid: str) -> dict:
+    return data[uid].setdefault("duel", {"w": 0, "l": 0, "t": 0, "streak": 0, "best": 0, "rating": 1000, "net": 0})
+
+
+def _fd_new(a: str, b: str, bet: int, chan: int) -> dict:
+    d = {"id": secrets.token_hex(3), "a": a, "b": b, "bet": int(bet), "status": "pending", "chan": chan, "msg": 0,
+         "created": time.time(), "round": 0, "first": random.choice([a, b]), "scores": {a: 0, b: 0},
+         "picks": {}, "methods": {}, "last": {}, "hist": [], "deadline": 0, "idle": 0,
+         "winner": None, "reason": "", "tax": 0}
+    _duels[d["id"]] = d
+    return d
+
+
+def _fd_begin_round(d: dict) -> None:
+    d["round"] += 1
+    d["picks"], d["methods"] = {}, {}
+    d["deadline"] = time.time() + FD_ROUND_SEC
+
+
+def _fd_resolve_round(d: dict) -> dict:
+    """Score the round from d['picks']; returns the history entry. Does not end the duel."""
+    hunter, prey = _fd_roles(d)
+    hs, ps = d["picks"].get(hunter), d["picks"].get(prey)
+    method = d["methods"].get(hunter, "sharp")
+    entry = {"r": d["round"], "hunter": hunter, "prey": prey, "spot": hs, "hide": ps, "method": method, "pts": 0, "to": ""}
+    if hs is None and ps is None:
+        d["idle"] += 1
+        entry["note"] = "Neither of you moved."
+    else:
+        d["idle"] = 0
+        if hs is None:
+            d["scores"][prey] += FD_EVADE_PTS
+            entry.update(pts=FD_EVADE_PTS, to=prey, note="The hunter froze — the prey slips away.")
+        elif ps is None:
+            d["scores"][hunter] += FD_SWEEP_PTS
+            entry.update(pts=FD_SWEEP_PTS, to=hunter, note="The prey never found cover.")
+        elif method == "sharp":
+            if hs == ps:
+                d["scores"][hunter] += FD_SHARP_PTS
+                entry.update(pts=FD_SHARP_PTS, to=hunter, note="Dead on.")
+            else:
+                d["scores"][prey] += FD_EVADE_PTS
+                entry.update(pts=FD_EVADE_PTS, to=prey, note="A clean miss.")
+        else:
+            if ps in (hs, (hs + 1) % len(FD_SPOTS)):
+                d["scores"][hunter] += FD_SWEEP_PTS
+                entry.update(pts=FD_SWEEP_PTS, to=hunter, note="Caught in the sweep.")
+            else:
+                d["scores"][prey] += FD_EVADE_PTS
+                entry.update(pts=FD_EVADE_PTS, to=prey, note="The sweep misses.")
+    if hs is not None:
+        d["last"][hunter] = hs
+    if ps is not None:
+        d["last"][prey] = ps
+    d["hist"].append(entry)
+    return entry
+
+
+def _fd_next_state(d: dict) -> str:
+    """After a round: 'next', or the verdict: 'a' / 'b' / 'draw' / 'void'."""
+    if d["idle"] >= 2:
+        return "void"
+    sa, sb = d["scores"][d["a"]], d["scores"][d["b"]]
+    if d["round"] >= FD_ROUNDS and sa != sb:
+        return "a" if sa > sb else "b"
+    if d["round"] >= FD_ROUNDS + FD_SUDDEN_DEATH:
+        return "draw"
+    return "next"
+
+
+def _fd_spot_name(i) -> str:
+    return "—" if i is None else f"{FD_SPOTS[i][1]} {FD_SPOTS[i][0]}"
+
+
+def build_duel_card(d: dict) -> list:
+    a, b = d["a"], d["b"]
+    bet_txt = f"◈ {d['bet']:,}" if d["bet"] else "no stake (friendly)"
+    head = f"## ⚔️ Trail Standoff\n<@{a}> vs <@{b}> · **{bet_txt}**"
+    rows: list = []
+    if d["status"] == "pending":
+        left = max(0, int(FD_PENDING_SEC - (time.time() - d["created"])))
+        pot = 2 * d["bet"]
+        body = (f"{head}\n\n<@{a}> challenges <@{b}> to a **hide-and-seek duel** — six rounds, roles swap every round. "
+                f"The prey hides, the hunter searches; read your rival.\n"
+                + (f"-# Winner takes ◈ {pot - int(pot * FD_TAX):,} (a {int(FD_TAX * 100)}% toll on the ◈ {pot:,} pot is burned). "
+                   f"Stakes are held when <@{b}> accepts.\n" if d["bet"] else "-# Friendly: nothing at stake.\n")
+                + f"-# Expires in {left}s.")
+        rows.append({"type": 1, "components": [
+            {"type": 2, "style": 3, "label": "Accept", "custom_id": f"fight:acc:{d['id']}"},
+            {"type": 2, "style": 4, "label": "Decline", "custom_id": f"fight:dec:{d['id']}"},
+            {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"fight:can:{d['id']}"}]})
+        colour = 0xF1C40F
+    elif d["status"] == "active":
+        hunter, prey = _fd_roles(d)
+        sd = " · **SUDDEN DEATH**" if d["round"] > FD_ROUNDS else ""
+        locked = lambda u: "✅ locked" if d["picks"].get(u) is not None else "⏳ choosing"
+        recent = "\n".join(
+            f"-# R{h['r']}: <@{h['hunter']}> searched {_fd_spot_name(h['spot'])} ({FD_METHODS[h['method']][0]}) · "
+            f"<@{h['prey']}> hid {_fd_spot_name(h['hide'])} → {h['note']}" for h in d["hist"][-3:])
+        left = max(0, int(d["deadline"] - time.time()))
+        body = (f"{head}\n\n**Round {d['round']}/{FD_ROUNDS}**{sd}\n"
+                f"🎯 Hunter: <@{hunter}> — {locked(hunter)} · method **{FD_METHODS[d['methods'].get(hunter, 'sharp')][0]}**\n"
+                f"🦌 Prey: <@{prey}> — {locked(prey)}\n\n"
+                f"**Score** — <@{a}> **{d['scores'][a]}** · <@{b}> **{d['scores'][b]}**\n"
+                + (recent + "\n" if recent else "")
+                + f"-# Pick within {left}s or forfeit the round. You can't use the same spot two rounds in a row.")
+        rows.append({"type": 1, "components": [
+            {"type": 2, "style": 1, "label": FD_SPOTS[i][0], "emoji": {"name": FD_SPOTS[i][1]},
+             "custom_id": f"fight:pick:{d['id']}:{i}"} for i in range(len(FD_SPOTS))]})
+        rows.append({"type": 1, "components": [
+            {"type": 2, "style": 2, "label": f"{n} — {tip}", "custom_id": f"fight:meth:{d['id']}:{k}"}
+            for k, (n, tip) in FD_METHODS.items()]})
+        colour = 0xE67E22
+    else:
+        res = {"a": f"🏆 <@{a}> wins", "b": f"🏆 <@{b}> wins", "draw": "🤝 A draw", "void": "💤 Called off — nobody moved",
+               "cancel": "❌ Challenge withdrawn"}.get(d.get("verdict", ""), "Over")
+        hist = "\n".join(f"-# R{h['r']}: <@{h['hunter']}> {_fd_spot_name(h['spot'])} / <@{h['prey']}> {_fd_spot_name(h['hide'])} — {h['note']}"
+                         for h in d["hist"])
+        money = ""
+        if d["bet"] and d.get("verdict") in ("a", "b"):
+            money = f"\n💰 Pot ◈ {2 * d['bet']:,} → winner takes **◈ {2 * d['bet'] - d['tax']:,}** (toll burned: ◈ {d['tax']:,})."
+        elif d["bet"] and d.get("verdict") in ("draw", "void"):
+            money = "\n💰 Stakes refunded in full."
+        body = (f"{head}\n\n### {res}\n**{d['scores'][a]}** – **{d['scores'][b]}**{money}\n"
+                + (d["reason"] + "\n" if d.get("reason") else "") + (hist if hist else ""))
+        colour = 0x2ECC71 if d.get("verdict") in ("a", "b") else 0x95A5A6
+    return [{"type": 17, "accent_color": colour, "spoiler": False,
+             "components": [{"type": 10, "content": body[:3900]}] + rows}]
+
+
+async def _fd_edit(d: dict) -> None:
+    if not d.get("chan") or not d.get("msg"):
+        return
+    try:
+        comps = build_duel_card(d)
+        _clean_components(comps)
+        route = Route("PATCH", "/channels/{channel_id}/messages/{message_id}", channel_id=d["chan"], message_id=d["msg"])
+        await bot.http.request(route, json={"flags": V2_FLAGS, "components": comps,
+                                            "allowed_mentions": {"parse": []}})
+    except Exception as e:
+        print("duel card edit failed:", e)
+
+
+async def _fd_refresh(interaction: discord.Interaction, d: dict) -> None:
+    """Redraw the duel card: through the stored channel message when we have it, else the clicked one."""
+    if d.get("msg"):
+        await _fd_edit(d)
+    else:
+        await smart_update_v2(interaction, build_duel_card(d))
+
+
+async def _save_runtime_now() -> None:
+    try:
+        await _locked_write(RUNTIME_STATE_FILE, json.dumps(_encode_runtime_state(), indent=4, default=str))
+    except Exception as e:
+        print("runtime save failed:", e)
+
+
+def _fd_elo(winner: str, loser: str) -> None:
+    ra, rb = _fd_stats(winner)["rating"], _fd_stats(loser)["rating"]
+    exp = 1 / (1 + 10 ** ((rb - ra) / 400))
+    _fd_stats(winner)["rating"] = round(ra + FD_ELO_K * (1 - exp))
+    _fd_stats(loser)["rating"] = max(100, round(rb - FD_ELO_K * (1 - exp)))
+
+
+async def _fd_finish(d: dict, verdict: str, reason: str = "") -> None:
+    """Pay out and close a duel. verdict: 'a' | 'b' | 'draw' | 'void'. Idempotent."""
+    if d["status"] in ("done", "cancelled"):
+        return
+    a, b, bet = d["a"], d["b"], d["bet"]
+    d["status"], d["verdict"], d["reason"], d["closed"] = "done", verdict, reason, time.time()
+    winner = {"a": a, "b": b}.get(verdict)
+    tok = _inv_src.set("trail standoff")
+    try:
+        async with multi_user_transaction(a, b):
+            if bet and d.get("escrowed"):
+                if winner:
+                    pot = 2 * bet
+                    d["tax"] = int(pot * FD_TAX)
+                    add_money(winner, pot - d["tax"], "fight win")
+                else:
+                    add_money(a, bet, "fight refund")
+                    add_money(b, bet, "fight refund")
+                d["escrowed"] = False
+            sa, sb = _fd_stats(a), _fd_stats(b)
+            if winner:
+                loser = _fd_other(d, winner)
+                w, l = _fd_stats(winner), _fd_stats(loser)
+                w["w"] += 1; l["l"] += 1
+                w["streak"] += 1; w["best"] = max(w["best"], w["streak"]); l["streak"] = 0
+                if bet:
+                    w["net"] += bet - d["tax"]; l["net"] -= bet
+                _fd_elo(winner, loser)
+                for n, title in FD_TITLES:
+                    if w["w"] >= n:
+                        _grant_event_reward(winner, title=title)
+            elif verdict == "draw":
+                sa["t"] += 1; sb["t"] += 1
+            mark_user_dirty(a); mark_user_dirty(b)
+    finally:
+        _inv_src.reset(tok)
+    analytics(winner or a, "duel_done", verdict=verdict, bet=bet, rounds=d["round"])
+    await _fd_edit(d)
+    await _save_runtime_now()
+
+
+async def _fd_advance(d: dict) -> None:
+    """Resolve the round that just closed, then start the next or finish. Caller holds the lock."""
+    _fd_resolve_round(d)
+    state = _fd_next_state(d)
+    if state == "next":
+        _fd_begin_round(d)
+        await _fd_edit(d)
+    else:
+        await _fd_finish(d, state, "Both hunters went quiet." if state == "void" else "")
+
+
+async def _fd_start(d: dict) -> tuple[bool, str]:
+    """Escrow both stakes and begin round 1. Returns (ok, message)."""
+    a, b, bet = d["a"], d["b"], d["bet"]
+    tok = _inv_src.set("trail standoff")
+    try:
+        async with multi_user_transaction(a, b):
+            if bet:
+                if data[a]["money"] < bet:
+                    return False, f"<@{a}> can't cover the ◈ {bet:,} stake any more."
+                if data[b]["money"] < bet:
+                    return False, f"You can't cover the ◈ {bet:,} stake."
+                spend_money(a, bet, "fight stake")
+                spend_money(b, bet, "fight stake")
+                d["escrowed"] = True
+            for u, o in ((a, b), (b, a)):
+                fd = _fd_day(u)
+                fd["n"] += 1
+                fd["pairs"][o] = fd["pairs"].get(o, 0) + 1
+    finally:
+        _inv_src.reset(tok)
+    d["status"] = "active"
+    _fd_begin_round(d)
+    await _save_runtime_now()
+    return True, ""
+
+
+def _fd_check_challenge(a: str, b: str, bet: int) -> str:
+    """'' if a may challenge b for `bet` right now, else the reason."""
+    if a == b:
+        return "You can't duel yourself."
+    if b not in data:
+        return "That hunter hasn't started playing yet."
+    for u in (a, b):
+        who = "You" if u == a else f"<@{u}>"
+        if data[u].get("level", 1) < FD_MIN_LEVEL:
+            return f"{who} must be level {FD_MIN_LEVEL}+ to duel."
+        if is_banned(u):
+            return f"{who} can't duel right now."
+        if player_in_combat(u):
+            return f"{who} {'are' if u == a else 'is'} in the middle of a fight."
+        if _fd_busy(u):
+            return f"{who} {'already have' if u == a else 'already has'} a standoff in progress."
+        fd = _fd_day(u)
+        if fd["n"] >= FD_DAILY_LIMIT:
+            return f"{who} {'have' if u == a else 'has'} reached today's limit of {FD_DAILY_LIMIT} duels."
+        if fd["pairs"].get(_fd_other({"a": a, "b": b}, u), 0) >= FD_PAIR_DAILY:
+            return f"The same two hunters can only duel {FD_PAIR_DAILY}× a day."
+    if bet:
+        cap = min(gamble_max_bet(a), gamble_max_bet(b))
+        if bet < FD_MIN_BET:
+            return f"The minimum stake is ◈ {FD_MIN_BET:,} (or 0 for a friendly)."
+        if bet > cap:
+            return f"The stake is capped at ◈ {cap:,} for this pair."
+        if data[a]["money"] < bet:
+            return "You can't cover that stake."
+        if data[b]["money"] < bet:
+            return f"<@{b}> can't cover that stake."
+    return ""
+
+
+async def _fight_component(interaction: discord.Interaction, parts: list[str]) -> None:
+    uid = str(interaction.user.id)
+    sub = parts[1] if len(parts) > 1 else ""
+    did = parts[2] if len(parts) > 2 else ""
+    d = _duels.get(did)
+
+    async def say(msg: str, ok: bool = False):
+        await send_ephemeral_v2(interaction, msg, 0x2ECC71 if ok else 0xE74C3C)
+
+    if not d or d["status"] in ("done", "cancelled"):
+        await say(f"{emoji('cross_mark')} That standoff is over.")
+        return
+    if uid not in (d["a"], d["b"]):
+        await say(f"{emoji('cross_mark')} This duel is between <@{d['a']}> and <@{d['b']}>.")
+        return
+    init_user(uid)
+    async with _fd_lock(did):
+        if sub == "can" or sub == "dec":
+            if d["status"] != "pending":
+                await say(f"{emoji('cross_mark')} Too late — it already started.")
+                return
+            if (sub == "can") != (uid == d["a"]):
+                await say(f"{emoji('cross_mark')} Only {'the challenger can cancel' if sub == 'can' else 'the challenged hunter can decline'}.")
+                return
+            d["status"], d["verdict"], d["reason"], d["closed"] = "cancelled", "cancel", "", time.time()
+            await _fd_refresh(interaction, d)
+            return
+        if sub == "acc":
+            if uid != d["b"]:
+                await say(f"{emoji('cross_mark')} Only <@{d['b']}> can accept this challenge.")
+                return
+            if d["status"] != "pending":
+                await say(f"{emoji('cross_mark')} Already started.")
+                return
+            if time.time() - d["created"] > FD_PENDING_SEC:
+                d["status"], d["verdict"], d["closed"] = "cancelled", "cancel", time.time()
+                await _fd_refresh(interaction, d)
+                return
+            ok, msg = await _fd_start(d)
+            if not ok:
+                d["status"], d["verdict"], d["reason"], d["closed"] = "cancelled", "cancel", msg, time.time()
+            await _fd_refresh(interaction, d)
+            return
+        if d["status"] != "active":
+            await say(f"{emoji('cross_mark')} Wait for the challenge to be accepted.")
+            return
+        hunter, prey = _fd_roles(d)
+        if sub == "meth":
+            if uid != hunter:
+                await say(f"{emoji('cross_mark')} Only the hunter picks a method this round — you're the prey.")
+                return
+            m = parts[3] if len(parts) > 3 else ""
+            if m not in FD_METHODS or uid in d["picks"]:
+                await say(f"{emoji('cross_mark')} Already locked in." if uid in d["picks"] else "Unknown method.")
+                return
+            d["methods"][uid] = m
+            await say(f"{emoji('check_mark')} Method set to **{FD_METHODS[m][0]}** — now pick your spot.", ok=True)
+            return
+        if sub == "pick":
+            try:
+                spot = int(parts[3])
+            except (IndexError, ValueError):
+                spot = -1
+            if not (0 <= spot < len(FD_SPOTS)):
+                await say("Unknown spot.")
+                return
+            if uid in d["picks"]:
+                await say(f"{emoji('cross_mark')} You're already locked in this round.")
+                return
+            if d["last"].get(uid) == spot:
+                await say(f"{emoji('cross_mark')} You can't use the **{FD_SPOTS[spot][0]}** two rounds running — pick another.")
+                return
+            d["picks"][uid] = spot
+            role = "searching" if uid == hunter else "hiding in"
+            d["deadline"] = max(d["deadline"], time.time() + 15)
+            if len(d["picks"]) == 2:
+                await _fd_advance(d)
+                await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False, "components": [
+                    {"type": 10, "content": f"{emoji('check_mark')} You were {role} the **{FD_SPOTS[spot][0]}**."}]}], ephemeral=True)
+                return
+            await _fd_refresh(interaction, d)
+            await send_v2_followup(interaction, [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False, "components": [
+                {"type": 10, "content": f"🔒 Locked in — you're {role} the **{FD_SPOTS[spot][0]}**"
+                                        + (f" ({FD_METHODS[d['methods'].get(uid, 'sharp')][0]})" if uid == hunter else "")
+                                        + ". Nobody can see it until your rival commits."}]}], ephemeral=True)
+
+
+@tasks.loop(seconds=5)
+async def fight_task():
+    now = time.time()
+    for did, d in list(_duels.items()):
+        try:
+            async with _fd_lock(did):
+                if d["status"] == "pending" and now - d["created"] > FD_PENDING_SEC:
+                    d["status"], d["verdict"], d["closed"] = "cancelled", "cancel", now
+                    d["reason"] = "Nobody answered the challenge."
+                    await _fd_edit(d)
+                elif d["status"] == "active" and now >= d["deadline"]:
+                    await _fd_advance(d)
+                elif d["status"] in ("done", "cancelled") and now - d.get("closed", d.setdefault("closed", now)) > 600:
+                    _duels.pop(did, None)
+                    _fd_locks.pop(did, None)
+        except Exception:
+            logger.exception("duel tick failed for %s", did)
+
+
+@fight_task.error
+async def _fdte(error): print("Fight task error:", error)
+
+
+async def duels_recover() -> None:
+    """After a restart: anything still running is refunded and closed (a duel can't survive a reboot
+    fairly — one player might be mid-pick)."""
+    for did, d in list(_duels.items()):
+        try:
+            if d["status"] == "active":
+                await _fd_finish(d, "void", "The bot restarted — stakes refunded.")
+            elif d["status"] == "pending":
+                d["status"], d["verdict"], d["reason"] = "cancelled", "cancel", "The bot restarted."
+                await _fd_edit(d)
+        except Exception:
+            logger.exception("duel recovery failed for %s", did)
+
+
+# ── commands ─────────────────────────────────
+
+fight_group = app_commands.Group(
+    name="fight",
+    description="Challenge another hunter to a Trail Standoff — a hide-and-seek duel, optionally for a stake",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=False, private_channel=False),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=False),
+)
+
+
+@fight_group.command(name="challenge", description="Challenge a hunter to a Trail Standoff (6 rounds, the prey hides, the hunter searches)")
+@app_commands.describe(user="Who to challenge", bet="Stake each (e.g. 5000, 50k) — leave at 0 for a friendly")
+async def fight_challenge_cmd(interaction: discord.Interaction, user: discord.Member, bet: str = "0"):
+    a = await _common_init(interaction)
+    if not a:
+        return
+    b = str(user.id)
+    if user.bot:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Bots don't duel. They've seen the odds.", 0xE74C3C)
+        return
+    init_user(b)
+    stake = 0 if str(bet).strip() in ("", "0") else (parse_amount(bet) or -1)
+    if stake < 0:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} That isn't a valid stake.", 0xE74C3C)
+        return
+    why = _fd_check_challenge(a, b, stake)
+    if why:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {why}", 0xE74C3C)
+        return
+    d = _fd_new(a, b, stake, interaction.channel_id or 0)
+    comps = build_duel_card(d)
+    await send_v2_followup(interaction, comps)
+    try:
+        msg = await interaction.original_response()
+        d["msg"], d["chan"] = msg.id, msg.channel.id
+    except Exception as e:
+        print("couldn't read the duel message:", e)
+    await _save_runtime_now()
+
+
+@fight_group.command(name="stats", description="Your Trail Standoff record (or another hunter's)")
+@app_commands.describe(user="Whose record to show")
+async def fight_stats_cmd(interaction: discord.Interaction, user: discord.Member | None = None):
+    me = await _common_init(interaction)
+    if not me:
+        return
+    target = str(user.id) if user else me
+    init_user(target)
+    s = _fd_stats(target)
+    games = s["w"] + s["l"] + s["t"]
+    rate = f"{100 * s['w'] / games:.0f}%" if games else "—"
+    nxt = next(((n, t) for n, t in FD_TITLES if s["w"] < n), None)
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
+        {"type": 10, "content": (
+            f"### ⚔️ Trail Standoff — {get_username(target)}\n"
+            f"**{s['w']}** wins · **{s['l']}** losses · **{s['t']}** draws ({rate})\n"
+            f"Rating **{s['rating']}** · win streak **{s['streak']}** (best {s['best']})\n"
+            f"Net stakes: **{'+' if s['net'] >= 0 else '-'}◈ {abs(s['net']):,}**\n"
+            + (f"-# Next title: **{nxt[1]}** at {nxt[0]} wins." if nxt else "-# Every duel title earned."))}]}])
+
+
+@fight_group.command(name="leaderboard", description="The best Trail Standoff hunters by rating")
+async def fight_lb_cmd(interaction: discord.Interaction):
+    me = await _common_init(interaction)
+    if not me:
+        return
+    rows = [(u, _fd_stats(u)) for u, dd in data.items()
+            if not dd.get("is_tester") and (dd.get("duel", {}).get("w", 0) + dd.get("duel", {}).get("l", 0)) >= 5]
+    rows.sort(key=lambda kv: -kv[1]["rating"])
+    lines = [f"{i}. `{get_username(u)}` — **{s['rating']}** · {s['w']}W {s['l']}L" for i, (u, s) in enumerate(rows[:10], 1)]
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
+        {"type": 10, "content": "### ⚔️ Trail Standoff — Top Hunters\n" + ("\n".join(lines) or "-# Nobody has played 5 duels yet.")}]}])
+
+
+@fight_group.command(name="rules", description="How a Trail Standoff works")
+async def fight_rules_cmd(interaction: discord.Interaction):
+    me = await _common_init(interaction)
+    if not me:
+        return
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
+        {"type": 10, "content": (
+            "### ⚔️ Trail Standoff\n"
+            f"A hide-and-seek duel: **{FD_ROUNDS} rounds**, and the roles swap every round.\n"
+            f"🦌 **Prey** secretly picks a hiding spot — {', '.join(f'{e} {n}' for n, e in FD_SPOTS)}.\n"
+            f"🎯 **Hunter** secretly picks a spot to search and a method:\n"
+            f"- **Sharpshot** — only that exact spot, **{FD_SHARP_PTS}** points.\n"
+            f"- **Sweep** — that spot and the next, **{FD_SWEEP_PTS}** point.\n"
+            f"A prey that isn't found scores **{FD_EVADE_PTS}**. You can't use the same spot two rounds in a row. "
+            f"Ties go to sudden death; a second tie is a draw.\n\n"
+            f"**Stakes:** both put up the bet; the winner takes the pot minus a **{int(FD_TAX * 100)}% toll** (burned). "
+            f"Level {FD_MIN_LEVEL}+, max {FD_DAILY_LIMIT} duels a day, {FD_PAIR_DAILY} per pair a day. The stake is capped at the lower of the "
+            f"two players' casino limits. If the bot restarts mid-duel, everything is refunded.\n"
+            f"-# Equal rules, no gear — it's a mind game.")}]}])
+
+
+bot.tree.add_command(fight_group)
+
 if FEATURE_WORLD_SIGHTINGS:
     _V2_BACKGROUND_TASKS.append(world_sighting_task)
 if FEATURE_AUTO_EVENTS:
@@ -24620,6 +27002,7 @@ if FEATURE_AUTO_EVENTS:
 _V2_BACKGROUND_TASKS.append(weekly_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(daily_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(giveaway_task)
+_V2_BACKGROUND_TASKS.append(fight_task)
 
 @tasks.loop(seconds=5)
 async def inv_ledger_task():
@@ -24764,6 +27147,10 @@ async def on_ready():
         return
 
     load_runtime_state()
+    try:
+        await duels_recover()
+    except Exception as e:
+        print("duel recovery failed:", e)
 
     try:
         _market.update(await backend.market_load())

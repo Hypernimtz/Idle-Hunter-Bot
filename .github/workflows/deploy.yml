@@ -45,6 +45,8 @@ jobs:
       - run: python tests/test_combat_rules.py
       - run: python tests/test_hunt_balance.py
       - run: python tests/test_gamble_limits.py
+      - run: python tests/test_events_v3.py
+      - run: python tests/test_fight_duel.py
       - run: python tests/test_myth_fight.py
       - run: python tests/test_settings.py
       - run: python tests/test_giveaway.py
@@ -104,7 +106,7 @@ jobs:
 
       - name: Upload source files
         run: |
-          for f in app.py backend.py game_data.py leaderboard_push.py pending_updates.json requirements.txt; do
+          for f in app.py backend.py game_data.py event_data.py event_scenes.py leaderboard_push.py pending_updates.json requirements.txt; do
             path="${TARGET_DIR%/}/$f"
             echo "Uploading $f -> $path"
             curl -sS --fail-with-body -X POST \

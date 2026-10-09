@@ -382,7 +382,7 @@ def test_outage_pause_extends_timers_that_were_running_at_shutdown():
     path = os.path.join(tempfile.gettempdir(), "ih_runtime_outage_test.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"alive_ts": alive,
-                   "event": {"key": "admin_buff", "name": "X", "started_ts": alive - 100,
+                   "event": {"key": "admin_404", "name": "X", "started_ts": alive - 100,
                              "ends_ts": alive + 300, "by": "1"}}, f)
     old = (app.RUNTIME_STATE_FILE, app.maintenance_mode, app.maintenance_since,
            app._active_event, app._pending_pause)

@@ -50,7 +50,7 @@ def test_notified_once_per_event():
     assert len(sent) == 2                             # a new event notifies again
 
     app.stop_active_event()
-    app.start_event("admin_buff", "x")
+    app.start_event("admin_404", "x")
     asyncio.run(app.maybe_notify_event_start(
         types.SimpleNamespace(response=types.SimpleNamespace(is_done=lambda: True)), uid))
     assert len(sent) == 2                             # buff has its own welcome card
@@ -65,7 +65,7 @@ def test_broadcast_reports_failure_and_retries_without_buttons():
 
     app._announce = fake_announce
     app.stop_active_event()
-    ev = app.start_event("admin_buff", "x")
+    ev = app.start_event("admin_404", "x")
     assert asyncio.run(app._broadcast_event_start(ev)) is True   # retry w/o buttons worked
     assert calls[0] and calls[1] is None
 

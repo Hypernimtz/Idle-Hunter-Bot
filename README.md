@@ -14,6 +14,8 @@ Start your hunting journey with any command and a detailed tutorial!
 - **Tools & Ammo** — 20 tools across 20 tiers, each with compatible ammo types that boost your Luck, Sell price, and XP
 - **Idle Income** — Hire workers that earn ◈ passively while you're away; stack them for massive returns
 - **Biomes** — Unlock new biomes as you level up, each with rarer animals and higher payouts
+- **Events & story** — a season-long storyline, *The Hollow Star*, told through 15 quest events (meteor showers, the Great Fog, Admin Error 404, a Tribe Relay, Biome Conquest…). Events change *what you do*, never prices or income: fixed reward budgets, cosmetic rewards (titles, badges, profile keepsakes) and a different **daily theme** every weekday, including Friday's Most Wanted hunt and Saturday's Monster Rampage world boss
+- **Tribes teamwork** — hunting parties, territory (outposts per region), and a weekly contribution chest, tuned so three active hunters can compete
 - **Tribes** — Join or create a tribe to share Luck, Sell, and XP boosts with your crew; level it up, pool a **Treasury** and vote on upgrades, take down the **weekly Tribe Boss**, and pick an emblem and banner colour
 - **Prestige** — Reset at Level 1,000 for a permanent +20% boost to everything. Repeat.
 - **Daily Rewards** — Claim free ◈ or 💎 every day and build your streak for a bonus multiplier
@@ -55,6 +57,8 @@ Invite the bot to your server or install it as a user app, then run any command 
 | `/record` | View your catch record book |
 | `/log` | View your recent hunt history |
 | `/progression` | View your achievements, badges, and titles |
+| `/fight challenge` · `stats` · `leaderboard` · `rules` | **Trail Standoff** — a hide-and-seek duel against another hunter, optionally for a stake (10% toll burned) |
+| `/events` | The live event, today's **daily theme**, and your **Chronicle** of *The Hollow Star* |
 | `/giveaway` | Server giveaways, loot drops, number guesses and hunt races (`list` for everyone; hosting is admin-only) |
 | `/update` | View the latest developer updates |
 | `/rules` | View the server rules |

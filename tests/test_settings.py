@@ -212,31 +212,29 @@ def test_gamble_is_a_group_with_a_command_per_game():
     assert "gamble:game_select:13" in seen[0]
 
 
-def test_admins_day_off_discounts_consumables_only():
-    real = app.admin_buff_active
+def test_events_no_longer_discount_or_boost_anything():
+    """Admin's Day Off (25% off + x2 income + free ammo) is retired: no event touches prices or income."""
+    app.stop_active_event()
+    app.start_event("admin_404", "x")
     try:
-        app.admin_buff_active = lambda: False
-        assert app.ev_price(1000) == 1000
-        app.admin_buff_active = lambda: True
-        assert app.ev_price(1000) == 750 and app.ev_price(1) == 1                      # 25% off, floored at 1
-        assert app.ev_price(1500, currency="gems") == 1500                              # 💎 prices never discounted
-        assert app.ev_price(5_000_000, gear=True) == 5_000_000                          # tools & vehicles neither
-        # the real purchase path agrees with the displayed price
+        assert app.ev_price(1000) == 1000 and app.ev_price(1500, currency="gems") == 1500
+        assert app.ev_price(5_000_000, gear=True) == 5_000_000
+        assert (app.ev_sell_mult(), app.ev_xp_mult(), app.ev_daily_mult(), app.ev_idle_rate_mult(),
+                app.ev_idle_cap_mult(), app.ev_hunt_cd_mult(), app.ev_myth_encounter_mult()) == (1.0,) * 7
+        assert app.ev_myth_kill_bonus() == 0 and app.ev_shard_chance() is None and app.ev_crate_chance() is None
+        assert not app.ev_ammo_free() and not app.ev_travel_free() and not app.ev_craft_instant()
+        assert not app.admin_buff_active()
+        # the real purchase path charges the full price
         _fresh("40", gems=5000, money=10 ** 9)
         d = app.data["40"]
 
         async def buy(currency, price, source):
             async with app.user_transaction("40"):
                 return app._shop_purchase("40", currency, price, source)
-        g0, m0 = d["gems"], d["money"]
-        assert run(buy("gems", 1500, "shop tool"))[0] and g0 - d["gems"] == 1500          # Cosmic RPG, full price
-        assert run(buy("money", 100_000, "vehicle shop"))[0] and m0 - d["money"] == 100_000
         m1 = d["money"]
-        assert run(buy("money", 1000, "shop ammo"))[0] and m1 - d["money"] == 750          # ammo: 25% off
-        assert app.EVENT_SHOP_DISCOUNT_PCT == 25
-        assert app.ADMIN_BUFF_EVENT["gift_money"] <= 1_000_000 and app.ADMIN_BUFF_EVENT["gift_gems"] <= 25
+        assert run(buy("money", 1000, "shop ammo"))[0] and m1 - d["money"] == 1000
     finally:
-        app.admin_buff_active = real
+        app.stop_active_event()
 
 
 def test_animal_fights_show_the_animal_art_top_right():
