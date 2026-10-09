@@ -99,7 +99,8 @@ from game_data import (
     SCENT_LURE_LUCK, SCENT_LURE_MINUTES, RARE_BAIT_LUCK, RARE_BAIT_MINUTES,
     WEATHER_VANE_XP, WEATHER_VANE_MINUTES, WAR_HORN_LUCK, WAR_HORN_HOURS, HAUL_WAGON_HOURS,
     SIGNAL_FLARE_TRACK_CHANCE, HUNTERS_STIM_WIN_CHANCE, DANGER_WHISTLE_WIN_CHANCE,
-    CAMP_RATIONS_COLLECT_CHANCE,
+    CAMP_RATIONS_CATCHES, CAMP_RATIONS_STACK_CAP, CAMP_RATIONS_BONUS, CAMP_RATIONS_PER_CATCH,
+    CAMP_RATIONS_COLLECT_CAP, CAMP_REST_IDLE_SEC,
     SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_COLS, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_MAX_PICKS,
     SCRATCH_PAD_REWARDS, roll_scratch_pad_prize,
     VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X, VOTE_REWARD_GEMS,
@@ -882,8 +883,8 @@ def player_is_resting(user_id: str) -> bool:
     """True while the idle camp is running, or while onboarding is still in
     progress — both regen HP at the faster CAMP_HP_REGEN_PER_MIN rate."""
     d = data.get(user_id, {})
-    if d.get("idle", {}).get("active"):
-        return True
+    if d.get("idle", {}).get("active") and time.time() - d.get("_last_hunt_ts", 0) > CAMP_REST_IDLE_SEC:
+        return True          # a camp helps you recover — once you've stopped hunting, not while you're out in the field
     return not d.get("onboarding", {}).get("completed", True)
 
 def player_in_combat(user_id: str) -> bool:
@@ -5722,6 +5723,8 @@ def idle_camp_biome(user_id: str) -> str:
         return "village"
     if data.get(user_id, {}).get("level", 1) < biome_level(b):
         return "village"
+    if get_tool_tier(data.get(user_id, {}).get("tool", "Bare Hands")) < BIOME_TOOL_TIER.get(b, 1):
+        return "village"     # same gate as hunting there in person: swapping to a weaker tool pulls the camp back
     return b
 
 def idle_catches_per_hour(user_id: str) -> float:
@@ -5771,13 +5774,17 @@ def idle_tick(user_id: str) -> int:
     take = min(n, cap - len(haul))
     for _ in range(take):
         haul.append(_roll_idle_animal(user_id))
-    idle["started_at"] = now
+    if take < n:
+        idle["started_at"] = now                       # the haul filled up: hunters idle, the clock restarts
+    else:
+        idle["started_at"] += n / rate * 3600          # keep the fractional catch we haven't paid out yet
     mark_user_dirty(user_id)
     return take
 
 def idle_haul_sell_value(user_id: str) -> int:
     """Approximate ◈ value of the current haul (before rare rolls)."""
-    sell_boost = get_total_boosts(user_id)["sell"]
+    b = get_total_boosts(user_id)
+    sell_boost = b["sell"] - b["ammo_sell"]
     return sum(int(ANIMAL_DATA.get(a, {}).get("value", 0) * (1 + sell_boost / 100))
               for a in data[user_id]["idle"].get("haul", []))
 
@@ -5815,16 +5822,23 @@ def collect_idle_haul(user_id: str) -> dict:
     if not haul:
         return {"count": 0, "per_animal": {}, "total_val": 0, "total_xp": 0,
                 "level_ups": 0, "rares": 0}
+    was_full = len(haul) >= idle_capacity(user_id)
 
+    # Passive hunting burns no ammo, so the equipped ammo's bonuses don't apply to it.
     boosts     = get_total_boosts(user_id)
-    sell_boost = boosts["sell"]; xp_boost = boosts["xp"]; luck_boost = boosts["luck"]
-    ration_bonus = data[user_id].pop("_camp_rations_active", False)
-    ration_mult  = 1.25 if ration_bonus else 1.0
+    sell_boost = boosts["sell"] - boosts["ammo_sell"]
+    xp_boost   = boosts["xp"] - boosts["ammo_xp"]
+    luck_boost = boosts["luck"] - boosts["ammo_luck"]
+    if data[user_id].pop("_camp_rations_active", False):      # legacy single-haul ration
+        data[user_id]["_camp_rations"] = data[user_id].get("_camp_rations", 0) + CAMP_RATIONS_CATCHES
+    rations_left = int(data[user_id].get("_camp_rations", 0))
+    ration_bonus = min(rations_left, len(haul))               # how many animals the rations cover
 
     per_animal: dict[str, dict] = {}
     total_val = total_xp = rares = 0
     _sell_ev, _xp_ev = ev_sell_mult(), ev_xp_mult()
-    for animal in haul:
+    for i, animal in enumerate(haul):
+        ration_mult = (1 + CAMP_RATIONS_BONUS) if i < ration_bonus else 1.0
         base_val   = ANIMAL_DATA.get(animal, {}).get("value", 0)
         base_xp    = ANIMAL_DATA.get(animal, {}).get("xp", 0)
         sell_value = int(base_val * (1 + sell_boost / 100) * ration_mult)
@@ -5859,7 +5873,10 @@ def collect_idle_haul(user_id: str) -> dict:
 
     count = len(haul)
     idle["haul"] = []
-    idle["started_at"] = time.time()
+    if was_full or idle.get("started_at", 0) <= 0:
+        idle["started_at"] = time.time()               # a full haul had the clock frozen: restart it
+    if ration_bonus:
+        data[user_id]["_camp_rations"] = max(0, rations_left - ration_bonus)
     mark_user_dirty(user_id)
 
     data[user_id]["stats"]["idle_collects"] = data[user_id]["stats"].get("idle_collects", 0) + 1
@@ -5891,7 +5908,7 @@ def collect_idle_haul(user_id: str) -> dict:
     })
 
     item_dropped = None
-    if random.random() < CAMP_RATIONS_COLLECT_CHANCE:
+    if random.random() < min(CAMP_RATIONS_COLLECT_CAP, CAMP_RATIONS_PER_CATCH * count):
         add_item(user_id, "Camp Rations", 1)
         item_dropped = "Camp Rations"
 
@@ -12149,7 +12166,8 @@ def build_idle_haul_result_components(user_id: str, result: dict) -> list:
     sell_val  = inv_sell_value(user_id)
     extra_line = ""
     if result.get("ration_bonus"):
-        extra_line += f"\n-# {ITEMS['Camp Rations']['emoji']} Camp Rations kicked in — **+25%** this haul."
+        extra_line += (f"\n-# {ITEMS['Camp Rations']['emoji']} Camp Rations kicked in — **+{int(CAMP_RATIONS_BONUS * 100)}%** "
+                       f"on **{result['ration_bonus']}** of these animals.")
     if result.get("item_dropped"):
         it = ITEMS.get(result["item_dropped"], {})
         extra_line += f"\n-# {it.get('emoji', '')} Your hunters also found a **{result['item_dropped']}**!"
@@ -21771,7 +21789,7 @@ _ITEM_SOURCE_LINES = {
     "Smoke Bomb":       "Gold shop · also drops from Common/Uncommon Crates",
     "Regen Tonic":      "Gold shop (next to the healing items) · also drops from Common Crates",
     "Ammo Pouch":       "Gold shop · also drops from Common Crates",
-    "Camp Rations":     "Gold shop · a small chance per Hunting Camp collect",
+    "Camp Rations":     "Gold shop · a chance on every Hunting Camp collect that grows with the haul",
     "Gift Box":         "Gold shop",
     "Scratch Pad":      "Vote reward (`/vote`)",
     "Iron Plating":     "Rare+ Crates · craft 3 Rare Crystals in `/craft`",
@@ -22130,9 +22148,14 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
             idle = data[user_id].get("idle", {})
             if not idle.get("active") or idle.get("stacks", 0) <= 0:
                 msg, color, consume = f"{emoji('cross_mark')} You don't have an active Hunting Camp to feed.", 0xE74C3C, False
+            elif data[user_id].get("_camp_rations", 0) >= CAMP_RATIONS_STACK_CAP:
+                msg, color, consume = (f"{emoji('cross_mark')} Your hunters are stuffed — they're already fed for "
+                                       f"**{data[user_id].get('_camp_rations', 0)}** catches. Collect a haul first."), 0xE74C3C, False
             else:
-                data[user_id]["_camp_rations_active"] = True
-                msg = f"{it['emoji']} Your hunters tuck in — the next haul you collect will be noticeably bigger."
+                have = data[user_id].get("_camp_rations", 0)
+                data[user_id]["_camp_rations"] = min(CAMP_RATIONS_STACK_CAP, have + CAMP_RATIONS_CATCHES)
+                msg = (f"{it['emoji']} Your hunters tuck in — the next **{data[user_id]['_camp_rations']}** animals you "
+                       f"collect bring in **+{int(CAMP_RATIONS_BONUS * 100)}%** money and XP.")
 
         elif item_name == "Gift Box":
             level = data[user_id].get("level", 1)

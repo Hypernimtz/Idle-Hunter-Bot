@@ -4683,7 +4683,7 @@ ITEMS = {
     },
     "Camp Rations": {
         "emoji": "🍖", "tradable": False,
-        "description": "Feeds your Hunting Camp — the next haul you collect comes in noticeably bigger.",
+        "description": "Feeds your Hunting Camp — the next 15 animals you collect bring in 25% more money and XP (rations stack up to 45).",
     },
     "Gift Box": {
         "emoji": "🎁", "tradable": False,
@@ -4771,7 +4771,15 @@ HAUL_WAGON_HOURS      = 3
 SIGNAL_FLARE_TRACK_CHANCE   = 0.15   # per successful mythic locate
 HUNTERS_STIM_WIN_CHANCE     = 0.10   # per won danger encounter
 DANGER_WHISTLE_WIN_CHANCE   = 0.20   # per won danger encounter
-CAMP_RATIONS_COLLECT_CHANCE = 0.08   # per idle-camp haul collect
+# Camp Rations: +25% money & XP on the next CAMP_RATIONS_CATCHES animals you collect (rations
+# stack up to CAMP_RATIONS_STACK_CAP catches). The bonus-item chance grows with the size of the
+# haul instead of being a flat roll per click, so tiny collects can't farm it.
+CAMP_RATIONS_CATCHES        = 15
+CAMP_RATIONS_STACK_CAP      = 45
+CAMP_RATIONS_BONUS          = 0.25
+CAMP_RATIONS_PER_CATCH      = 0.001    # drop chance per animal collected ...
+CAMP_RATIONS_COLLECT_CAP    = 0.12     # ... capped per collect
+CAMP_REST_IDLE_SEC          = 300      # the camp's faster HP regen only applies after this long without hunting
 
 # ── Scratch Pad — a 3-wide × 4-tall (12-cell) scratch card, 5 cells hide a
 # prize, 7 are blank, but a player only gets SCRATCH_PAD_MAX_PICKS scratches —
@@ -4824,7 +4832,7 @@ VOTE_REWARD_GEMS     = 5    # small on purpose — see the gem-faucet budget (10
 ITEM_GOLD_SHOP = {
     "Smoke Bomb":   {"price_x": 1.5},
     "Ammo Pouch":   {"price_x": 1.0},
-    "Camp Rations": {"price_x": 1.5},
+    "Camp Rations": {"price_x": 2.0},
     "Gift Box":     {"price_x": 3.0},
 }
 # Gem-shop items — flat gem price. Time-savers only, never power (see plan rule 5).

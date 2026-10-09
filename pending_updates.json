@@ -83,5 +83,10 @@
     "key": "2026-10-09-fight-duels",
     "title": "/fight: Trail Standoff — a hide-and-seek duel",
     "message": "Challenge another hunter to a **Trail Standoff** with `/fight challenge`.\n- **Six rounds, roles swap every round.** The prey secretly picks a hiding spot; the hunter secretly picks a spot to search and a method — **Sharpshot** (exact spot, 3 points) or **Sweep** (that spot and the next, 1 point). A prey that isn't found scores 1\n- **No gear, no luck of the draw** — you can't reuse the same spot two rounds in a row, so reading your rival is everything. Ties go to sudden death\n- **Optional stake:** both put it up, the winner takes the pot minus a **10% toll that is burned**. Capped to the lower of your two casino limits, level 5+, up to 8 duels a day and 2 per pair\n- `/fight stats`, `/fight leaderboard` (rating) and `/fight rules`. Duel titles unlock at 10 / 25 / 60 wins\n-# If the bot restarts mid-duel, every stake is refunded."
+  },
+  {
+    "key": "2026-10-09-idle-camp-tuning",
+    "title": "Hunting Camp tuning: no lost progress, fairer Camp Rations",
+    "message": "- **No more lost production:** the leftover fraction of a catch is kept every time you check, upgrade or collect, so your camp pays what it earns however often you look\n- **Camp Rations** now feed the next **15 animals** you collect (+25% money and XP) instead of a whole haul. Using more rations **stacks** them (up to 45) instead of wasting them, and they cost a little more\n- **Bonus items from the camp** now depend on how big the haul is, not how many times you click Collect\n- **Passive hunting doesn't use ammo, so your equipped ammo's bonuses no longer apply to camp hauls**\n- **Your camp's biome needs the right tool tier** all the time, not only when you pick it — swap to a weaker tool and it falls back to the Village\n- **The camp's faster HP recovery** now applies once you've stopped hunting for 5 minutes, instead of making you heal twice as fast while you're out in the field"
   }
 ]
