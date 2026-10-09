@@ -209,6 +209,26 @@ def test_the_camp_only_speeds_regen_when_you_have_stopped_hunting():
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
+def test_production_trophy_is_not_retroactive_and_lapses_mid_window():
+    d = _camp()
+    d["myth_items"] = {"Coarse Yowie Hair": 1}
+    d["idle"]["started_at"] = time.time() - 3600 * 3
+    app.trophy_slots_unlocked = lambda uid: 3
+    base = app.idle_catches_per_hour(U)
+    d["trophy_active"] = {}
+    # using the trophy banks the 3h already earned at the base rate
+    n_before = len(d["idle"]["haul"])
+    res = app.use_trophy(U, "Coarse Yowie Hair")
+    assert res.get("ok"), res
+    assert len(d["idle"]["haul"]) - n_before == int(3 * base), (len(d["idle"]["haul"]), base)
+    # a boost that lapsed 1h ago only counted for the 1h..2h slice it was running
+    d["idle"]["haul"] = []
+    d["idle"]["started_at"] = time.time() - 3600 * 3
+    d["trophy_active"] = {"Coarse Yowie Hair": time.time() - 3600 * 2}     # expired 2h ago, ran the first hour
+    got = app.idle_tick(U)
+    assert got == int(base * 1.10 * 1 + base * 2), (got, base)
+
+
 
 if __name__ == "__main__":
     asyncio.set_event_loop(asyncio.new_event_loop())

@@ -5338,14 +5338,14 @@ def get_prestige_boost(user_id: str) -> int:
 # read live from these helpers at whatever system it touches (combat,
 # tracking, travel, camp, hunt...). Copies are tradeable on /market.
 
-def active_trophies(user_id: str) -> dict[str, float]:
-    """{trophy name: expiry ts} for every trophy effect still running."""
-    now = time.time()
+def active_trophies(user_id: str, at: float | None = None) -> dict[str, float]:
+    """{trophy name: expiry ts} for every trophy effect still running (at ``at``, default now)."""
+    now = time.time() if at is None else at
     act = data.get(user_id, {}).get("trophy_active") or {}
     return {t: exp for t, exp in act.items() if exp > now and t in TROPHY_EFFECTS}
 
-def equipped_trophy_names(user_id: str) -> list[str]:
-    return list(active_trophies(user_id))
+def equipped_trophy_names(user_id: str, at: float | None = None) -> list[str]:
+    return list(active_trophies(user_id, at))
 
 def trophy_copies(user_id: str, trophy: str) -> int:
     return int((data.get(user_id, {}).get("myth_items") or {}).get(trophy, 0))
@@ -5365,6 +5365,8 @@ def use_trophy(user_id: str, trophy: str) -> dict:
     cap = now + TROPHY_MAX_ACTIVE_HOURS * 3600
     if running and act[trophy] >= cap - 60:
         return {"ok": False, "reason": "maxed"}
+    if data[user_id].get("idle"):
+        idle_tick(user_id)                   # bank camp catches at the pre-trophy rate; the boost isn't retroactive
     hours = trophy_duration_hours(trophy)
     act[trophy] = min(cap, max(now, act.get(trophy, now)) + hours * 3600)
     data[user_id]["trophy_active"] = act
@@ -5388,12 +5390,12 @@ _TROPHY_USE_ERRORS = {
     "maxed":      f"That trophy is already running at the {TROPHY_MAX_ACTIVE_HOURS}h maximum.",
 }
 
-def trophy_effect_value(user_id: str, effect_key: str) -> float:
+def trophy_effect_value(user_id: str, effect_key: str, at: float | None = None) -> float:
     """Sum of `value` across equipped trophies matching this effect_key.
     Every trophy's effect_key is unique, so in practice this is 0 or exactly
     one trophy's value — summing is just future-proofing."""
     total = 0.0
-    for t in equipped_trophy_names(user_id):
+    for t in equipped_trophy_names(user_id, at):
         eff = TROPHY_EFFECTS.get(t)
         if eff and eff["effect_key"] == effect_key:
             total += eff["value"]
@@ -5727,13 +5729,13 @@ def idle_camp_biome(user_id: str) -> str:
         return "village"     # same gate as hunting there in person: swapping to a weaker tool pulls the camp back
     return b
 
-def idle_catches_per_hour(user_id: str) -> float:
+def idle_catches_per_hour(user_id: str, at: float | None = None) -> float:
     idle = data[user_id].get("idle", {})
     hunters = min(idle.get("stacks", 0), IDLE_MAX_HUNTERS)
     if hunters <= 0:
         return 0.0
     tier = BIOME_TOOL_TIER.get(idle_camp_biome(user_id), 1)
-    troph_mult = 1 + trophy_effect_value(user_id, "camp_production_pct") / 100   # Yowie: Coarse Yowie Hair
+    troph_mult = 1 + trophy_effect_value(user_id, "camp_production_pct", at) / 100   # Yowie: Coarse Yowie Hair
     # richer biomes yield slower — the dangerous game is rarer
     return hunters * (IDLE_BASE_CATCH_RATE / (1 + tier * 0.12)) * ev_idle_rate_mult() * troph_mult
 
@@ -5764,11 +5766,20 @@ def idle_tick(user_id: str) -> int:
     cap  = idle_capacity(user_id)
     if len(haul) >= cap:
         return 0  # full — hunters idle, clock frozen until the haul is collected
-    rate = idle_catches_per_hour(user_id)
-    if rate <= 0:
+    now = time.time()
+    # A timed production trophy that lapsed mid-window only boosts the part it was running for.
+    exp = (data[user_id].get("trophy_active") or {}).get(
+        next((t for t, e in TROPHY_EFFECTS.items() if e["effect_key"] == "camp_production_pct"), ""), 0)
+    seg_end = exp if idle["started_at"] < exp < now else now
+    rate = idle_catches_per_hour(user_id, seg_end - 1e-3 if seg_end < now else now)
+    if rate <= 0 and seg_end >= now:
         return 0
-    now   = time.time()
-    n     = int((now - idle["started_at"]) / 3600 * rate)
+    earned = max(0.0, (seg_end - idle["started_at"]) / 3600 * rate)
+    if seg_end < now:                                    # then the remainder at the post-expiry rate
+        rate2 = idle_catches_per_hour(user_id, now)
+        earned += (now - seg_end) / 3600 * rate2
+        rate = earned / ((now - idle["started_at"]) / 3600)   # effective rate, so the clock maths below holds
+    n = int(earned)
     if n <= 0:
         return 0
     take = min(n, cap - len(haul))

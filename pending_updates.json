@@ -93,5 +93,10 @@
     "key": "2026-10-09-bets-are-back",
     "title": "Bets are back",
     "message": "- **Betting limits are back** — your max bet scales with how far you've progressed, and a single wager can only win so much\n- Coinflip and Rock Paper Scissors **pay 2× again**; the odds are just a little in the house's favour now (you'll see them on the game screens)"
+  },
+  {
+    "key": "2026-10-09-camp-trophy-timing",
+    "title": "Camp trophy timing",
+    "message": "- **Camp production trophies** (like Coarse Yowie Hair) now only boost the time they're actually running — using one no longer back-pays hours you'd already waited, and one that runs out mid-wait only counts for the part it covered"
   }
 ]
