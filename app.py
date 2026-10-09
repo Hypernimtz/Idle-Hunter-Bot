@@ -30,7 +30,7 @@ from game_data import (
     PLAYER_BASE_HP, HP_REGEN_PER_MIN, CAMP_HP_REGEN_PER_MIN,
     KO_RECOVERY_HP, ROOKIE_KO_RECOVERY_HP, KO_COOLDOWN_SEC, COMBAT_IDLE_TIMEOUT_SEC,
     ANIMAL_FLEE_FAIL_CHANCE, ANIMAL_FLEE_STRIKE_MULT, MYTH_FLEE_STRIKE,
-    COINFLIP_PAYOUT, RPS_PAYOUT, GAMBLE_BET_PER_SCALE, GAMBLE_BET_FLOOR,
+    COINFLIP_PAYOUT, COINFLIP_WIN_CHANCE, RPS_PAYOUT, RPS_ODDS, GAMBLE_BET_PER_SCALE, GAMBLE_BET_FLOOR,
     GAMBLE_BET_WEALTH_PCT, GAMBLE_MAX_WIN_MULT,
     HEALING_ITEMS, MIN_ENCOUNTER_HUNTS_GAP,
     ANIMAL_ENCOUNTER_REWARD_MULT, ANIMAL_ENCOUNTER_XP_MULT, ANIMAL_ENCOUNTER_HEALTHY_BONUS,
@@ -13285,6 +13285,7 @@ def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None)
         content = (
             f"### {_gi('coinflip')}Coinflip\n{last_line}\n{bet_line}\n\n"
             f"Pick heads or tails — a win pays **{COINFLIP_PAYOUT:g}×** your bet.\n"
+            f"-# Win chance **{COINFLIP_WIN_CHANCE * 100:g}%**\n"
             f"-# Set a bet first, then pick your side."
         )
     else:
@@ -13593,7 +13594,7 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
         content = (
             f"### {_gi('raised_fist', '`✊`')}Rock Paper Scissors\n{last_line}\n{bet_line}\n\n"
             f"Beat the bot to win **{RPS_PAYOUT:g}×** your bet!\n"
-            f"-# Tie = bet refunded · Loss = lose bet"
+            f"-# Win **{RPS_ODDS[0]}%** · Tie **{RPS_ODDS[1]}%** (bet refunded) · Loss **{RPS_ODDS[2]}%**"
         )
     else:
         pick = result["pick"]; bot_pick = result["bot_pick"]
@@ -18800,8 +18801,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈.", 0xE74C3C)
                 return
  
-            flip = random.choice(["heads", "tails"])
-            won  = flip == sub
+            won  = random.random() < COINFLIP_WIN_CHANCE          # slightly under 50%: that's the house edge
+            flip = sub if won else ("tails" if sub == "heads" else "heads")
             cf_payout = gamble_cap_payout(owner_id, bet, int(bet * COINFLIP_PAYOUT))
 
             async with user_transaction(owner_id):
@@ -18907,14 +18908,14 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             if sub not in RPS_CHOICES:
                 await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Unknown choice.", 0xE74C3C)
                 return
-            bot_pick = random.choice(list(RPS_CHOICES.keys()))
             rps_payout = gamble_cap_payout(owner_id, bet, int(bet * RPS_PAYOUT))
-            if sub == bot_pick:
-                outcome = "tie"
-            elif RPS_BEATS[sub] == bot_pick:
-                outcome = "win"
+            outcome = random.choices(["win", "tie", "lose"], weights=RPS_ODDS, k=1)[0]   # the bot isn't a fair opponent
+            if outcome == "tie":
+                bot_pick = sub
+            elif outcome == "win":
+                bot_pick = RPS_BEATS[sub]                         # the thing `sub` beats
             else:
-                outcome = "lose"
+                bot_pick = next(k for k in RPS_CHOICES if RPS_BEATS[k] == sub)
             async with user_transaction(owner_id):
                 paid = spend_money(owner_id, bet, "rps bet")
                 if paid:

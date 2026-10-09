@@ -88,5 +88,10 @@
     "key": "2026-10-09-idle-camp-tuning",
     "title": "Hunting Camp tuning: no lost progress, fairer Camp Rations",
     "message": "- **No more lost production:** the leftover fraction of a catch is kept every time you check, upgrade or collect, so your camp pays what it earns however often you look\n- **Camp Rations** now feed the next **15 animals** you collect (+25% money and XP) instead of a whole haul. Using more rations **stacks** them (up to 45) instead of wasting them, and they cost a little more\n- **Bonus items from the camp** now depend on how big the haul is, not how many times you click Collect\n- **Passive hunting doesn't use ammo, so your equipped ammo's bonuses no longer apply to camp hauls**\n- **Your camp's biome needs the right tool tier** all the time, not only when you pick it — swap to a weaker tool and it falls back to the Village\n- **The camp's faster HP recovery** now applies once you've stopped hunting for 5 minutes, instead of making you heal twice as fast while you're out in the field"
+  },
+  {
+    "key": "2026-10-09-bets-are-back",
+    "title": "Bets are back",
+    "message": "- **Betting limits are back** — your max bet scales with how far you've progressed, and a single wager can only win so much\n- Coinflip and Rock Paper Scissors **pay 2× again**; the odds are just a little in the house's favour now (you'll see them on the game screens)"
   }
 ]

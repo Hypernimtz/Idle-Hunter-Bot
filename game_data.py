@@ -2844,8 +2844,11 @@ import random as _random
 # Crafting / material economy
 # ── Hunt catch → materials (rolled per catch, of the caught animal's rarity) ──
 # ── Gambling limits & house edge ─────────────────────────────────────────────
-COINFLIP_PAYOUT        = 1.90   # total returned on a win (was 2.0 = no house edge) -> 95% RTP
-RPS_PAYOUT             = 1.85   # ties still refund the stake                        -> ~95% RTP
+# Both still pay 2x — the house edge is in the ODDS, not the payout.
+COINFLIP_PAYOUT        = 2.0
+COINFLIP_WIN_CHANCE    = 0.475            # 47.5% x 2 = 95% return
+RPS_PAYOUT             = 2.0              # ties refund the stake
+RPS_ODDS               = (31, 33, 36)     # win / tie / lose weights -> 0.31*2 + 0.33*1 = 95% return
 GAMBLE_BET_PER_SCALE   = 400    # max bet = this many 'x' (crate_value_scale) ...
 GAMBLE_BET_FLOOR       = 5_000  # ... never below this ...
 GAMBLE_BET_WEALTH_PCT  = 0.02   # ... but at least this share of the player's balance (so the rich can still play)

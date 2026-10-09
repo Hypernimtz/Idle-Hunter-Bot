@@ -31,9 +31,23 @@ U = "g1"
 
 
 def test_coinflip_and_rps_have_a_house_edge():
-    assert abs(0.5 * gd.COINFLIP_PAYOUT - 0.95) < 1e-9
-    rps_rtp = (1 / 3) * gd.RPS_PAYOUT + (1 / 3) * 1.0           # win pays RPS_PAYOUT, tie refunds, loss pays 0
-    assert 0.94 <= rps_rtp <= 0.96, rps_rtp
+    assert gd.COINFLIP_PAYOUT == 2.0 and gd.RPS_PAYOUT == 2.0       # payouts untouched: the edge is in the odds
+    assert abs(gd.COINFLIP_WIN_CHANCE * gd.COINFLIP_PAYOUT - 0.95) < 1e-9
+    w, t, l = gd.RPS_ODDS
+    assert w + t + l == 100
+    rps_rtp = (w * gd.RPS_PAYOUT + t * 1.0) / 100               # win pays 2x, tie refunds, loss pays 0
+    assert abs(rps_rtp - 0.95) < 1e-9, rps_rtp
+
+
+def test_the_rolls_follow_the_published_odds():
+    import random
+    random.seed(7)
+    n = 40000
+    wins = sum(1 for _ in range(n) if random.random() < gd.COINFLIP_WIN_CHANCE)
+    assert abs(wins / n - 0.475) < 0.01
+    from collections import Counter
+    c = Counter(random.choices(["win", "tie", "lose"], weights=gd.RPS_ODDS, k=n))
+    assert abs(c["win"] / n - 0.31) < 0.01 and abs(c["tie"] / n - 0.33) < 0.01
 
 
 def test_profit_per_wager_is_capped():
@@ -68,12 +82,12 @@ def test_result_panels_show_the_real_profit():
     tt._mk_user(U, money=100_000)
     import json
     cf = json.dumps(app.build_coinflip_panel(U, "result",
-        {"won": True, "bet": 1000, "flip": "heads", "pick": "heads", "payout": 1900}), ensure_ascii=False)
-    assert "+◈ 900" in cf
+        {"won": True, "bet": 1000, "flip": "heads", "pick": "heads", "payout": 2000}), ensure_ascii=False)
+    assert "+◈ 1,000" in cf
     rps = json.dumps(app.build_rps_panel(U, "result",
-        {"pick": "rock", "bot_pick": "scissors", "bet": 1000, "outcome": "win", "payout": 1850}), ensure_ascii=False)
-    assert "+◈ 850" in rps
-    assert "1.9×" in json.dumps(app.build_coinflip_panel(U), ensure_ascii=False)
+        {"pick": "rock", "bot_pick": "scissors", "bet": 1000, "outcome": "win", "payout": 2000}), ensure_ascii=False)
+    assert "+◈ 1,000" in rps
+    assert "47.5%" in json.dumps(app.build_coinflip_panel(U), ensure_ascii=False)
 
 
 def _all_tests():
