@@ -2843,8 +2843,18 @@ import random as _random
 
 # Crafting / material economy
 # ── Hunt catch → materials (rolled per catch, of the caught animal's rarity) ──
-SHARD_DROP_CHANCE      = 0.10   # +1 shard of that rarity
-CRATE_DROP_CHANCE      = 0.05   # +1 finished crate of that rarity, straight up
+SHARD_DROP_CHANCE      = 0.10   # +1 shard of that rarity, rolled for every catch
+CRATE_DROP_CHANCE      = 0.05   # finished crate: PER HUNT (not per animal) at tool tier 1 ...
+CRATE_DROP_TIER_BONUS  = 0.0015  # ... plus this much per tool tier ...
+CRATE_DROP_HUNT_CAP    = 0.08   # ... up to this ceiling (a multi-catch weapon no longer multiplies crates)
+
+
+def hunt_crate_chance(tool_tier: int, override: float | None = None, bonus: float = 0.0) -> float:
+    """Chance that ONE hunt drops a finished crate. `override` replaces the base (events);
+    `bonus` is an additive probability (Loch Silt Sample trophy) added after the cap."""
+    base = (CRATE_DROP_CHANCE + CRATE_DROP_TIER_BONUS * max(0, tool_tier - 1)
+            if override is None else override)
+    return min(CRATE_DROP_HUNT_CAP if override is None else base, base) + max(0.0, bonus)
 MYTH_SHARD_KILL_CHANCE = 0.20   # a mythic KILL → +1 mythic shard (no mythic catches exist)
 # ── Crafting chain ──
 CRYSTAL_SHARD_COST     = 9      # shards fused into one crystal (timed, via /craft)
@@ -3103,6 +3113,19 @@ CRATE_TIER_WEIGHTS: dict[int, dict[str, float]] = {
 def _crate_tier_for_biome(biome: str) -> int:
     t = BIOME_TOOL_TIER.get(biome, 1)
     return 1 if t <= 4 else 2 if t <= 9 else 3 if t <= 16 else 4
+
+# Animals are no longer picked uniformly from a biome's roster: the top rarities are
+# down-weighted so a late biome's legendary roster slots don't mean 30-40% legendaries.
+RARITY_PICK_WEIGHT = {"common": 1.0, "uncommon": 1.0, "rare": 1.0, "epic": 0.6, "legendary": 0.10, "mythic": 0.0}
+
+
+def pick_biome_animal(biome: str) -> str:
+    """One animal from `biome`'s roster, weighted by rarity (see RARITY_PICK_WEIGHT)."""
+    roster = BIOME_ANIMALS[biome]
+    weights = [RARITY_PICK_WEIGHT.get(ANIMAL_DATA.get(a, {}).get("rarity", "common"), 1.0) or 0.01
+               for a in roster]
+    return _random.choices(roster, weights=weights, k=1)[0]
+
 
 def roll_crate_rarity(biome: str) -> str:
     """Pick a crate rarity for a drop in ``biome`` from the tiered weight table."""
@@ -4480,6 +4503,15 @@ PLAYER_BASE_HP        = 100
 HP_REGEN_PER_MIN      = 4
 CAMP_HP_REGEN_PER_MIN = 8    # idle camp active, or Rookie Rush window
 KO_RECOVERY_HP        = 40   # HP you wake up with after a normal-animal KO
+KO_COOLDOWN_SEC       = 300  # after a KO, dangerous animals keep their distance (plain catches) this long
+COMBAT_IDLE_TIMEOUT_SEC = 600  # an unanswered fight/encounter ends (no reward, no penalty) after this long
+ANIMAL_FLEE_FAIL_CHANCE = 0.30  # chance a plain 'Flee' costs a parting strike
+ANIMAL_FLEE_STRIKE_MULT = 0.6   # that strike = this fraction of one normal hit (never lethal)
+MYTH_FLEE_STRIKE        = (8, 14)  # HP lost on a messy (not clean) mythic escape, + biome difficulty // 2
+BIOME_DANGER_HP_PER_TIER = 0.07   # dangerous animals grow this much tougher per biome tool-tier above 1
+BIOME_DANGER_HP_CAP      = 2.5
+BIOME_DANGER_DMG_PER_TIER = 0.03
+RARE_PREDATOR_ENCOUNTER_CHANCE = 0.015  # rare animals that are genuinely aggressive/predatory
 ROOKIE_KO_RECOVERY_HP = 50   # ...the first time, before rookie protection is spent
 
 # Per-encounter behavior. `attack_chance` is the animal's odds of landing a hit
@@ -4524,7 +4556,7 @@ MIN_ENCOUNTER_HUNTS_GAP = 6
 # fight is now worth fighting for). +HEALTHY_BONUS on top if you finish the
 # fight above 75% HP. XP uses its own, much smaller multiplier below — at
 # 10x, a single win on a high-XP animal could out-earn a mythic kill.
-ANIMAL_ENCOUNTER_REWARD_MULT   = 10.0
+ANIMAL_ENCOUNTER_REWARD_MULT   = 4.5     # was 10x: a won fight out-paid ~10 plain catches
 ANIMAL_ENCOUNTER_XP_MULT       = 2.0
 ANIMAL_ENCOUNTER_HEALTHY_BONUS = 0.10
 # Power Attack: a single-turn, higher-risk swing (vs. the reliable Attack).
@@ -4548,14 +4580,20 @@ ANIMAL_COMBAT = {
 }
 
 
-def animal_combat_stats(animal: str) -> dict:
-    """Resolved combat profile for one animal — override first, rarity fallback."""
+def animal_combat_stats(animal: str, biome: str | None = None) -> dict:
+    """Resolved combat profile for one animal — override first, rarity fallback.
+    With a `biome`, HP and damage scale up with that region's difficulty so a
+    top-tier tool can't one-shot every legendary in the game."""
     ov = ANIMAL_COMBAT.get(animal, {})
     rarity = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
     behavior = ov.get("behavior") or RARITY_DEFAULT_BEHAVIOR.get(rarity, "passive")
     hp  = ov.get("hp")  or RARITY_HP.get(rarity, 12)
     dmg = ov.get("damage") or RARITY_DAMAGE.get(rarity, (0, 0))
     beh = ANIMAL_BEHAVIORS.get(behavior, ANIMAL_BEHAVIORS["passive"])
+    if biome:
+        tier = max(1, BIOME_TOOL_TIER.get(biome, 1))
+        hp = hp * min(BIOME_DANGER_HP_CAP, 1 + BIOME_DANGER_HP_PER_TIER * (tier - 1))
+        dmg = tuple(max(0, round(x * (1 + BIOME_DANGER_DMG_PER_TIER * (tier - 1)))) for x in dmg)
     return {
         "behavior": behavior, "hp": int(hp), "damage": tuple(dmg), "rarity": rarity,
         "attack_chance": beh["attack_chance"], "flee_chance": beh["flee_chance"],
@@ -4564,7 +4602,10 @@ def animal_combat_stats(animal: str) -> dict:
 
 def animal_encounter_chance(animal: str) -> float:
     rarity = ANIMAL_DATA.get(animal, {}).get("rarity", "common")
-    return RARITY_ENCOUNTER_CHANCE.get(rarity, 0.0)
+    chance = RARITY_ENCOUNTER_CHANCE.get(rarity, 0.0)
+    if chance <= 0 and rarity == "rare" and animal_combat_stats(animal)["behavior"] in ("aggressive", "predator"):
+        return RARE_PREDATOR_ENCOUNTER_CHANCE      # e.g. a hand-authored wolf or lynx
+    return chance
 
 
 def encounter_priority(animal: str) -> int:
@@ -4600,10 +4641,10 @@ def tool_combat_accuracy(tool_name: str) -> float:
 # buy time via healing_item_price() in app.py — NOT a flat ◈ amount. A flat
 # price used to be steep at level 5 and pocket change at level 1000.
 HEALING_ITEMS = {
-    "Bandage":       {"heal": 25,  "price_x": 1.2, "emoji": "🩹"},
-    "First Aid Kit": {"heal": 60,  "price_x": 3.0, "emoji": "🧰"},
-    "Field Medkit":  {"heal": 100, "price_x": 5.0, "emoji": "⛑️"},
-    "Regen Tonic":   {"heal": 45,  "price_x": 2.0, "emoji": "🧪"},
+    "Bandage":       {"heal": 25,  "price_x": 1.5, "emoji": "🩹"},
+    "First Aid Kit": {"heal": 60,  "price_x": 3.5, "emoji": "🧰"},
+    "Field Medkit":  {"heal": 100, "price_x": 6.0, "emoji": "⛑️"},
+    "Regen Tonic":   {"heal": 45,  "price_x": 2.5, "emoji": "🧪"},
 }
 HEALING_ITEMS["Field Medkit"]["emoji"] = EMOJI.get("potion_bottle") or HEALING_ITEMS["Field Medkit"]["emoji"]
 

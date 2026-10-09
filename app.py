@@ -28,7 +28,8 @@ from game_data import (
     TRIBE_EXPEDITION_GOAL_PER_MEMBER, TRIBE_EXPEDITION_POINTS, TRIBE_EXPEDITION_COOLDOWN_H,
     # Player HP + animal combat (Idle Hunter V2.1)
     PLAYER_BASE_HP, HP_REGEN_PER_MIN, CAMP_HP_REGEN_PER_MIN,
-    KO_RECOVERY_HP, ROOKIE_KO_RECOVERY_HP,
+    KO_RECOVERY_HP, ROOKIE_KO_RECOVERY_HP, KO_COOLDOWN_SEC, COMBAT_IDLE_TIMEOUT_SEC,
+    ANIMAL_FLEE_FAIL_CHANCE, ANIMAL_FLEE_STRIKE_MULT, MYTH_FLEE_STRIKE,
     HEALING_ITEMS, MIN_ENCOUNTER_HUNTS_GAP,
     ANIMAL_ENCOUNTER_REWARD_MULT, ANIMAL_ENCOUNTER_XP_MULT, ANIMAL_ENCOUNTER_HEALTHY_BONUS,
     POWER_ATTACK_ACCURACY, POWER_ATTACK_DAMAGE_MULT,
@@ -83,6 +84,7 @@ from game_data import (
     RULES,
     # Hunting Crates + crafting economy
     CRATE_TIERS, CRATE_REWARDS, open_crate, crate_value_scale, roll_catch_drops,
+    hunt_crate_chance, pick_biome_animal,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
@@ -893,11 +895,69 @@ def player_is_resting(user_id: str) -> bool:
         return True
     return not d.get("onboarding", {}).get("completed", True)
 
-def refresh_health(user_id: str) -> int:
-    """Apply HP regen since the last check. Returns HP actually healed. Safe to
-    call as often as you like — cheap, and a no-op once HP is full."""
+def player_in_combat(user_id: str) -> bool:
+    """True while a dangerous-animal fight or a mythic encounter/fight is live.
+    Also the inactivity check: a fight nobody has acted on for COMBAT_IDLE_TIMEOUT_SEC
+    is simply over (no reward, no penalty), so it can't be parked forever."""
     d = data.get(user_id)
     if not d:
+        return False
+    now = time.time()
+    f = d.get("fight")
+    if f and f.get("kind") == "animal":
+        if now - f.setdefault("ts", now) > COMBAT_IDLE_TIMEOUT_SEC:
+            d["fight"] = None
+            mark_user_dirty(user_id)
+        else:
+            return True
+    b = d.get("_boss")
+    if isinstance(b, dict) and b:
+        if now - b.setdefault("ts", now) > COMBAT_IDLE_TIMEOUT_SEC:
+            d["_boss"] = None
+            mark_user_dirty(user_id)
+        else:
+            return True
+    return False
+
+def combat_heal(user_id: str) -> str:
+    """Spend one healing item as a COMBAT action (the caller has already decided it costs the
+    turn). Picks the smallest item that covers the missing HP, else the biggest owned.
+    Returns the log line."""
+    inv = data[user_id].get("healing_inv", {})
+    owned = [n for n in HEALING_ITEMS if inv.get(n, 0) > 0]
+    if not owned:
+        return f"{emoji('adhesive_bandage')} You fumble through your pack — nothing to heal with."
+    h = data[user_id]["health"]
+    missing = effective_max_hp(user_id) - h["hp"]
+    fits = sorted((n for n in owned if HEALING_ITEMS[n]["heal"] >= missing), key=lambda n: HEALING_ITEMS[n]["heal"])
+    item = fits[0] if fits else max(owned, key=lambda n: HEALING_ITEMS[n]["heal"])
+    inv[item] -= 1
+    if inv[item] <= 0:
+        del inv[item]
+    before = h["hp"]
+    h["hp"] = min(effective_max_hp(user_id), h["hp"] + HEALING_ITEMS[item]["heal"])
+    return f"{emoji('adhesive_bandage')} You use a **{item}** mid-fight (+{h['hp'] - before} HP) — it costs your turn."
+
+def ko_cooldown_left(user_id: str) -> int:
+    """Seconds until dangerous animals will test the player again after a knockout."""
+    until = (data.get(user_id, {}).get("health") or {}).get("ko_until", 0)
+    return max(0, int(until - time.time()))
+
+def hunt_cooldown_s(user_id: str) -> float:
+    """The player's real time between hunts: base 3s minus vehicle/boost cooldown cuts, scaled by
+    any event, never under 1s. The outer rate limiter and run_hunt both use this one number."""
+    cd = get_total_boosts(user_id).get("cd", 0)
+    return max(1.0, (HUNT_COOLDOWN - cd) * ev_hunt_cd_mult())
+
+def refresh_health(user_id: str) -> int:
+    """Apply HP regen since the last check. Returns HP actually healed. Safe to
+    call as often as you like — cheap, and a no-op once HP is full. HP does not
+    regenerate mid-fight: walking away from a boss to recover is not a tactic."""
+    d = data.get(user_id)
+    if not d:
+        return 0
+    if player_in_combat(user_id):
+        d.setdefault("health", {})["last_regen_ts"] = time.time()
         return 0
     h = d.setdefault("health", {"hp": PLAYER_BASE_HP, "max_hp": PLAYER_BASE_HP,
                                 "last_regen_ts": time.time(), "injuries": [],
@@ -941,6 +1001,7 @@ def apply_ko_recovery(user_id: str) -> dict:
     recover_to = ROOKIE_KO_RECOVERY_HP if rookie else KO_RECOVERY_HP
     h["hp"] = min(effective_max_hp(user_id), recover_to)
     h["last_regen_ts"] = time.time()
+    h["ko_until"] = time.time() + (KO_COOLDOWN_SEC // 2 if rookie else KO_COOLDOWN_SEC)
     if rookie:
         h["rookie_revive_used"] = True
     mark_user_dirty(user_id)
@@ -3959,7 +4020,7 @@ def idle_can_camp(user_id: str, biome: str) -> tuple[bool, str]:
     return True, ""
 
 def _roll_idle_animal(user_id: str) -> str:
-    return random.choice(BIOME_ANIMALS[idle_camp_biome(user_id)])
+    return pick_biome_animal(idle_camp_biome(user_id))
 
 def idle_tick(user_id: str) -> int:
     """Materialise elapsed passive catches into the haul. Mutates state — call
@@ -5167,6 +5228,7 @@ def craft_queue_summary(user_id: str) -> str:
 # ─────────────────────────────────────────────
 
 def run_hunt(user_id: str) -> dict:
+    player_in_combat(user_id)          # expires a fight left hanging past the idle timeout
     init_user(user_id)
 
     now = time.time()
@@ -5306,7 +5368,7 @@ def run_hunt(user_id: str) -> dict:
             creature = _forced_creature or random.choice(myth_pool)
             if _forced_creature:
                 data[user_id].setdefault("_myth_pity", {})["count"] = 0
-            eff_cd = max(1.0, (HUNT_COOLDOWN - boosts.get("cd", 0)) * ev_hunt_cd_mult())
+            eff_cd = hunt_cooldown_s(user_id)
             data[user_id]["hunt_cd"] = now + eff_cd
             quest_progress(user_id, "hunts_done",      1)
             quest_progress(user_id, "hunts_in_biome",  1, biome=biome)
@@ -5362,7 +5424,7 @@ def run_hunt(user_id: str) -> dict:
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
                    + trophy_effect_value(user_id, "perfect_catch_pp") / 100)   # Grindylow: Webbed Claw
 
-    rolled = [random.choice(BIOME_ANIMALS[biome]) for _ in range(multi)]
+    rolled = [pick_biome_animal(biome) for _ in range(multi)]
 
     # ── One dangerous animal, at most, becomes an interactive encounter ──
     # Every OTHER rolled animal (including any not selected) resolves as an
@@ -5372,7 +5434,8 @@ def run_hunt(user_id: str) -> dict:
     danger_result = None
     gap_ok = data[user_id].get("hunts_since_fight", MIN_ENCOUNTER_HUNTS_GAP) >= MIN_ENCOUNTER_HUNTS_GAP
     if (FEATURE_ANIMAL_COMBAT and gap_ok and not data[user_id].get("fight")
-            and not data[user_id].get("_boss") and not tracking_active(user_id)):
+            and not data[user_id].get("_boss") and not tracking_active(user_id)
+            and not ko_cooldown_left(user_id)):
         candidates = [a for a in rolled if random.random() < animal_encounter_chance(a)]
         if candidates:
             danger_pick = max(candidates, key=encounter_priority)
@@ -5450,7 +5513,7 @@ def run_hunt(user_id: str) -> dict:
     else:
         remaining_ammo = None
 
-    effective_cd = max(1.0, (HUNT_COOLDOWN - boosts.get("cd", 0)) * ev_hunt_cd_mult())
+    effective_cd = hunt_cooldown_s(user_id)
     data[user_id]["hunt_cd"]            = now + effective_cd
     data[user_id]["xp"]                += total_xp
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + total_val
@@ -5470,11 +5533,15 @@ def run_hunt(user_id: str) -> dict:
     crate_drops: dict[str, int] = {}
     auto_opened: list[str] = []   # "Settings → Auto-Open Crates" reward lines, shown instead of crate_drops
     auto_open = data[user_id].get("auto_open_crates", False)
+    # The finished-crate chance belongs to the HUNT, not to each animal: a six-catch weapon
+    # used to roll it six times. Spread it evenly over the catches instead.
+    _hunt_crate_p = hunt_crate_chance(TOOLS.get(tool_name, {}).get("tier", 1), _ev_cr,
+                                      trophy_effect_value(user_id, "crate_drop_pp") / 100)   # Loch Ness
+    _per_catch_crate_p = _hunt_crate_p / max(1, len(catches))
     for c in catches:
         c_rarity = ANIMAL_DATA.get(c["animal"], {}).get("rarity", "common")
         roll = roll_catch_drops(c_rarity, crate_luck_boost,
-                                shard_chance=_ev_sh, crate_chance=_ev_cr, biome=biome,
-                                crate_chance_bonus=trophy_effect_value(user_id, "crate_drop_pp") / 100)  # Loch Ness
+                                shard_chance=_ev_sh, crate_chance=_per_catch_crate_p, biome=biome)
         if roll["shard"]:
             add_shard(user_id, roll["shard"], 1)
             shard_drops[roll["shard"]] = shard_drops.get(roll["shard"], 0) + 1
@@ -6088,7 +6155,7 @@ _ANIMAL_BONUS_BLURB = {
 def start_animal_encounter(user_id: str, animal: str, biome: str) -> dict:
     """Resolve a dangerous-animal pick into either a fled-away beat or a fight.
     Mutates data[uid]; call inside the same transaction as run_hunt."""
-    stats = animal_combat_stats(animal)
+    stats = animal_combat_stats(animal, biome)
     if stats["flee_chance"] > 0 and random.random() < stats["flee_chance"]:
         analytics(user_id, "animal_fled", animal=animal, biome=biome)
         return {"kind": "fled", "animal": animal}
@@ -6103,7 +6170,7 @@ def start_animal_encounter(user_id: str, animal: str, biome: str) -> dict:
     data[user_id]["fight"] = {
         "kind": "animal", "animal": animal, "biome": biome, "eid": secrets.token_hex(4),
         "mhp": mhp, "mhp_max": stats["hp"], "turn": 1, "guard": False,
-        "log": [], "bonus": bonus,
+        "log": [], "bonus": bonus, "ts": time.time(),
     }
     st = data[user_id].setdefault("stats", {})
     st["animal_fights_started"] = st.get("animal_fights_started", 0) + 1
@@ -6166,7 +6233,8 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
         return {"kind": "none"}
     name  = f["animal"]
     biome = f.get("biome", data[user_id].get("biome", "village"))
-    stats = animal_combat_stats(name)
+    stats = animal_combat_stats(name, biome)
+    f["ts"] = time.time()
     h     = data[user_id]["health"]
     tool  = data[user_id].get("tool", "Bare Hands")
     dmin, dmax = tool_combat_damage(tool)
@@ -6175,12 +6243,19 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
     R = random.randint
 
     if action == "flee":
-        # Leaving is always a clean getaway — you lose only this encounter's
-        # animal, keep the rest of the hunt, and take no hit for it.
+        # You can always leave and keep the rest of the hunt — but turning your back on
+        # something that bites isn't free: sometimes it gets a parting strike in
+        # (never enough to knock you out).
         data[user_id]["fight"] = None
         st = data[user_id].setdefault("stats", {})
         st["animal_fights_fled"] = st.get("animal_fights_fled", 0) + 1
-        return {"kind": "escape", "animal": name}
+        hurt = 0
+        if stats["damage"][1] > 0 and random.random() < ANIMAL_FLEE_FAIL_CHANCE:
+            hurt = max(1, int(R(*stats["damage"]) * ANIMAL_FLEE_STRIKE_MULT))
+            hurt = min(hurt, max(0, h["hp"] - 1))
+            h["hp"] -= hurt
+        mark_user_dirty(user_id)
+        return {"kind": "escape", "animal": name, "hurt": hurt}
 
     stim_mult = 1 + item_buff_value(user_id, "hunters_stim") / 100
     dealt = 0
@@ -6200,18 +6275,7 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
         f["guard"] = True
         log.append(f"{emoji('shield')} You brace for its counterattack.")
     elif action == "heal":
-        item = next((n for n in HEALING_ITEMS
-                    if data[user_id].get("healing_inv", {}).get(n, 0) > 0), None)
-        if not item:
-            log.append(f"{emoji('adhesive_bandage')} You don't have anything to heal with.")
-        else:
-            inv = data[user_id]["healing_inv"]
-            inv[item] -= 1
-            if inv[item] <= 0:
-                del inv[item]
-            before = h["hp"]
-            h["hp"] = min(effective_max_hp(user_id), h["hp"] + HEALING_ITEMS[item]["heal"])
-            log.append(f"{emoji('adhesive_bandage')} You use a **{item}** (+{h['hp']-before} HP).")
+        log.append(combat_heal(user_id))
     else:
         return {"kind": "none"}
 
@@ -6321,12 +6385,13 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
             f"### `💀` Knocked Out\n"
             f"The **{name}** got the better of you. A ranger finds you and drags you back to camp.\n"
             f"-# {emoji('hp') or '❤️'} Recovered to **{outcome['hp']}/{PLAYER_BASE_HP}** HP.{rescue}\n"
-            f"-# Nothing lost — no cash, no items, no XP."
+            f"-# Nothing lost — no cash, no items, no XP. Dangerous animals keep their distance for a few minutes while you recover."
         )
         color = 0xE74C3C
     else:  # escape
         body = (f"### `💨` {name} — you got away.\n"
-                "-# No catch this time — but you live to hunt again.")
+                + (f"It catches you with a parting strike — **-{outcome['hurt']} HP**.\n" if outcome.get("hurt") else "")
+                + "-# No catch this time — but you live to hunt again.")
         color = 0xE67E22
     if _emoji_cdn_url(ico, size=256):          # the art sits top right, so drop the inline emoji from the heading
         body = body.replace(f"### {ico} ", "### ", 1)
@@ -6667,6 +6732,7 @@ FIGHT_ACTIONS = {
     "shoot":  {"label": "Shoot",  "uni": "🔫", "key": "fight_shoot"},
     "taunt":  {"label": "Taunt",  "uni": "😤", "key": "fight_taunt"},
     "flee":   {"label": "Flee",   "uni": "🏃", "key": "fight_flee"},
+    "heal":   {"label": "Heal",   "uni": "🩹", "key": "adhesive_bandage"},
 }
 
 def _fa_icon(a: str) -> str:
@@ -6826,15 +6892,20 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
     dmg_mult *= 1 + item_buff_value(user_id, "hunters_stim") / 100                    # Hunter's Stim
     R     = random.randint
     log: list[str] = []
+    b["ts"] = time.time()
 
     # ── FLEE ──
     if action == "flee":
         clean = R(1, 100) <= min(96, MYTH_RUN_BASE + luck // 2 + trophy_effect_value(user_id, "myth_flee_pct"))  # Sirens
+        hurt = 0
+        if not clean:
+            hurt = min(R(*MYTH_FLEE_STRIKE) + diff // 2, max(0, h["hp"] - 1))
+            h["hp"] -= hurt
         data[user_id]["_boss"] = None
         data[user_id].setdefault("stats", {})
         data[user_id]["stats"]["myths_fled"] = data[user_id]["stats"].get("myths_fled", 0) + 1
         mark_user_dirty(user_id)
-        return {"kind": "escape", "creature": name, "clean": clean}
+        return {"kind": "escape", "creature": name, "clean": clean, "hurt": hurt}
 
     # Dragon: Bottle of Dragon Breath — burn ticks from a previous turn's ignition
     if b.get("burn_turns", 0) > 0:
@@ -6930,6 +7001,8 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
         b["enrage"]  = True
         b["mdebuff"] = True
         log.append(f"{_fa_icon('taunt')} You taunt the {name} — it lunges, wild and off-balance.")
+    elif action == "heal":
+        log.append(combat_heal(user_id))      # a real turn: the creature still gets to act
     else:
         return {"kind": "none"}
 
@@ -8084,6 +8157,8 @@ def build_hunt_components(user_id: str, result: dict) -> list:
             tag = f"\n{ph(emoji('trophy'))} **Personal best!**"
         if c.get("is_first_rare"):
             tag += f"\n{ph('🌟')} **First rare catch!**"
+        if rarity == "legendary":
+            tag += f"\n{RARITY_ICONS.get('legendary', '')} **LEGENDARY CATCH!**"
         if c["is_rare"]:
             tag += f"\n{emoji('sparkles')} **Perfect Catch!**"
         catch_parts.append(
@@ -8254,7 +8329,10 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
         {"type": 1, "components": [_btn("punch", 2), _btn("kick", 4), _btn("defend", 3)]},
         {"type": 1, "components": [
             _btn("shoot", 1, disabled=not _myth_can_shoot(user_id)),
-            _btn("taunt", 2), _btn("flee", 2)]},
+            _btn("taunt", 2),
+            _btn("heal", 3, disabled=not any(data[user_id].get("healing_inv", {}).get(n, 0) > 0
+                                             for n in HEALING_ITEMS)),
+            _btn("flee", 2)]},
     ]}]
 
 # Back-compat: older callers pass a creature name.
@@ -8328,7 +8406,7 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
         body = (
             f"### {ico} {name} — you ran.\n"
             + ("You slip away clean before it can turn.\n" if outcome.get("clean")
-               else "It gets one last swipe in as you bolt — but you're gone.\n")
+               else f"It gets one last swipe in as you bolt — **-{outcome.get('hurt', 0)} HP** — but you're gone.\n")
             + "-# No bounty, no trophy — but you live to hunt again."
         )
         color = 0xE67E22
@@ -14333,7 +14411,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 clicker, interaction.guild, "hunter", "global", "Level", 0, "all"), ephemeral=True)
             return
         if sub == "hunt":
-            can_hunt, remaining = await RateLimiter.can_hunt(clicker, HUNT_COOLDOWN * ev_hunt_cd_mult())
+            can_hunt, remaining = await RateLimiter.can_hunt(clicker, hunt_cooldown_s(clicker))
             if not can_hunt:
                 await send_ephemeral_v2(interaction,
                     f"{emoji('cooldown')} Wait **{remaining:.1f}s** before hunting!", 0xE67E22)
@@ -15057,7 +15135,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 else:
                     await send_v2_followup(interaction, comps, ephemeral=True)
                 return
-            can_hunt, remaining = await RateLimiter.can_hunt(actor, HUNT_COOLDOWN * ev_hunt_cd_mult())
+            can_hunt, remaining = await RateLimiter.can_hunt(actor, hunt_cooldown_s(actor))
             if not can_hunt:
                 await send_ephemeral_v2(interaction, f"{emoji('cooldown')} Wait **{remaining:.1f}s** before hunting again!", 0xE67E22)
                 return
@@ -15256,7 +15334,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await smart_update_v2(interaction, build_onboarding_components(owner_id))
                 return
             if panel == "hunt":
-                can_hunt, remaining = await RateLimiter.can_hunt(owner_id, HUNT_COOLDOWN * ev_hunt_cd_mult())
+                can_hunt, remaining = await RateLimiter.can_hunt(owner_id, hunt_cooldown_s(owner_id))
                 if not can_hunt:
                     await send_ephemeral_v2(interaction, f"{emoji('cooldown')} Wait **{remaining:.1f}s** before hunting!", 0xE67E22)
                     return
@@ -15610,6 +15688,12 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+
+        if parts[1] not in ("tab", "tab_dd") and player_in_combat(owner_id):
+            await send_ephemeral_v2(interaction,
+                f"{emoji('warning')} The shop is shut while something is trying to kill you. Finish the fight first.",
+                0xE74C3C)
             return
 
         # Modals must be the initial response — handle before defer
@@ -18438,7 +18522,7 @@ async def hunt_cmd(interaction: discord.Interaction):
         return
 
     # ✅ SIMPLE RATE LIMIT CHECK - Just add this block
-    can_hunt, remaining = await RateLimiter.can_hunt(user_id, HUNT_COOLDOWN * ev_hunt_cd_mult())
+    can_hunt, remaining = await RateLimiter.can_hunt(user_id, hunt_cooldown_s(user_id))
     if not can_hunt:
         await send_ephemeral_v2(
             interaction,
@@ -20286,6 +20370,11 @@ async def _use_healing_item_and_show(interaction: discord.Interaction, user_id: 
     inv = data[user_id].get("healing_inv", {})
     if inv.get(item_name, 0) <= 0:
         await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{item_name}**.", 0xE74C3C)
+        return
+    if player_in_combat(user_id):
+        await send_ephemeral_v2(interaction,
+            f"{emoji('warning')} You can't patch yourself up between blows. Use **Heal** inside the fight "
+            "— it costs your turn.", 0xE74C3C)
         return
     refresh_health(user_id)
     hp, mx = player_hp(user_id)

@@ -42,6 +42,8 @@ jobs:
       - run: python tests/test_races.py
       - run: python tests/test_tribe_treasury.py
       - run: python tests/test_tribe_teamwork.py
+      - run: python tests/test_combat_rules.py
+      - run: python tests/test_hunt_balance.py
       - run: python tests/test_myth_fight.py
       - run: python tests/test_settings.py
       - run: python tests/test_giveaway.py
