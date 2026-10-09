@@ -542,9 +542,10 @@ def test_workshop_wednesday_cuts_the_first_five_crafts_only():
                 d["craft_queue"] = []
                 r = app.queue_crystal_craft(U, "common")
                 durs.append(r["done_ts"] - time.time())
-        cut = gd.CRYSTAL_CRAFT_SECONDS * (1 - ED.WORKSHOP_TIME_CUT)
+        base = gd.crystal_craft_seconds(d["level"])
+        cut = base * (1 - ED.WORKSHOP_TIME_CUT)
         assert all(abs(x - cut) < 3 for x in durs[:5]), durs
-        assert all(abs(x - gd.CRYSTAL_CRAFT_SECONDS) < 3 for x in durs[5:]), durs
+        assert all(abs(x - base) < 3 for x in durs[5:]), durs
     finally:
         app.current_theme = real
 

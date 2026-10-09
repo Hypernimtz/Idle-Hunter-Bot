@@ -2868,8 +2868,17 @@ def hunt_crate_chance(tool_tier: int, override: float | None = None, bonus: floa
     return min(CRATE_DROP_HUNT_CAP if override is None else base, base) + max(0.0, bonus)
 MYTH_SHARD_KILL_CHANCE = 0.20   # a mythic KILL → +1 mythic shard (no mythic catches exist)
 # ── Crafting chain ──
-CRYSTAL_SHARD_COST     = 9      # shards fused into one crystal (timed, via /craft)
-CRYSTAL_CRAFT_SECONDS  = 300    # 5 min per crystal, queued serially
+CRYSTAL_SHARD_COST     = 5      # shards fused into one crystal (timed, via /craft)
+CRYSTAL_CRAFT_SECONDS  = 300    # 5 min per crystal at level 1, queued serially ...
+CRYSTAL_CRAFT_SECONDS_MIN = 180  # ... down to 3 min at level 1000 (see crystal_craft_seconds)
+CRYSTAL_CRAFT_STEP_LEVELS = 100  # every this many levels the forge gets 12 s faster
+CRYSTAL_CRAFT_STEP_SECONDS = 12
+
+
+def crystal_craft_seconds(level: int) -> int:
+    """Seconds one crystal takes to fuse: a higher-level forge isn't just longer, it's faster."""
+    steps = max(0, int(level)) // CRYSTAL_CRAFT_STEP_LEVELS
+    return max(CRYSTAL_CRAFT_SECONDS_MIN, CRYSTAL_CRAFT_SECONDS - steps * CRYSTAL_CRAFT_STEP_SECONDS)
 CRAFT_QUEUE_MAX        = 20     # forge slots at level 1 — grows with level, see craft_queue_cap()
 CRAFT_QUEUE_LEVEL_STEP = 50     # every this many levels…
 CRAFT_QUEUE_PER_STEP   = 5      # …the forge gains this many slots
@@ -2879,7 +2888,13 @@ def craft_queue_cap(level: int) -> int:
     """How many crystals a player of this level can have in the forge at once."""
     steps = max(0, int(level)) // CRAFT_QUEUE_LEVEL_STEP
     return min(CRAFT_QUEUE_HARD_CAP, CRAFT_QUEUE_MAX + steps * CRAFT_QUEUE_PER_STEP)
-CRATE_CRYSTAL_COST     = 9      # crystals spent for one crate (instant, in the /craft crate shop)
+CRATE_CRYSTAL_COST     = 4      # crystals spent for one crate (instant, in the /craft crate shop)
+# 5 shards x 4 crystals = 20 shards per crafted crate (was 81) — roughly 2x a direct drop's catches, so
+# crafting is a real alternative without out-earning hunting drops.
+
+# A crate reward that would do nothing (a title you already own, a permanent boost already at the cap)
+# pays this many 'x' (crate_value_scale) in coins instead.
+CRATE_DUPLICATE_PAYOUT_X = 5
 # ── Crate open extras ──
 CRATE_GEMSTONE_CHANCE      = 0.05   # any crate → a decorative gemstone of its rarity
 
@@ -2913,7 +2928,7 @@ CRATE_TIERS = {
     },
     "Mythic Crate": {
         "rarity": "mythic", "emoji": _CRATE_PLACEHOLDER_EMOJI, "crystal_cost": CRATE_CRYSTAL_COST,
-        "description": "The rarest crate. Exclusive titles, massive rewards, and sometimes a cryptid trophy.",
+        "description": "The rarest crate. Exclusive titles, massive rewards and the biggest boosts.",
         "color": 0xE74C3C,
     },
 }

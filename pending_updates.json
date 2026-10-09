@@ -108,5 +108,10 @@
     "key": "2026-10-09-shop-fixes",
     "title": "Shop fixes",
     "message": "- **Ammo Pouch** now restocks the basic coin-priced ammo for your weapon type (20 at a time) — it no longer refills gem ammo, and it respects the 9,999 stack limit\n- **Gift Box** pays out a little less on average — it's a treat, not a money maker\n- **Timed boosts** (flares, scents, crate boosts…) now cap at **+200%** combined per stat, and you won't burn an item if you're already maxed\n- **Haul Wagon** won't be used up on a nearly-full haul\n- **Permanent boosts** can't be bought once you're at the +500% cap, so you won't be charged for nothing\n- You can carry at most **15** of each healing item from the shop"
+  },
+  {
+    "key": "2026-10-09-crafting-and-clues",
+    "title": "Crafting, forge & clue help",
+    "message": "- **Crafting is cheaper** — 5 shards make a crystal and 4 crystals make a crate (20 shards per crate, was 81)\n- **Your forge gets faster as you level** — crystals fuse in 5 min at level 1, down to 3 min at level 1000\n- **No more wasted crate rewards** — a title you already own, or a permanent boost that's already maxed, now pays coins instead\n- Mythic Crates no longer claim they can hold a trophy (trophies come from Mythical kills)\n- **Event clue puzzles now explain how to read the clues** — what each clue means and how to match it to a region, animal or suspect"
   }
 ]

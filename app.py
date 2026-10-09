@@ -91,6 +91,7 @@ from game_data import (
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
+    crystal_craft_seconds, CRATE_DUPLICATE_PAYOUT_X,
     CRAFT_QUEUE_LEVEL_STEP, CRAFT_QUEUE_PER_STEP, CRAFT_QUEUE_HARD_CAP, craft_queue_cap,
     CRATE_GEMSTONE_CHANCE, MYTH_SHARD_KILL_CHANCE,
     # General consumable items (2026-09-27)
@@ -2234,6 +2235,22 @@ def _ev3_scenes_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, lis
     return txt, [{"type": 1, "components": btns}]
 
 
+# How-to-read-the-clues hints shown under an active puzzle (mode -> text).
+_EV3_CLUE_HELP = {
+    "wanted": ("Every region is themed on a real place — Village = Pacific Northwest, Forest = British Isles, "
+               "Woods = Scandinavia, Desert = Egypt, Sunken Coast = New England, Tundra = Carpathians, "
+               "Jungle = SE Asia & Japan, Swamp = SE Australia, Volcanic = Anatolia, Cursed Ruins = Greece, "
+               "Rainbow = Caribbean, Abyssal = Mediterranean deep, Celestial = Himalayas. "
+               "Clue 1 is the mood of the land, clue 2 names the place, clue 3 is a nudge."),
+    "tracks": ("Clue 1 is the ground — it points to a region (see the real-place list under Wanted). Clue 2 is the "
+               "animal's temper (passive / skittish / defensive / aggressive / predator) and how rare it is. "
+               "Clue 3 gives the name's length and first letter — pick the option that fits."),
+    "night":  ("Clue 1 is the sound (howl = wolf/dingo, roar = big cat, hoot = owl, bugle = elk, thump = hare, "
+               "hiss = snake, bellow = crocodile…). Clue 2 is the region's mood. "
+               "Clue 3 gives the first letter and length of the name."),
+}
+
+
 def _ev3_clue_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]:
     day = _ev3_day(ev)
     slots = _ev3_clue_slots(spec)
@@ -2254,7 +2271,8 @@ def _ev3_clue_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, list]
         slot, cs, puz = active
         shown = puz["clues"][:cs["n"]]
         body = (f"### {puz['title']}\n" + "\n".join(f"**Clue {i + 1}.** {c}" for i, c in enumerate(shown))
-                + f"\n\n{puz['prompt']}\n-# Fewer clues = more points (3 / 2 / 1). One try.")
+                + f"\n\n{puz['prompt']}\n-# Fewer clues = more points (3 / 2 / 1). One try."
+                + (f"\n-# **How to read them:** {_EV3_CLUE_HELP[spec['mode']]}" if spec.get("mode") in _EV3_CLUE_HELP else ""))
         txt_parts.insert(0, body)
         if puz["kind"] == "region":
             opts = [{"label": BIOME_NAMES[b][:100], "value": b, "emoji": emoji_partial(BIOME_EMOJIS.get(b, "")) if BIOME_EMOJIS.get(b) else {}}
@@ -2284,7 +2302,10 @@ def _ev3_deduce_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, lis
         state = f"\n{emoji('check_mark')} **Case closed — it was {puz['names'][puz['culprit']]}.**"
     else:
         state = f"\n-# Accusations left: **{2 - st.get('tries', 0)}/2**."
-    txt = f"**What each suspect was seen with:**\n{sheet}\n\n{clues}{later}{state}"
+    howto = ("\n-# **How to read it:** each testimony describes the saboteur — a tool, a place or an item. "
+             "Cross off every suspect whose tool / place / item doesn't match; once all three statements are out, "
+             "only one suspect fits. You only get 2 accusations, so wait for more testimony if two still fit.")
+    txt = f"**What each suspect was seen with:**\n{sheet}\n\n{clues}{later}{howto}{state}"
     rows = []
     if not st.get("accused_right") and st.get("tries", 0) < 2:
         rows.append(_ev3_select(f"ev3:imp:accuse:{uid}", "Accuse a suspect…",
@@ -6789,7 +6810,7 @@ def travel_status_line(user_id: str) -> str:
 # CRAFTING ECONOMY  ·  shards → crystals → crates
 # ─────────────────────────────────────────────
 # shards[rarity]  — drop from catches (10%), a mythic KILL (20%)
-# crystals[rarity] — 9 shards fused, 5 min each, queued via /craft
+# crystals[rarity] — CRYSTAL_SHARD_COST shards fused, ~5 min each (faster with level), queued via /craft
 # crate_inv[name]  — 9 matching crystals bought in the /craft crate shop
 # gemstones[rarity] — decorative 5% bonus when opening a crate of that rarity
 
@@ -6907,7 +6928,7 @@ def queue_crystal_craft(user_id: str, rarity: str) -> dict:
         mark_user_dirty(user_id)
         return {"ok": True, "rarity": rarity, "done_ts": time.time(), "queued": len(q), "instant": True}
     start = max([time.time()] + [e.get("done_ts", 0) for e in q])
-    done_ts = start + CRYSTAL_CRAFT_SECONDS * theme_craft_mult(user_id, consume=True)   # Workshop Wednesday
+    done_ts = start + crystal_craft_seconds(data[user_id].get("level", 1)) * theme_craft_mult(user_id, consume=True)   # Workshop Wednesday
     q.append({"rarity": rarity, "done_ts": done_ts})
     mark_user_dirty(user_id)
     return {"ok": True, "rarity": rarity, "done_ts": done_ts, "queued": len(q)}
@@ -12486,6 +12507,8 @@ def _fmt_reward(reward: dict, bold: bool = False) -> str:
         out = f"{it.get('emoji', '')} {reward['name']}"
     else:
         return "???"
+    if reward.get("note"):
+        return (f"**{out}**" if bold else out) + f"\n-# {reward['note']}"
     return f"**{out}**" if bold else out
 
 def _crystals_owned_line(user_id: str) -> str:
@@ -12623,7 +12646,7 @@ def build_crate_result_components(user_id: str, crate_name: str, reward: dict,
     ]}]
 
 # ─────────────────────────────────────────────
-# CRAFT PANEL  ·  9 shards → 1 crystal (timed)
+# CRAFT PANEL  ·  shards → crystal (timed) → crate
 # ─────────────────────────────────────────────
 
 CRAFT_TABS = {
@@ -12683,7 +12706,8 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
         nxt = forge_next_slots_line(user_id)
         rows.append({"type": 10, "content": (
             f"**{CRAFT_TABS['crystals'][0]}**\n"
-            f"-# {CRYSTAL_SHARD_COST} shards of one rarity → 1 crystal · ~{CRYSTAL_CRAFT_SECONDS // 60} min each · "
+            f"-# {CRYSTAL_SHARD_COST} shards of one rarity → 1 crystal · ~{crystal_craft_seconds(data[user_id].get('level', 1)) / 60:.1f} min each "
+            f"(faster as you level) · "
             f"up to {slots} in the forge at once\n"
             f"-# Forge slots grow as you level up" + (f" · {nxt}" if nxt else " · maxed out") + "\n\n"
             + (mats if mats else "-# No shards or crystals yet — catch animals to find shards."))})
@@ -15566,6 +15590,16 @@ async def _tree_gate(interaction: discord.Interaction) -> bool:
 bot.tree.interaction_check = _tree_gate
 
 
+def _convert_dead_reward(user_id: str, reward: dict, source: str, why: str) -> None:
+    """A reward that would do nothing (duplicate title, boost already at the cap) turns into coins,
+    rewritten in place so the result screen shows what the player actually got."""
+    amount = max(1, int(CRATE_DUPLICATE_PAYOUT_X * crate_value_scale(data[user_id].get("level", 1))))
+    reward.clear()
+    reward.update({"type": "money", "amount": amount, "note": f"{why} — paid out in coins instead"})
+    add_money(user_id, amount, source)
+    data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + amount
+
+
 def _apply_reward_simple(user_id: str, reward: dict, source: str = "reward") -> None:
     """Apply a money/gems/perm_boost/temp_boost/title/item reward dict (the
     shape open_crate() and roll_scratch_pad_prize() both produce) to a user.
@@ -15579,7 +15613,10 @@ def _apply_reward_simple(user_id: str, reward: dict, source: str = "reward") -> 
     elif reward["type"] == "gems":
         add_gems(user_id, reward["amount"], source)
     elif reward["type"] == "perm_boost":
-        add_personal_boost(user_id, reward["stat"], reward["amount"])
+        if data[user_id].get("boosts", {}).get(reward["stat"], 0) >= MAX_PERSONAL_BOOST:
+            _convert_dead_reward(user_id, reward, source, "your permanent boost is already maxed")
+        else:
+            add_personal_boost(user_id, reward["stat"], reward["amount"])
     elif reward["type"] == "temp_boost":
         _append_temp_boost(data[user_id], reward["stat"], reward["amount"], reward["minutes"])
     elif reward["type"] == "title":
@@ -15587,6 +15624,8 @@ def _apply_reward_simple(user_id: str, reward: dict, source: str = "reward") -> 
         earned = data[user_id].setdefault("earned_titles", [])
         if title not in earned:
             earned.append(title)
+        else:
+            _convert_dead_reward(user_id, reward, source, "you already own that title")
     elif reward["type"] == "crate":
         ci = data[user_id].setdefault("crate_inv", {})
         ci[reward["name"]] = ci.get(reward["name"], 0) + reward.get("qty", 1)
