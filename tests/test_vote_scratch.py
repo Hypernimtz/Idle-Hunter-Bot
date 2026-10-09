@@ -111,18 +111,18 @@ def test_vote_reward_crate_is_a_real_crate_tier():
 # ─────────────────────────────────────────────────────────────
 # Scratch Pad
 # ─────────────────────────────────────────────────────────────
-def test_scratch_pad_board_has_exactly_5_prizes_and_11_blanks():
+def test_scratch_pad_board_has_exactly_5_prizes_and_7_blanks():
     _reset()
     uid = "9110"
     _mk_user(uid)
     board = app.start_scratch_pad(uid)
     prizes = [c for c in board["cells"] if c is not None]
     blanks = [c for c in board["cells"] if c is None]
-    assert len(board["cells"]) == app.SCRATCH_PAD_GRID_SIZE == 16
+    assert len(board["cells"]) == app.SCRATCH_PAD_GRID_SIZE == 12
     assert len(prizes) == app.SCRATCH_PAD_PRIZE_COUNT == 5
-    assert len(blanks) == 11
+    assert len(blanks) == 7
     assert board["found"] == 0
-    assert board["revealed"] == [False] * 16
+    assert board["revealed"] == [False] * 12
 
 
 def test_scratch_pad_reveal_prize_cell_grants_reward_and_marks_found():
@@ -223,6 +223,66 @@ def test_scratch_pad_double_reveal_same_cell_is_noop():
             return first, second
     first, second = run(_go())
     assert second["kind"] == "none"
+
+
+def test_scratch_pad_renders_three_columns_and_old_16_cell_boards_still_work():
+    _reset()
+    uid = "9116"
+    _mk_user(uid)
+    app.start_scratch_pad(uid)
+    rows = [r for r in app.build_scratch_pad_components(uid)[0]["components"]
+            if r.get("type") == 1 and len(r["components"]) > 1]
+    assert [len(r["components"]) for r in rows] == [3, 3, 3, 3]
+    # a pad started before the resize keeps its 4x4 layout and stays playable
+    app.data[uid]["scratch_pad"] = {"cells": [None] * 16, "revealed": [False] * 16, "found": 0}
+    rows = [r for r in app.build_scratch_pad_components(uid)[0]["components"]
+            if r.get("type") == 1 and len(r["components"]) > 1]
+    assert [len(r["components"]) for r in rows] == [4, 4, 4, 4]
+
+    async def _go():
+        async with app.user_transaction(uid):
+            return app.reveal_scratch_pad_cell(uid, 15)
+    assert run(_go())["kind"] == "revealed"
+
+
+def test_scratch_pad_crate_prize_lands_in_crate_inventory():
+    _reset()
+    uid = "9117"
+    _mk_user(uid)
+    run(_ensure_db())
+    assert any(t == "crate" and d["name"] in game_data.CRATE_TIERS
+               for _, t, d in game_data.SCRATCH_PAD_REWARDS)
+    assert all(d["name"] in game_data.CRATE_TIERS
+               for _, t, d in game_data.SCRATCH_PAD_REWARDS if t == "crate")
+    board = app.start_scratch_pad(uid)
+    board["cells"][0] = {"type": "crate", "name": "Epic Crate", "qty": 1}
+    before = app.data[uid].get("crate_inv", {}).get("Epic Crate", 0)
+
+    async def _go():
+        async with app.user_transaction(uid):
+            return app.reveal_scratch_pad_cell(uid, 0)
+    res = run(_go())
+    assert res["prize"]["type"] == "crate"
+    assert app.data[uid]["crate_inv"]["Epic Crate"] == before + 1
+    assert "Epic Crate" in app._fmt_reward(res["prize"])
+
+
+def test_forge_slots_grow_with_level():
+    _reset()
+    uid = "9118"
+    _mk_user(uid)
+    assert game_data.craft_queue_cap(1) == game_data.CRAFT_QUEUE_MAX == 20
+    assert game_data.craft_queue_cap(49) == 20
+    assert game_data.craft_queue_cap(50) == 25
+    assert game_data.craft_queue_cap(1000) == game_data.craft_queue_cap(99999) == game_data.CRAFT_QUEUE_HARD_CAP
+    app.data[uid]["level"] = 1
+    app.data[uid]["shards"] = {"common": 9 * 30}
+    app.data[uid]["craft_queue"] = [{"rarity": "common", "done_ts": time.time() + 9999}] * 20
+    assert app.queue_crystal_craft(uid, "common")["reason"] == "queue_full"
+    app.data[uid]["level"] = 100
+    assert app.forge_slots(uid) == 30
+    assert app.queue_crystal_craft(uid, "common")["ok"]
+    assert "level 150" in app.forge_next_slots_line(uid)
 
 
 def test_scratch_pad_is_not_purchasable_or_tradable():

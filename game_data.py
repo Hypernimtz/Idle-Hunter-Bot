@@ -2845,7 +2845,15 @@ MYTH_SHARD_KILL_CHANCE = 0.20   # a mythic KILL → +1 mythic shard (no mythic c
 # ── Crafting chain ──
 CRYSTAL_SHARD_COST     = 9      # shards fused into one crystal (timed, via /craft)
 CRYSTAL_CRAFT_SECONDS  = 300    # 5 min per crystal, queued serially
-CRAFT_QUEUE_MAX        = 20
+CRAFT_QUEUE_MAX        = 20     # forge slots at level 1 — grows with level, see craft_queue_cap()
+CRAFT_QUEUE_LEVEL_STEP = 50     # every this many levels…
+CRAFT_QUEUE_PER_STEP   = 5      # …the forge gains this many slots
+CRAFT_QUEUE_HARD_CAP   = 120    # reached at level 1000
+
+def craft_queue_cap(level: int) -> int:
+    """How many crystals a player of this level can have in the forge at once."""
+    steps = max(0, int(level)) // CRAFT_QUEUE_LEVEL_STEP
+    return min(CRAFT_QUEUE_HARD_CAP, CRAFT_QUEUE_MAX + steps * CRAFT_QUEUE_PER_STEP)
 CRATE_CRYSTAL_COST     = 9      # crystals spent for one crate (instant, in the /craft crate shop)
 # ── Crate open extras ──
 CRATE_GEMSTONE_CHANCE      = 0.05   # any crate → a decorative gemstone of its rarity
@@ -4571,7 +4579,7 @@ ITEMS = {
     },
     "Scratch Pad": {
         "emoji": "🎫", "tradable": False,
-        "description": "A 4x4 scratch card — 5 of the 16 panels hide a prize, but you only get 3 scratches. A /vote reward.",
+        "description": "A scratch card — 5 of the 12 panels hide a prize, but you only get 3 scratches. A /vote reward.",
     },
     "Iron Plating": {
         "emoji": "🛡️", "tradable": True,
@@ -4653,21 +4661,27 @@ HUNTERS_STIM_WIN_CHANCE     = 0.10   # per won danger encounter
 DANGER_WHISTLE_WIN_CHANCE   = 0.20   # per won danger encounter
 CAMP_RATIONS_COLLECT_CHANCE = 0.08   # per idle-camp haul collect
 
-# ── Scratch Pad — a 4x4 (16-cell) scratch card, 5 cells hide a prize, 11 are
-# blank, but a player only gets SCRATCH_PAD_MAX_PICKS scratches — real risk of
-# finding 0 of the 5. Not sold anywhere; it's a /vote reward, so there's no
-# purchase price to balance against a guaranteed payout (the 12h vote
-# cooldown is what bounds how often a player can get one). Each cell's prize
-# uses the same (weight, type, data) shape as CRATE_REWARDS so the resolver
-# can be shared; money is a value_scale multiple, same convention as crates.
-SCRATCH_PAD_GRID_SIZE   = 16
+# ── Scratch Pad — a 3-wide × 4-tall (12-cell) scratch card, 5 cells hide a
+# prize, 7 are blank, but a player only gets SCRATCH_PAD_MAX_PICKS scratches —
+# still a real risk of finding 0 of the 5. Not sold anywhere; it's a /vote
+# reward, so there's no purchase price to balance against a guaranteed payout
+# (the 12h vote cooldown is what bounds how often a player can get one). Each
+# cell's prize uses the same (weight, type, data) shape as CRATE_REWARDS so the
+# resolver can be shared; money is a value_scale multiple, same as crates.
+SCRATCH_PAD_COLS        = 3
+SCRATCH_PAD_ROWS        = 4
+SCRATCH_PAD_GRID_SIZE   = SCRATCH_PAD_COLS * SCRATCH_PAD_ROWS
 SCRATCH_PAD_PRIZE_COUNT = 5    # prize cells hidden in the grid
 SCRATCH_PAD_MAX_PICKS   = 3    # scratches allowed — can't find all 5
 SCRATCH_PAD_REWARDS = [
-    (60, "money",      {"min_x": 1, "max_x": 3}),
-    (25, "money",      {"min_x": 3, "max_x": 6}),
-    (10, "gems",       {"min": 2, "max": 5}),
-    (5,  "temp_boost", {"stat": "luck", "amount": 15, "minutes": 15}),
+    (38, "money",      {"min_x": 4,  "max_x": 8}),
+    (22, "money",      {"min_x": 10, "max_x": 20}),
+    (12, "gems",       {"min": 5, "max": 12}),
+    (10, "crate",      {"name": "Rare Crate"}),
+    (6,  "crate",      {"name": "Epic Crate"}),
+    (6,  "temp_boost", {"stat": "luck", "amount": 25, "minutes": 30}),
+    (4,  "money",      {"min_x": 40, "max_x": 60}),      # jackpot
+    (2,  "crate",      {"name": "Legendary Crate"}),     # jackpot
 ]
 
 def roll_scratch_pad_prize(value_scale: int = 1) -> dict:
@@ -4683,13 +4697,16 @@ def roll_scratch_pad_prize(value_scale: int = 1) -> dict:
     if rtype == "temp_boost":
         return {"type": "temp_boost", "stat": rdata["stat"],
                 "amount": rdata["amount"], "minutes": rdata["minutes"]}
+    if rtype == "crate":
+        return {"type": "crate", "name": rdata["name"], "qty": 1}
     return {"type": "money", "amount": 1}
 
 # ── /vote — discordbotlist.com upvote reward ─────────────────────────────
 VOTE_URL             = "https://discordbotlist.com/bots/idle-hunter/upvote"
 VOTE_COOLDOWN_HOURS  = 12   # matches discordbotlist's real per-vote cooldown
-VOTE_REWARD_CRATE    = "Rare Crate"
-VOTE_REWARD_MONEY_X  = 3    # multiples of crate_value_scale(level)
+VOTE_REWARD_CRATE    = "Epic Crate"
+VOTE_REWARD_MONEY_X  = 10   # multiples of crate_value_scale(level)
+VOTE_REWARD_GEMS     = 5    # small on purpose — see the gem-faucet budget (100 gems ≈ $1)
 
 # Gold-shop items price_x (see healing_item_price()/item_shop_price() in app.py)
 ITEM_GOLD_SHOP = {

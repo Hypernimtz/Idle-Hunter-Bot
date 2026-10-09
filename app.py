@@ -86,6 +86,7 @@ from game_data import (
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
+    CRAFT_QUEUE_LEVEL_STEP, CRAFT_QUEUE_PER_STEP, CRAFT_QUEUE_HARD_CAP, craft_queue_cap,
     CRATE_GEMSTONE_CHANCE, MYTH_SHARD_KILL_CHANCE,
     # General consumable items (2026-09-27)
     ITEMS, ITEM_STACK_CAP, ITEM_GOLD_SHOP, ITEM_GEM_SHOP, ITEM_TRIBE_SHOP, CRAFT_ITEM_RECIPES,
@@ -95,9 +96,9 @@ from game_data import (
     WEATHER_VANE_XP, WEATHER_VANE_MINUTES, WAR_HORN_LUCK, WAR_HORN_HOURS, HAUL_WAGON_HOURS,
     SIGNAL_FLARE_TRACK_CHANCE, HUNTERS_STIM_WIN_CHANCE, DANGER_WHISTLE_WIN_CHANCE,
     CAMP_RATIONS_COLLECT_CHANCE,
-    SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_MAX_PICKS,
+    SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_COLS, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_MAX_PICKS,
     SCRATCH_PAD_REWARDS, roll_scratch_pad_prize,
-    VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X,
+    VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X, VOTE_REWARD_GEMS,
     # Quests
     QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
     WEEKLY_QUEST_TEMPLATES, QUESTS_PER_WEEK, WEEKLY_QUESTS_MAX, DAILY_QUEST_MILESTONES,
@@ -4770,13 +4771,25 @@ def craft_tick(user_id: str) -> int:
     mark_user_dirty(user_id)
     return len(done)
 
+def forge_slots(user_id: str) -> int:
+    """Forge queue size for this player — grows with level (craft_queue_cap)."""
+    return craft_queue_cap(data.get(user_id, {}).get("level", 1))
+
+def forge_next_slots_line(user_id: str) -> str:
+    """'+5 slots at level 150' hint, or '' once the forge is maxed."""
+    level = data.get(user_id, {}).get("level", 1)
+    if craft_queue_cap(level) >= CRAFT_QUEUE_HARD_CAP:
+        return ""
+    nxt = (level // CRAFT_QUEUE_LEVEL_STEP + 1) * CRAFT_QUEUE_LEVEL_STEP
+    return f"+{CRAFT_QUEUE_PER_STEP} slots at level {nxt:,}"
+
 def queue_crystal_craft(user_id: str, rarity: str) -> dict:
     """Spend CRYSTAL_SHARD_COST shards to queue one crystal craft. Serial queue —
     each craft starts when the previous finishes. Call inside a transaction."""
     if rarity not in RARITY_KEYS:
         return {"ok": False, "reason": "bad_rarity"}
     q = data[user_id].setdefault("craft_queue", [])
-    if len(q) >= CRAFT_QUEUE_MAX:
+    if len(q) >= forge_slots(user_id):
         return {"ok": False, "reason": "queue_full"}
     if shard_count(user_id, rarity) < CRYSTAL_SHARD_COST:
         return {"ok": False, "reason": "not_enough_shards"}
@@ -10089,7 +10102,7 @@ def build_daily_components(user_id: str, claimed: bool = False,
             f"### {emoji('ballot_box')} Vote reward ready!\n"
             f"Vote for Idle Hunter (every **{VOTE_COOLDOWN_HOURS}h**) and claim "
             f"{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{_vm:,} · "
-            f"{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad.\n"
+            f"{emoji('gem')} {VOTE_REWARD_GEMS} · {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad.\n"
             f"-# Vote first, then press **Claim Vote Reward**."
         )
     else:
@@ -10327,6 +10340,8 @@ def _fmt_reward(reward: dict, bold: bool = False) -> str:
         out = f"{emoji('clock')} +{reward['amount']}% {stat_label} for {reward['minutes']} min"
     elif t == "title":
         out = f'{emoji("label") or "🏷️"} Title: "{reward["title"]}"'
+    elif t == "crate":
+        out = f"{CRATE_TIERS.get(reward['name'], {}).get('emoji', '')} {reward.get('qty', 1)}× {reward['name']}"
     elif t == "item":
         it = ITEMS.get(reward["name"]) or HEALING_ITEMS.get(reward["name"], {})
         out = f"{it.get('emoji', '')} {reward['name']}"
@@ -10500,12 +10515,13 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
         d["_craft_tab"] = tab
     tab = d.get("_craft_tab") if d.get("_craft_tab") in CRAFT_TABS else "crystals"
     q = d.get("craft_queue", [])
+    slots = forge_slots(user_id)
 
     total_shards   = sum(shard_count(user_id, r) for r in RARITY_KEYS)
     total_crystals = sum(crystal_count(user_id, r) for r in RARITY_KEYS)
     summary = (f"{emoji('crystal_rare')} **{total_shards}** shards · "
                f"{emoji('crystal_rare')} **{total_crystals}** crystals · "
-               f"⏳ forge **{len(q)}/{CRAFT_QUEUE_MAX}**")
+               f"⏳ forge **{len(q)}/{slots}**")
     head = f"### {emoji('crystal_rare')} Craft\n-# Shards → crystals → crates.   {summary}"
     if notice:
         head += f"\n\n{notice}"
@@ -10525,17 +10541,19 @@ def build_craft_components(user_id: str, notice: str = "", tab: str = None) -> l
 
     if tab == "crystals":
         mats = _craft_materials_lines(user_id, ready_hint=True)
+        nxt = forge_next_slots_line(user_id)
         rows.append({"type": 10, "content": (
             f"**{CRAFT_TABS['crystals'][0]}**\n"
             f"-# {CRYSTAL_SHARD_COST} shards of one rarity → 1 crystal · ~{CRYSTAL_CRAFT_SECONDS // 60} min each · "
-            f"up to {CRAFT_QUEUE_MAX} in the forge at once\n\n"
+            f"up to {slots} in the forge at once\n"
+            f"-# Forge slots grow as you level up" + (f" · {nxt}" if nxt else " · maxed out") + "\n\n"
             + (mats if mats else "-# No shards or crystals yet — catch animals to find shards."))})
         qsum = craft_queue_summary(user_id)
         if qsum:
             rows.append({"type": 14, "divider": False, "spacing": 1})
-            rows.append({"type": 10, "content": f"**⏳ In the forge ({len(q)}/{CRAFT_QUEUE_MAX})**\n{qsum}"})
+            rows.append({"type": 10, "content": f"**⏳ In the forge ({len(q)}/{slots})**\n{qsum}"})
         craftable = [r for r in RARITY_KEYS if shard_count(user_id, r) >= CRYSTAL_SHARD_COST]
-        if len(q) >= CRAFT_QUEUE_MAX:
+        if len(q) >= slots:
             rows.append({"type": 10, "content": f"-# {emoji('warning')} The forge queue is full \u2014 wait for a crystal to finish."})
         elif craftable:
             opts = [{
@@ -13275,6 +13293,9 @@ def _apply_reward_simple(user_id: str, reward: dict, source: str = "reward") -> 
         earned = data[user_id].setdefault("earned_titles", [])
         if title not in earned:
             earned.append(title)
+    elif reward["type"] == "crate":
+        ci = data[user_id].setdefault("crate_inv", {})
+        ci[reward["name"]] = ci.get(reward["name"], 0) + reward.get("qty", 1)
     elif reward["type"] == "item":
         if reward.get("bag") == "heal":
             hi = data[user_id].setdefault("healing_inv", {})
@@ -13342,15 +13363,16 @@ async def _open_crate_and_show(interaction, user_id: str, crate_name: str):
     await check_achievements_and_badges(interaction, user_id)
 
 # ─────────────────────────────────────────────
-# SCRATCH PAD  ·  a 4x4 scratch card, 5 of 16 panels hide a prize
+# SCRATCH PAD  ·  a 3-wide scratch card, 5 of 12 panels hide a prize
 # ─────────────────────────────────────────────
-# data[uid]["scratch_pad"] = {"cells": [reward_dict|None, ...16], "revealed":
-# [bool, ...16], "found": int}. Consumed from `items` the moment it's started
+# data[uid]["scratch_pad"] = {"cells": [reward_dict|None, ...], "revealed":
+# [bool, ...], "found": int}. Consumed from `items` the moment it's started
 # (like opening a crate), not when it's finished — a half-scratched pad can't
-# be "returned" by abandoning it.
+# be "returned" by abandoning it. Boards started before the 2026-10-08 resize
+# still hold 16 cells, so everything below sizes itself off the stored board.
 
 def start_scratch_pad(user_id: str) -> dict:
-    """Roll a fresh 4x4 board and store it as the user's active game. Mutates
+    """Roll a fresh board and store it as the user's active game. Mutates
     — call inside a ``user_transaction``."""
     level = data[user_id].get("level", 1)
     scale = crate_value_scale(level)
@@ -13370,7 +13392,7 @@ def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
     Returns {"kind": "revealed"|"done"|"none", "prize": reward_dict|None,
     "all_prizes": [reward_dict, ...] (only on "done")}."""
     board = data[user_id].get("scratch_pad")
-    if not board or not (0 <= idx < SCRATCH_PAD_GRID_SIZE) or board["revealed"][idx]:
+    if not board or not (0 <= idx < len(board["cells"])) or board["revealed"][idx]:
         return {"kind": "none", "prize": None}
     board["revealed"][idx] = True
     prize = board["cells"][idx]
@@ -13381,8 +13403,8 @@ def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
     picks_used = sum(board["revealed"])
     done = picks_used >= SCRATCH_PAD_MAX_PICKS
     if done:
-        all_prizes = [board["cells"][i] for i in range(SCRATCH_PAD_GRID_SIZE)
-                      if board["revealed"][i] and board["cells"][i] is not None]
+        all_prizes = [c for c, shown in zip(board["cells"], board["revealed"])
+                      if shown and c is not None]
         data[user_id]["scratch_pad"] = None
         return {"kind": "done", "prize": prize, "all_prizes": all_prizes}
     return {"kind": "revealed", "prize": prize}
@@ -13434,24 +13456,28 @@ def build_scratch_pad_components(user_id: str, last: dict | None = None) -> list
             last_line = "\n-# Just revealed: nothing this time."
 
     picks_used = sum(board["revealed"])
+    n_cells = len(board["cells"])
+    cols = SCRATCH_PAD_COLS if n_cells == SCRATCH_PAD_GRID_SIZE else 4   # 4 = pre-resize 16-cell board
+    n_prizes = sum(1 for c in board["cells"] if c is not None)
     header = (
         f"### {ITEMS['Scratch Pad']['emoji']} Scratch Pad\n"
-        f"5 of these 16 panels hide a prize — you only get **{SCRATCH_PAD_MAX_PICKS}** scratches, so choose wisely.\n"
+        f"{n_prizes} of these {n_cells} panels hide a prize — you only get **{SCRATCH_PAD_MAX_PICKS}** scratches, so choose wisely.\n"
         f"-# Scratches left: **{SCRATCH_PAD_MAX_PICKS - picks_used}/{SCRATCH_PAD_MAX_PICKS}** "
         f"· Found so far: **{board['found']}**{last_line}"
     )
     rows: list = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
-    for r in range(4):
+    for r in range(n_cells // cols):
         row_btns = []
-        for c in range(4):
-            idx = r * 4 + c
+        for c in range(cols):
+            idx = r * cols + c
             revealed = board["revealed"][idx]
             prize = board["cells"][idx]
             if not revealed:
                 row_btns.append({"type": 2, "style": 1, "label": "?",
                                   "custom_id": f"scratch:reveal:{idx}:{user_id}"})
             elif prize is not None:
-                icon = {"money": "◈", "gems": emoji("gem"), "temp_boost": emoji("clock")}.get(prize["type"], "★")
+                icon = {"money": "◈", "gems": emoji("gem"), "temp_boost": emoji("clock"),
+                        "crate": "📦"}.get(prize["type"], "★")
                 row_btns.append({"type": 2, "style": 3, "label": icon, "disabled": True,
                                   "custom_id": f"scratch:noop:{idx}:{user_id}"})
             else:
@@ -14390,7 +14416,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             else:
                 notice = {
                     "not_enough_shards": f"{emoji('cross_mark')} Need {CRYSTAL_SHARD_COST} {_rarity_label(rarity)} shards.",
-                    "queue_full":        f"{emoji('cross_mark')} The forge queue is full.",
+                    "queue_full":        f"{emoji('cross_mark')} The forge queue is full — level up for more slots.",
                     "bad_rarity":        f"{emoji('cross_mark')} Unknown rarity.",
                 }.get(res.get("reason"), f"{emoji('cross_mark')} Couldn't craft that.")
             await smart_update_v2(interaction, build_craft_components(owner_id, notice))
@@ -15544,6 +15570,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 level = data[owner_id].get("level", 1)
                 money_amt = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
                 add_money(owner_id, money_amt, "vote")
+                add_gems(owner_id, VOTE_REWARD_GEMS, "vote")
                 data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + money_amt
                 ci = data[owner_id].setdefault("crate_inv", {})
                 ci[VOTE_REWARD_CRATE] = ci.get(VOTE_REWARD_CRATE, 0) + 1
@@ -18252,7 +18279,8 @@ def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 
         body = (
             f"### {emoji('ballot_box')} Vote Reward Claimed!\n"
             f"You received **{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE}**, "
-            f"**◈ {money_amt:,}**, and **{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad**!\n"
+            f"**◈ {money_amt:,}**, **{emoji('gem')} {VOTE_REWARD_GEMS}**, "
+            f"and **{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad**!\n"
             f"-# {emoji('star')} Thanks for the support — come back in **{VOTE_COOLDOWN_HOURS}h**."
         )
     elif not ready:
@@ -18271,7 +18299,7 @@ def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 
             f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
             f"Vote on discordbotlist.com, then come back and claim your reward:\n"
             f"-# {CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{preview_money:,} "
-            f"· {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad\n"
+            f"· {emoji('gem')} {VOTE_REWARD_GEMS} · {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad\n"
             f"-# {emoji('clock')} One claim every **{VOTE_COOLDOWN_HOURS}h**.\n"
             f"{check_line}"
         )
