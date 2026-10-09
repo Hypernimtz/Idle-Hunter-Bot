@@ -48,5 +48,10 @@
     "key": "2026-10-07-profile-bio-editor",
     "title": "Profile bio and Profile Editor",
     "message": "- **Profile bios:** write a short bio (150 characters) that shows on your `/profile`\n- **Choose what your profile shows:** pick from your money, gear, tribe, badges, boosts, camp and more with a multi-select — hidden sections are hidden for everyone who views you\n- **Both live behind a new setting,** `/settings` → **Profile Editor** (off by default). Turn it on and your own profile gets an *Edit Bio* button and the picker"
+  },
+  {
+    "key": "2026-10-08-vote-scratch-forge",
+    "title": "Bigger vote rewards, a kinder Scratch Pad, and more forge slots",
+    "message": "- **`/vote` rewards buffed:** an **Epic Crate** instead of a Rare Crate, more than **3× the cash** it used to pay, and **5 gems** on every vote — plus the Scratch Pad, every 12h\n- **Scratch Pad is easier:** one column removed, so it's **12 panels instead of 16** with the same 5 prizes and 3 scratches\n- **Scratch Pad prizes are bigger:** more cash, more gems, a stronger Luck boost — and new **Rare, Epic and even Legendary Crates**, plus a cash jackpot\n- **Forge slots grow with your level:** everyone starts with 20, then **+5 every 50 levels** up to 120 at level 1000. `/craft` shows how many you have and when the next ones unlock\n-# Every vote helps more hunters find the bot — thank you!"
   }
 ]
