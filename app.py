@@ -30,6 +30,8 @@ from game_data import (
     PLAYER_BASE_HP, HP_REGEN_PER_MIN, CAMP_HP_REGEN_PER_MIN,
     KO_RECOVERY_HP, ROOKIE_KO_RECOVERY_HP, KO_COOLDOWN_SEC, COMBAT_IDLE_TIMEOUT_SEC,
     ANIMAL_FLEE_FAIL_CHANCE, ANIMAL_FLEE_STRIKE_MULT, MYTH_FLEE_STRIKE,
+    COINFLIP_PAYOUT, RPS_PAYOUT, GAMBLE_BET_PER_SCALE, GAMBLE_BET_FLOOR,
+    GAMBLE_BET_WEALTH_PCT, GAMBLE_MAX_WIN_MULT,
     HEALING_ITEMS, MIN_ENCOUNTER_HUNTS_GAP,
     ANIMAL_ENCOUNTER_REWARD_MULT, ANIMAL_ENCOUNTER_XP_MULT, ANIMAL_ENCOUNTER_HEALTHY_BONUS,
     POWER_ATTACK_ACCURACY, POWER_ATTACK_DAMAGE_MULT,
@@ -11540,7 +11542,7 @@ def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None)
     if state == "pick":
         content = (
             f"### {_gi('coinflip')}Coinflip\n{last_line}\n{bet_line}\n\n"
-            f"Pick heads or tails — win to double your bet!\n"
+            f"Pick heads or tails — a win pays **{COINFLIP_PAYOUT:g}×** your bet.\n"
             f"-# Set a bet first, then pick your side."
         )
     else:
@@ -11552,7 +11554,7 @@ def build_coinflip_panel(user_id: str, state: str = "pick", result: dict = None)
             content = (
                 f"### {_gi('coinflip')}Coinflip — {emoji('check_mark')} You won!\n"
                 f"**{flip_lbl}!** You picked **{pick_lbl}** — correct!\n\n"
-                f"**+◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
+                f"**+◈ {result.get('payout', bet * 2) - bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         else:
@@ -11589,10 +11591,22 @@ def _slots_biome(user_id: str) -> str:
     return b
 
 def gamble_max_bet(user_id: str) -> int:
-    """Highest wager on any gamble game. 0 = no maximum (the level-scaled cap was
-    removed 2026-09-29); callers treat a falsy cap as unlimited. A bet is still
-    bounded by the player's own balance."""
-    return 0
+    """Highest wager on any gamble game: GAMBLE_BET_PER_SCALE x the average animal value of
+    the player's best unlocked region (so it grows with progression), floored at
+    GAMBLE_BET_FLOOR, and never less than GAMBLE_BET_WEALTH_PCT of their balance so big
+    holders can still play meaningfully. (The cap was lifted entirely on 2026-09-29;
+    unlimited all-in bets let one lucky Green spin concentrate billions.)"""
+    d = data.get(user_id) or {}
+    base = max(GAMBLE_BET_FLOOR, crate_value_scale(int(d.get("level", 1))) * GAMBLE_BET_PER_SCALE)
+    return max(base, int(d.get("money", 0) * GAMBLE_BET_WEALTH_PCT))
+
+def gamble_max_win(user_id: str) -> int:
+    """Largest NET profit a single wager can pay out."""
+    return gamble_max_bet(user_id) * GAMBLE_MAX_WIN_MULT
+
+def gamble_cap_payout(user_id: str, bet: int, gross: int) -> int:
+    """Clamp a winning gross payout so the profit never exceeds gamble_max_win."""
+    return min(int(gross), int(bet) + gamble_max_win(user_id))
 
 def _bet_cap_msg(cap: int, level: int) -> str:
     return (f"{emoji('cross_mark')} Your max bet at **Level {level}** is **◈ {cap:,}** "
@@ -11836,7 +11850,7 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
     if state == "pick":
         content = (
             f"### {_gi('raised_fist', '`✊`')}Rock Paper Scissors\n{last_line}\n{bet_line}\n\n"
-            f"Beat the bot to double your bet!\n"
+            f"Beat the bot to win **{RPS_PAYOUT:g}×** your bet!\n"
             f"-# Tie = bet refunded · Loss = lose bet"
         )
     else:
@@ -11847,7 +11861,7 @@ def build_rps_panel(user_id: str, state: str = "pick", result: dict = None) -> l
             content = (
                 f"### {_gi('raised_fist', '`✊`')}RPS — {emoji('check_mark')} You won!\n"
                 f"You: **{p_ico} {pick.title()}** vs Bot: **{b_ico} {bot_pick.title()}**\n\n"
-                f"**+◈ {bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
+                f"**+◈ {result.get('payout', bet * 2) - bet:,}** · Balance: **◈ {d['money']:,}**\n\n"
                 f"{last_line}\n{bet_line}"
             )
         elif outcome == "tie":
@@ -16986,7 +17000,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
 
         # A bet stored before a level reset (or a cap change) must not slip past the cap.
         _bet_keys = {"cf": "_cf_bet", "rl": "_roulette_bet", "rps": "_rps_bet",
-                     "dice": "_dice_bet", "hl": "_hl_bet", "slots": "_slots_bet"}
+                     "dice": "_dice_bet", "hl": "_hl_bet", "slots": "_slots_bet", "bj": "_bj_bet"}
         if _is_wager and parts[1] in _bet_keys:
             _cap = gamble_max_bet(owner_id)
             if _cap and data[owner_id].get(_bet_keys[parts[1]], 0) > _cap:
@@ -17029,6 +17043,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
  
             flip = random.choice(["heads", "tails"])
             won  = flip == sub
+            cf_payout = gamble_cap_payout(owner_id, bet, int(bet * COINFLIP_PAYOUT))
 
             async with user_transaction(owner_id):
                 paid = spend_money(owner_id, bet, "coinflip bet")
@@ -17036,14 +17051,14 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     data[owner_id]["_cf_last_pick"] = sub
                     data[owner_id]["last_gamble"]   = time.time()
                     if won:
-                        add_money(owner_id, bet * 2, "coinflip win")
+                        add_money(owner_id, cf_payout, "coinflip win")
                         data[owner_id]["stats"]["cf_wins"] = (
                             data[owner_id]["stats"].get("cf_wins", 0) + 1)
             if not paid:
                 await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈ for that bet.", 0xE74C3C)
                 return
 
-            result = {"won": won, "bet": bet, "flip": flip, "pick": sub}
+            result = {"won": won, "bet": bet, "flip": flip, "pick": sub, "payout": cf_payout if won else 0}
             await smart_update_v2(interaction, build_coinflip_panel(owner_id, "result", result))
             return
 
@@ -17065,7 +17080,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                         f"{emoji('cross_mark')} Minimum bet is **◈ {_slots_min_bet():,}** — raise your bet.", 0xE74C3C)
                     return
                 reels, kind, mult = _slots_spin()
-                payout = int(bet * mult) if kind != "none" else 0
+                payout = gamble_cap_payout(owner_id, bet, int(bet * mult)) if kind != "none" else 0
                 async with user_transaction(owner_id):
                     paid = spend_money(owner_id, bet, "slots bet")
                     if paid:
@@ -17100,7 +17115,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             color      = random.choices(ROULETTE_COLORS, weights=ROULETTE_WEIGHTS, k=1)[0]
             _, _, mult = ROULETTE_BET_TYPES[sub]
             won        = color == sub
-            payout     = int(bet * mult) if won else 0
+            payout     = gamble_cap_payout(owner_id, bet, int(bet * mult)) if won else 0
             async with user_transaction(owner_id):
                 paid = spend_money(owner_id, bet, "roulette bet")
                 if paid:
@@ -17134,6 +17149,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Unknown choice.", 0xE74C3C)
                 return
             bot_pick = random.choice(list(RPS_CHOICES.keys()))
+            rps_payout = gamble_cap_payout(owner_id, bet, int(bet * RPS_PAYOUT))
             if sub == bot_pick:
                 outcome = "tie"
             elif RPS_BEATS[sub] == bot_pick:
@@ -17147,14 +17163,15 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     if outcome == "tie":
                         add_money(owner_id, bet, "rps push")          # stake back
                     elif outcome == "win":
-                        add_money(owner_id, bet * 2, "rps win")
+                        add_money(owner_id, rps_payout, "rps win")
                         data[owner_id]["stats"]["rps_wins"] = data[owner_id]["stats"].get("rps_wins", 0) + 1
                     data[owner_id]["last_gamble"] = time.time()
             if not paid:
                 await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough ◈ for that bet.", 0xE74C3C)
                 return
 
-            result = {"pick": sub, "bot_pick": bot_pick, "bet": bet, "outcome": outcome}
+            result = {"pick": sub, "bot_pick": bot_pick, "bet": bet, "outcome": outcome,
+                      "payout": rps_payout if outcome == "win" else 0}
             await smart_update_v2(interaction, build_rps_panel(owner_id, "result", result))
             return
 
@@ -17177,7 +17194,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             total        = d1 + d2
             _, pred, mlt = DICE_BETS[sub]
             won          = pred(total)
-            payout       = int(bet * mlt) if won else 0
+            payout       = gamble_cap_payout(owner_id, bet, int(bet * mlt)) if won else 0
             async with user_transaction(owner_id):
                 paid = spend_money(owner_id, bet, "dice bet")
                 if paid:
@@ -17223,7 +17240,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 if m == n:
                     outcome, payout = "push", bet          # refund
                 elif (m > n) == (sub == "hi"):
-                    outcome, payout = "win", int(bet * mlt)
+                    outcome, payout = "win", gamble_cap_payout(owner_id, bet, int(bet * mlt))
                 else:
                     outcome, payout = "lose", 0
                 async with user_transaction(owner_id):
@@ -17290,8 +17307,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                         d_val = _bj_hand_value(st["dealer"])
                         bet   = st["bet"]
                         if d_val > 21 or p_val > d_val:
-                            add_money(owner_id, bet * 2, "blackjack win")
-                            st.update({"done": True, "outcome": f"{emoji('check_mark')} You win!", "net": bet})
+                            _bj_pay = gamble_cap_payout(owner_id, bet, bet * 2)
+                            add_money(owner_id, _bj_pay, "blackjack win")
+                            st.update({"done": True, "outcome": f"{emoji('check_mark')} You win!", "net": _bj_pay - bet})
                             data[owner_id]["stats"]["bj_wins"] = (
                                 data[owner_id]["stats"].get("bj_wins", 0) + 1
                             )
@@ -17749,9 +17767,8 @@ class SetBetModal(_V2Modal, title="Set Your Bet"):
         self.game    = game
         self.min_bet = min_bet
         # Every table is capped by the player's level (slots tables can be lower).
-        self.max_bet = 0   # no maximum on any table
-        if min_bet:
-            self.bet_input.placeholder = f"Min: ◈{min_bet:,}  (e.g. 1000, 50K, 1M)"
+        self.max_bet = gamble_max_bet(self.user_id)
+        self.bet_input.placeholder = (f"Min: ◈{min_bet:,} · " if min_bet else "") + f"Max: ◈{self.max_bet:,}"
 
     async def on_submit(self, interaction: discord.Interaction):
         if not await _modal_gate(interaction, self.user_id):
@@ -18251,7 +18268,7 @@ async def _bj_deal(interaction: discord.Interaction, user_id: str, bet: int) -> 
                     add_money(user_id, bet, "blackjack: push (both 21)")
                     st.update({"done": True, "outcome": f"{emoji('handshake')} Push — both blackjack", "net": 0})
                 elif p_bj:
-                    payout = int(bet * 2.5)
+                    payout = gamble_cap_payout(user_id, bet, int(bet * 2.5))
                     add_money(user_id, payout, "blackjack: 21")
                     st["dealer"] = dealer
                     st.update({"done": True, "outcome": "`🃏` Blackjack!", "net": payout - bet})
@@ -18287,6 +18304,10 @@ class BlackjackBetModal(_V2Modal, title="Blackjack — Set Your Bet"):
         if cur and not cur.get("done"):
             await send_ephemeral_v2(interaction,
                 f"{emoji('cross_mark')} Finish your current hand first.", 0xE74C3C)
+            return
+        _cap = gamble_max_bet(self.user_id)
+        if parsed > _cap:
+            await send_ephemeral_v2(interaction, _bet_cap_msg(_cap, data[self.user_id].get("level", 1)), 0xE74C3C)
             return
         # Standard bet: remembered, so Deal / Play Again never ask again.
         data[self.user_id]["_bj_bet"] = parsed

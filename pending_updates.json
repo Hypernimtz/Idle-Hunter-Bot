@@ -68,5 +68,10 @@
     "key": "2026-10-09-combat-hunting-balance",
     "title": "Fights have teeth, vehicles work, and legendaries are legendary",
     "message": "- **No more free healing mid-fight:** `/use` is blocked during an encounter — use the new **Heal** button, which costs your turn (mythic fights get one too). The shop is closed while you're being hunted\n- **Your HP doesn't regenerate during a fight,** and a fight left unanswered for 10 minutes simply ends (no reward, no penalty)\n- **Running isn't free:** a failed mythic escape costs HP, and fleeing an animal can earn you a parting strike (never a knockout). Smoke Bombs still get you out clean\n- **Danger animals scale with the region** — a Celestial Peaks legendary is far tougher than a village one — and aggressive rares can occasionally pick a fight too\n- **Won fights pay 4.5× (was 10×).** After a knockout, dangerous animals keep their distance for 5 minutes\n- **Healing items cost a little more**\n- **Vehicle bug fixed:** the hunt cooldown from vehicles now actually applies (Hovercraft = 1s hunts, not 3s)\n- **Finished crates now drop per hunt, not per animal** (5%, up to 8% with top gear), and **legendary animals are properly rare** in late regions\n-# Numbers are first-pass — tell us how it feels."
+  },
+  {
+    "key": "2026-10-09-gambling-limits",
+    "title": "Casino limits are back, and the house wins a little",
+    "message": "- **Max bet is back:** it scales with how far you've progressed (and with your balance, so big holders can still play), and a single wager can no longer win more than a capped amount\n- **Coinflip now pays 1.9×** and **Rock Paper Scissors 1.85×** (ties still refund) — about a 95% return, like the other games\n-# Set your bet in any game to see your current maximum."
   }
 ]

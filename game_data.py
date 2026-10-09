@@ -2843,6 +2843,14 @@ import random as _random
 
 # Crafting / material economy
 # ── Hunt catch → materials (rolled per catch, of the caught animal's rarity) ──
+# ── Gambling limits & house edge ─────────────────────────────────────────────
+COINFLIP_PAYOUT        = 1.90   # total returned on a win (was 2.0 = no house edge) -> 95% RTP
+RPS_PAYOUT             = 1.85   # ties still refund the stake                        -> ~95% RTP
+GAMBLE_BET_PER_SCALE   = 400    # max bet = this many 'x' (crate_value_scale) ...
+GAMBLE_BET_FLOOR       = 5_000  # ... never below this ...
+GAMBLE_BET_WEALTH_PCT  = 0.02   # ... but at least this share of the player's balance (so the rich can still play)
+GAMBLE_MAX_WIN_MULT    = 12     # net profit on a single wager is capped at this x the max bet
+
 SHARD_DROP_CHANCE      = 0.10   # +1 shard of that rarity, rolled for every catch
 CRATE_DROP_CHANCE      = 0.05   # finished crate: PER HUNT (not per animal) at tool tier 1 ...
 CRATE_DROP_TIER_BONUS  = 0.0015  # ... plus this much per tool tier ...

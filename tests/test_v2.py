@@ -735,16 +735,20 @@ def test_weekly_daily_quest_goal_pays_once_and_rolls():
     assert app.dq_week_state(uid) == {"start": 0, "n": 0, "paid": False}
 
 
-def test_gamble_has_no_max_bet():
+def test_gamble_max_bet_scales_with_level_and_wealth():
     _reset()
     uid = "5002"
     d = _mk_user(uid)
+    caps = []
     for lvl in (1, 150, 1000):
         d["level"] = lvl
-        assert app.gamble_max_bet(uid) == 0
+        caps.append(app.gamble_max_bet(uid))
+    assert caps[0] >= app.GAMBLE_BET_FLOOR and caps[0] < caps[1] < caps[2]
+    d["level"], d["money"] = 1, 5_000_000_000                     # a billionaire can still play real money
+    assert app.gamble_max_bet(uid) == int(5_000_000_000 * app.GAMBLE_BET_WEALTH_PCT)
     async def _modal():                    # discord modals need a running loop
         return app.SetBetModal(uid, "cf")
-    assert run(_modal()).max_bet == 0
+    assert run(_modal()).max_bet == app.gamble_max_bet(uid)
 
 
 def test_empty_tribes_are_pruned_but_real_ones_kept():
