@@ -115,6 +115,14 @@ from game_data import (
     TRIBE_EMBLEMS, TRIBE_BANNER_COLORS, TRIBE_BANNER_PRICE,
     TRIBE_BOSS_HP_PER_SCALE, TRIBE_BOSS_DAMAGE, TRIBE_BOSS_MIN_SHARE,
     TRIBE_BOSS_TREASURY_PER_SCALE, TRIBE_BOSSES,
+    # Tribe teamwork: hunting parties, territory, weekly chest
+    TRIBE_PARTY_WINDOW_MIN, TRIBE_PARTY_TIERS, TRIBE_PARTY_CP_BONUS,
+    TRIBE_TERRITORY_UNLOCK, TRIBE_TERRITORY_HUNT_PTS, TRIBE_TERRITORY_CATCH_PTS,
+    TRIBE_TERRITORY_MYTH_PTS, TRIBE_TERRITORY_DAY_CAP, TRIBE_TERRITORY_ACTIVE_PTS,
+    TRIBE_TERRITORY_MIN_SCORE, TRIBE_TERRITORY_MIN_HUNTERS, TRIBE_TERRITORY_RARE_MULT,
+    TRIBE_TERRITORY_TRIBUTE_XP, TRIBE_GARRISON_PER_LEVEL,
+    TRIBE_CP_DAILY, TRIBE_CP_TASK, TRIBE_CP_MYTH, TRIBE_CP_MYTH_CAP_DAY,
+    TRIBE_CHEST_TIERS, TRIBE_CHEST_CRATE_LADDER, TRIBE_CHEST_PARTY_HUNTS, TRIBE_CONTRACT_CRATES,
     # Global events
     EVENT_HOURS, FOX_ATTEMPTS_DAY, FOX_LEAD_START, FOX_TITLE_AT, FOX_ROUTES, FOX_SHOP,
     SHIP_DIVES_DAY, SHIP_SPOTS, SHIP_SHOP,
@@ -2133,6 +2141,10 @@ def _ensure_tribe_fields(td: dict) -> dict:
     tr.setdefault("proposal", None)
     tr.setdefault("history", [])
     td.setdefault("upgrades", {})
+    td.setdefault("party", {})          # {biome: {uid: last hunt ts}} — hunting-party tracker
+    td.setdefault("payouts", [])        # queued personal rewards (contracts, weekly chest)
+    td.setdefault("paid_ids", [])
+    td.setdefault("last_chest", None)
     td.setdefault("emblem", "")
     td.setdefault("banner", "")
     # member cap floor by level (Perk-Shop "+1 Slot" purchases stack above it)
@@ -2146,12 +2158,14 @@ def _ensure_tribe_fields(td: dict) -> dict:
     tag = _week_tag()
     if not isinstance(wk, dict) or wk.get("tag") != tag:
         prev = wk if isinstance(wk, dict) else {}
+        _build_weekly_chest(td, prev)        # before the week (and the boss) is replaced
         active = len([1 for v in prev.get("contrib", {}).values() if v > 0])
         scale  = max(TRIBE_CONTRACT_MIN_GROUP, active)
         td["week"] = {
             "tag": tag, "contrib": {}, "scale_group": scale,
             "contracts": _roll_tribe_contracts(td, scale),
             "explore_biomes": [], "task_members": [], "reroll_used": False, "rerolls": 0,
+            "cp": {}, "party_hunts": 0, "held_outpost": False,
         }
     _boss_ensure(td)
     return td
@@ -2181,7 +2195,9 @@ def _tribe_day_counters(uid: str) -> dict:
     td = data[uid].setdefault("tribe_day", {})
     if td.get("tag") != today:
         td.clear()
-        td.update({"tag": today, "hunts": 0, "daily": False, "tasks": 0})
+        td.update({"tag": today, "hunts": 0, "daily": False, "tasks": 0, "myth": 0, "terr": 0})
+    td.setdefault("myth", 0)
+    td.setdefault("terr", 0)
     return td
 
 async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str = "") -> dict | None:
@@ -2216,7 +2232,40 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
                 if cnt["tasks"] >= 2 and uid not in td["week"]["task_members"]:
                     td["week"]["task_members"].append(uid)
 
+        wk = td["week"]
+        # ── hunting party / chest contribution / territory (tribe teamwork) ──
+        party_n = 0
+        if source == "hunt" and biome:
+            _party_register(td, uid, biome)
+            party_n = len(_party_members(td, biome))      # includes uid, just registered
+        cp = 0
+        if source == "hunt":
+            cp = amount
+            if amount and party_n >= 2:
+                cp += TRIBE_PARTY_CP_BONUS
+                wk["party_hunts"] = wk.get("party_hunts", 0) + 1
+        elif source == "daily":
+            cp = TRIBE_CP_DAILY if amount else 0
+        elif source == "task":
+            cp = TRIBE_CP_TASK if amount else 0
+        elif source == "myth_kill" and cnt["myth"] < TRIBE_CP_MYTH_CAP_DAY:
+            cnt["myth"] += 1
+            cp = TRIBE_CP_MYTH
+        if cp:
+            wk.setdefault("cp", {})[uid] = wk.get("cp", {}).get(uid, 0) + cp
+        if td["level"] >= TRIBE_TERRITORY_UNLOCK and biome and source in ("hunt", "myth_kill"):
+            base_pts = (TRIBE_TERRITORY_HUNT_PTS + max(0, catches) * TRIBE_TERRITORY_CATCH_PTS
+                        if source == "hunt" else TRIBE_TERRITORY_MYTH_PTS)
+            pts = min(base_pts, max(0, TRIBE_TERRITORY_DAY_CAP - cnt["terr"]))
+            if pts > 0:
+                cnt["terr"] += pts
+                garrison = td.get("upgrades", {}).get("garrison", 0)
+                _territory_add(tname, uid, biome, pts * (1 + TRIBE_GARRISON_PER_LEVEL * garrison))
+        if _tribe_outposts(tname):
+            wk["held_outpost"] = True
+
         # ── weekly contract progress (independent of the XP cap) ──
+        completed_contracts: list[int] = []
         for i, ct in enumerate(td["week"]["contracts"]):
             before = ct["progress"]
             if ct["kind"] == "hunting" and source == "hunt":
@@ -2229,6 +2278,7 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
                 ct["progress"] = len(td["week"]["task_members"])
             if ct["progress"] != before and not ct["done"] and ct["progress"] >= ct["target"]:
                 ct["done"] = True
+                completed_contracts.append(i)
                 td["xp"] += TRIBE_XP_CONTRACT[i]
                 _tribe_log(td, f"{emoji('check_mark')} Contract complete: **{ct['label']}** (+{TRIBE_XP_CONTRACT[i]} tribe XP)")
 
@@ -2246,6 +2296,14 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
                     td["xp"] += whole
                     td["xp_frac"] -= whole
 
+        # A finished contract also pays every participant personally (not just tribe XP).
+        for i in completed_contracts:
+            ct = td["week"]["contracts"][i]
+            crate = TRIBE_CONTRACT_CRATES[min(i, len(TRIBE_CONTRACT_CRATES) - 1)]
+            for who in {uid, *[u for u, v in td["week"]["contrib"].items() if v > 0]}:
+                _queue_payout(td, f"contract:{td['week']['tag']}:{i}:{who}", who, crate,
+                              f"Contract — {ct['label']}")
+
         # ── tribe expedition progress (V2, Phase 31) ──
         if FEATURE_EXPEDITIONS:
             _exp_feed(td, uid, source, catches)
@@ -2257,7 +2315,244 @@ async def award_tribe_xp(uid: str, source: str, *, catches: int = 0, biome: str 
     if boss_down:
         # outside the lock: pays every contributor under their own locks
         asyncio.ensure_future(_boss_pay_out(tname))
+    if td.get("payouts"):
+        asyncio.ensure_future(_tribe_pay_queue(tname))
     return {"leveled": gained > 0, "level": td["level"]} if (amount or gained) else None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TRIBE TEAMWORK  ·  hunting parties, territory control, weekly reward chest
+# ═══════════════════════════════════════════════════════════════
+# Parties and the chest live on the tribe dict (td["party"], td["week"]["cp"], td["payouts"]);
+# territory is global (competing tribes), persisted in runtime_state.json via _territory.
+
+_territory: dict = {"tag": "", "influence": {}, "owners": {}, "pending": []}
+
+def _week_start_ts() -> int:
+    return _week_end_ts() - 7 * 86400
+
+# ── Hunting party ────────────────────────────────────────────
+
+def _party_window_s(td: dict) -> int:
+    return (TRIBE_PARTY_WINDOW_MIN + 10 * td.get("upgrades", {}).get("scout_network", 0)) * 60
+
+def _party_members(td: dict, biome: str, *, exclude: str = "") -> list[str]:
+    """Current tribe members who hunted `biome` inside the party window."""
+    cutoff = time.time() - _party_window_s(td)
+    cur = set(_tribe_current_members(td))
+    return [u for u, ts in td.get("party", {}).get(biome, {}).items()
+            if ts >= cutoff and u in cur and u != exclude]
+
+def _party_tier(n: int) -> dict | None:
+    for need, spec in TRIBE_PARTY_TIERS:
+        if n >= need:
+            return spec
+    return None
+
+def _party_register(td: dict, uid: str, biome: str) -> None:
+    now = time.time()
+    party = td.setdefault("party", {})
+    party.setdefault(biome, {})[str(uid)] = now
+    stale = now - 2 * 3600
+    for b in list(party):
+        party[b] = {u: ts for u, ts in party[b].items() if ts >= stale}
+        if not party[b]:
+            del party[b]
+
+def tribe_hunt_modifiers(uid: str, biome: str) -> dict:
+    """Hunt-time edge from the player's tribe: a Hunting Party in this biome and/or
+    holding its outpost. Read-only; all 1.0 when the player has no tribe."""
+    out = {"rare_mult": 1.0, "myth_mult": 1.0, "party": "", "party_n": 0, "outpost": False}
+    tname = data.get(str(uid), {}).get("tribe")
+    td = tribe_data.get(tname) if tname else None
+    if not td:
+        return out
+    n = len(_party_members(td, biome, exclude=str(uid))) + 1
+    tier = _party_tier(n)
+    if tier:
+        out.update(rare_mult=tier["rare"], myth_mult=tier["myth"], party=tier["name"], party_n=n)
+    if _territory_holder(biome) == tname:
+        out["rare_mult"] *= TRIBE_TERRITORY_RARE_MULT
+        out["outpost"] = True
+    return out
+
+def _party_line(mods: dict) -> str:
+    bits = []
+    if mods.get("party"):
+        bits.append(f"{emoji('target')} **{mods['party']}** ({mods['party_n']} tribemates hunting here) — better odds on rare and mythic finds")
+    if mods.get("outpost"):
+        bits.append(f"{emoji('location_pin')} Your tribe holds this outpost")
+    return " · ".join(bits)
+
+# ── Territory ────────────────────────────────────────────────
+
+def _territory_holder(biome: str) -> str:
+    o = _territory["owners"].get(biome)
+    if o and o.get("until_ts", 0) > time.time() and o.get("tribe") in tribe_data:
+        return o["tribe"]
+    return ""
+
+def _tribe_outposts(tname: str) -> list[str]:
+    return [b for b in _territory["owners"] if _territory_holder(b) == tname]
+
+def _territory_score(rec: dict) -> tuple[float, int]:
+    """(influence per active hunter, active hunters). A member is 'active' in a biome
+    from TRIBE_TERRITORY_ACTIVE_PTS points; the divisor floors at TRIBE_TERRITORY_MIN_HUNTERS,
+    so three real hunters and twenty casual members are measured on the same scale."""
+    active = [u for u, p in rec.get("hunters", {}).items() if p >= TRIBE_TERRITORY_ACTIVE_PTS]
+    if not active:
+        return 0.0, 0
+    return rec.get("pts", 0.0) / max(TRIBE_TERRITORY_MIN_HUNTERS, len(active)), len(active)
+
+def _territory_settle() -> None:
+    """Close the finished week: the top tribe per active hunter in each biome holds its
+    outpost for the new week. Pure state — queues tribe notes/XP in _territory['pending']
+    for the maintenance task to apply under the tribe lock."""
+    tag = _week_tag()
+    if _territory["tag"] == tag:
+        return
+    first = not _territory["tag"]
+    new_owners: dict = {}
+    if not first:
+        for biome, tribes in _territory["influence"].items():
+            best = None
+            for tname, rec in tribes.items():
+                if tname not in tribe_data:
+                    continue
+                score, _n = _territory_score(rec)
+                if score >= TRIBE_TERRITORY_MIN_SCORE and (best is None or score > best[1]):
+                    best = (tname, score)
+            if best:
+                new_owners[biome] = {"tribe": best[0], "until_ts": _week_end_ts(), "score": round(best[1], 1)}
+        old = _territory["owners"]
+        pend = _territory.setdefault("pending", [])
+        held: dict[str, int] = {}
+        for biome, o in new_owners.items():
+            held[o["tribe"]] = held.get(o["tribe"], 0) + 1
+            was = old.get(biome, {}).get("tribe")
+            verb = "held" if was == o["tribe"] else "claimed"
+            pend.append({"tribe": o["tribe"], "xp": 0,
+                         "text": f"{emoji('location_pin')} Your tribe {verb} the **{BIOME_NAMES.get(biome, biome)}** outpost this week."})
+        for tname, n in held.items():
+            pend.append({"tribe": tname, "xp": TRIBE_TERRITORY_TRIBUTE_XP * n,
+                         "text": f"{emoji('gift')} Outpost tribute: +{TRIBE_TERRITORY_TRIBUTE_XP * n:,} tribe XP for {n} outpost{'s' if n != 1 else ''}."})
+        for biome, o in old.items():
+            if o.get("tribe") in tribe_data and new_owners.get(biome, {}).get("tribe") != o["tribe"]:
+                pend.append({"tribe": o["tribe"], "xp": 0,
+                             "text": f"{emoji('location_pin')} The **{BIOME_NAMES.get(biome, biome)}** outpost was lost."})
+    _territory.update(tag=tag, influence={}, owners=new_owners)
+
+def _territory_add(tname: str, uid: str, biome: str, pts: float) -> None:
+    if _territory["tag"] != _week_tag():
+        _territory_settle()
+    rec = _territory["influence"].setdefault(biome, {}).setdefault(tname, {"pts": 0.0, "hunters": {}})
+    rec["pts"] = round(rec["pts"] + pts, 2)
+    rec["hunters"][uid] = round(rec["hunters"].get(uid, 0.0) + pts, 2)
+
+def _territory_apply_pending() -> None:
+    """Apply queued outpost notes + tribute XP. Call inside a tribe transaction."""
+    pend, _territory["pending"] = _territory.get("pending", []), []
+    for n in pend:
+        td = tribe_data.get(n.get("tribe"))
+        if not td:
+            continue
+        _tribe_log(td, n.get("text", ""))
+        if n.get("xp"):
+            td["xp"] += int(n["xp"])
+            _tribe_apply_levelups(td)
+
+# ── Personal payout queue (contracts, weekly chest) ──────────
+
+def _queue_payout(td: dict, pid: str, uid: str, crate: str, note: str) -> None:
+    if pid in td.setdefault("paid_ids", []) or any(p["id"] == pid for p in td.setdefault("payouts", [])):
+        return
+    td["payouts"].append({"id": pid, "uid": str(uid), "crate": crate, "note": note})
+
+async def _tribe_pay_queue(tname: str) -> None:
+    """Hand out every queued personal reward. Each entry is removed and granted inside
+    one transaction, so a crash or a second concurrent call can never pay it twice."""
+    td = tribe_data.get(tname)
+    if not td or not td.get("payouts"):
+        return
+    tok = _inv_src.set("tribe reward")
+    try:
+        for entry in list(td["payouts"]):
+            uid = str(entry.get("uid", ""))
+            try:
+                if uid not in data:
+                    async with tribe_only_transaction(tname):
+                        td["payouts"] = [p for p in td.get("payouts", []) if p["id"] != entry["id"]]
+                    continue
+                async with user_tribe_transaction(uid, tname):
+                    t2 = tribe_data.get(tname)
+                    if not t2 or not any(p["id"] == entry["id"] for p in t2.get("payouts", [])):
+                        continue
+                    t2["payouts"] = [p for p in t2["payouts"] if p["id"] != entry["id"]]
+                    ci = data[uid].setdefault("crate_inv", {})
+                    ci[entry["crate"]] = ci.get(entry["crate"], 0) + 1
+                    t2.setdefault("paid_ids", []).append(entry["id"])
+                    del t2["paid_ids"][:-400]
+                analytics(uid, "tribe_reward", crate=entry["crate"], note=entry.get("note", ""), tribe=tname)
+            except Exception as ex:
+                print(f"tribe payout failed for {uid}:", ex)
+    finally:
+        _inv_src.reset(tok)
+
+# ── Weekly reward chest ──────────────────────────────────────
+
+def _chest_tier(cp: int) -> tuple[str, str] | None:
+    for need, label, crate in TRIBE_CHEST_TIERS:
+        if cp >= need:
+            return label, crate
+    return None
+
+def _chest_milestones(td: dict, wk: dict, since_ts: float) -> list[str]:
+    """Tribe-wide achievements of week `wk` — each pair of them lifts every chest a rung."""
+    ms = [f"Contract: {c['label']}" for c in wk.get("contracts", []) if c.get("done")]
+    b = td.get("boss")
+    if b and b.get("tag") == wk.get("tag") and b.get("stage") in ("rewarding", "done"):
+        ms.append("Tribe boss defeated")
+    exp = td.get("expedition")
+    if exp and exp.get("success") and exp.get("completed_ts", 0) >= since_ts:
+        ms.append("Expedition completed")
+    if wk.get("held_outpost"):
+        ms.append("Held an outpost")
+    if wk.get("party_hunts", 0) >= TRIBE_CHEST_PARTY_HUNTS:
+        ms.append("Hunted as a party")
+    return ms
+
+def _chest_steps(n_milestones: int) -> int:
+    return 0 if n_milestones < 2 else 1 if n_milestones < 4 else 2
+
+def _chest_crate(base: str, steps: int) -> str:
+    lad = TRIBE_CHEST_CRATE_LADDER
+    return lad[min(len(lad) - 1, lad.index(base) + steps)]
+
+def _build_weekly_chest(td: dict, prev: dict) -> None:
+    """Called once as a tribe's week rolls over: queue a chest for every member who
+    reached a contribution tier, improved by the tribe's milestones."""
+    cps = prev.get("cp") or {}
+    if not cps or not prev.get("tag"):
+        return
+    cur = set(_tribe_current_members(td))
+    ms = _chest_milestones(td, prev, _week_start_ts() - 7 * 86400)
+    steps = _chest_steps(len(ms))
+    rows = []
+    for uid, cp in sorted(cps.items(), key=lambda kv: kv[1], reverse=True):
+        if uid not in cur:
+            continue
+        t = _chest_tier(int(cp))
+        crate = ""
+        if t:
+            crate = _chest_crate(t[1], steps)
+            _queue_payout(td, f"chest:{prev['tag']}:{uid}", uid, crate, f"Weekly chest — {t[0]}")
+        rows.append({"uid": uid, "cp": int(cp), "tier": t[0] if t else "", "crate": crate})
+    if not rows:
+        return
+    got = sum(1 for r in rows if r["crate"])
+    td["last_chest"] = {"tag": prev["tag"], "milestones": ms, "steps": steps, "rows": rows[:40]}
+    _tribe_log(td, f"{emoji('gift')} Weekly chest: **{got}** member{'s' if got != 1 else ''} earned one"
+                   f"{f' ({len(ms)} milestone' + ('s' if len(ms) != 1 else '') + ')' if ms else ''}.")
 
 # ═══════════════════════════════════════════════════════════════
 # TRIBE TREASURY  ·  pooled funds, member-voted upgrades, cosmetics
@@ -4963,6 +5258,11 @@ def run_hunt(user_id: str) -> dict:
     # World condition for this region (all 1.0 when Normal / feature off).
     world_mods  = get_world_modifiers(biome)
     _wc_active  = active_world_condition(biome)
+    _tm = tribe_hunt_modifiers(user_id, biome)          # hunting party / outpost (tribe teamwork)
+    if _tm["rare_mult"] != 1.0 or _tm["myth_mult"] != 1.0:
+        world_mods = {**world_mods,
+                      "rare_mult": world_mods["rare_mult"] * _tm["rare_mult"],
+                      "myth_mult": world_mods["myth_mult"] * _tm["myth_mult"]}
 
     # Tips are opt-out and deliberately rare — a hard cooldown on top of the
     # dice roll so they can't cluster even for someone hunting constantly.
@@ -5252,6 +5552,7 @@ def run_hunt(user_id: str) -> dict:
         "balance": data[user_id]["money"],
         "pending_sell_value": total_val,
         "level_ups": level_ups, "tip": tip,
+        "party_line": _party_line(_tm),
         "verify": False,
         "next_hunt_ts": int(data[user_id]["hunt_cd"]),
         "tool": tool_name, "ammo": ammo_name, "remaining_ammo": remaining_ammo,
@@ -7821,6 +8122,8 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     auto_opened = result.get("auto_opened") or []
     for _ao in auto_opened:   # one block per crate: name on the first line, a bullet per reward
         drop_bits.append(f"{emoji('crate_sample')} **Auto-opened:** {_ao}")
+    if result.get("party_line"):
+        extra_bits.append(f"-# {result['party_line']}")
     _ae = result.get("animal_encounter")
     if _ae and _ae.get("kind") == "fled":
         extra_bits.append(f"-# `💨` A **{_ae['animal']}** caught your scent and bolted before you got close.")
@@ -11751,6 +12054,106 @@ def build_gift_sent_components(sender_id: str, recipient: discord.User,
 _TRIBE_ROLE_ICON = {"leader": TRIBE_EMOJIS["leader"], "officer": TRIBE_EMOJIS["officer"],
                     "member": "`🧑`", "recruit": emoji('seedling')}
 
+def _build_tribe_teamwork_page(user_id: str, tribe_name: str, td: dict, page: str,
+                               nav_row: dict, util_row: dict) -> list:
+    """Hunting Party / Territory / Weekly Chest pages (tribe teamwork)."""
+    acc = _tribe_accent(user_id, td)
+    wk = td["week"]
+    now = time.time()
+
+    if page == "party":
+        win_min = _party_window_s(td) // 60
+        lines = [f"### {emoji('target')} {tribe_name} — Hunting Party",
+                 f"-# Hunt the **same biome** as tribemates within **{win_min} min** of each other. "
+                 "Nobody has to be online at the same time — it works in the order you hunt.", ""]
+        tiers = " · ".join(f"**{need}+** {sp['name']} (+{round((sp['rare'] - 1) * 100)}% rare"
+                           + (f", +{round((sp['myth'] - 1) * 100)}% mythic" if sp['myth'] > 1 else "") + ")"
+                           for need, sp in reversed(TRIBE_PARTY_TIERS))
+        lines.append(tiers)
+        live = []
+        for b in BIOME_NAMES:
+            mem = _party_members(td, b)
+            if not mem:
+                continue
+            tier = _party_tier(len(mem))
+            newest = max(td["party"][b][u] for u in mem)
+            live.append(f"{BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES[b]}** — {len(mem)} hunting"
+                        + (f" · {emoji('target')} {tier['name']}" if tier else " · need one more")
+                        + f" · until <t:{int(newest + _party_window_s(td))}:R>")
+        lines += ["", "**Hunting right now**"] + (live or ["-# Nobody from the tribe has hunted recently."])
+        lines += ["", f"This week: **{wk.get('party_hunts', 0)}** party hunts "
+                      f"(**{TRIBE_CHEST_PARTY_HUNTS}** is a weekly-chest milestone). "
+                      f"Each party hunt also adds +{TRIBE_PARTY_CP_BONUS} contribution."]
+        if td.get("level", 1) >= 4:
+            lines.append(f"-# Scout Network (treasury) widens the window by 10 min per level — now level "
+                         f"{td.get('upgrades', {}).get('scout_network', 0)}.")
+    elif page == "territory":
+        lvl = td.get("level", 1)
+        lines = [f"### {emoji('location_pin')} {tribe_name} — Territory",
+                 "-# Every biome has an outpost. Hunting and mythic kills there earn your tribe influence. "
+                 "At the weekly reset the tribe with the most influence **per active hunter** holds it for a week: "
+                 f"+{round((TRIBE_TERRITORY_RARE_MULT - 1) * 100)}% rare odds for its members there, and "
+                 f"{TRIBE_TERRITORY_TRIBUTE_XP} tribe XP per outpost. Three busy hunters can out-score twenty casual ones.",
+                 f"-# Resets <t:{_week_end_ts()}:R> · a hunter counts once they have {TRIBE_TERRITORY_ACTIVE_PTS}+ influence in a biome · "
+                 f"claiming needs {TRIBE_TERRITORY_MIN_SCORE}+ per hunter."]
+        if lvl < TRIBE_TERRITORY_UNLOCK:
+            lines.append(f"\n{emoji('lock')} Your tribe earns influence from **Tribe Level {TRIBE_TERRITORY_UNLOCK}**.")
+        rows = []
+        for b in BIOME_NAMES:
+            holder = _territory_holder(b)
+            mine = _territory["influence"].get(b, {}).get(tribe_name)
+            my_score, my_n = _territory_score(mine) if mine else (0.0, 0)
+            rivals = [(t, _territory_score(r)[0]) for t, r in _territory["influence"].get(b, {}).items()
+                      if t != tribe_name and t in tribe_data]
+            top_rival = max(rivals, key=lambda x: x[1], default=None)
+            tag = (f"{emoji('flag')} **{holder}**" + (" (you)" if holder == tribe_name else "")) if holder else "unclaimed"
+            bits = [f"you {my_score:.0f} ({my_n} hunters)"] if mine else []
+            if top_rival and top_rival[1] > 0:
+                bits.append(f"top rival {top_rival[0]} {top_rival[1]:.0f}")
+            rows.append(f"{BIOME_EMOJIS.get(b, '')} **{BIOME_NAMES[b]}** — {tag}"
+                        + (f"\n-# {' · '.join(bits)}" if bits else ""))
+        lines += [""] + rows
+        garr = td.get("upgrades", {}).get("garrison", 0)
+        if garr:
+            lines.append(f"-# Outpost Garrison level {garr}: +{round(TRIBE_GARRISON_PER_LEVEL * garr * 100)}% influence.")
+    else:  # chest
+        my_cp = wk.get("cp", {}).get(user_id, 0)
+        ms = _chest_milestones(td, wk, _week_start_ts())
+        steps = _chest_steps(len(ms))
+        cur = _chest_tier(my_cp)
+        lines = [f"### {emoji('gift')} {tribe_name} — Weekly Reward Chest",
+                 f"-# Earn contribution by hunting (1 each, +{TRIBE_PARTY_CP_BONUS} in a party), "
+                 f"daily rewards ({TRIBE_CP_DAILY}), quests ({TRIBE_CP_TASK}) and mythic kills ({TRIBE_CP_MYTH}). "
+                 f"At the weekly reset (<t:{_week_end_ts()}:R>) everyone who reached a tier gets a crate. "
+                 "Nobody is ranked against anybody else — hit the line and you are paid."]
+        tier_lines = []
+        for need, label, crate in reversed(TRIBE_CHEST_TIERS):
+            mark = emoji('check_mark') if my_cp >= need else "▫️"
+            tier_lines.append(f"{mark} **{label}** — {need:,} contribution → {_chest_crate(crate, steps)}")
+        nxt = next(((need, label) for need, label, _c in reversed(TRIBE_CHEST_TIERS) if my_cp < need), None)
+        lines += ["", f"Your contribution: **{my_cp:,}**"
+                      + (f" · {nxt[0] - my_cp:,} to {nxt[1]}" if nxt else " · top tier reached")]
+        lines += tier_lines
+        lines += ["", f"**Tribe milestones this week:** {len(ms)} "
+                      f"({'every chest +' + str(steps) + ' rung' + ('s' if steps != 1 else '') if steps else '2 lift every chest a rung, 4 lift it two'})"]
+        possible = ["a weekly contract", "the tribe boss", "an expedition", "an outpost",
+                    f"{TRIBE_CHEST_PARTY_HUNTS} party hunts"]
+        lines += [f"-# {m}" for m in ms] or [f"-# Not yet — try: {', '.join(possible)}."]
+        top = sorted(wk.get("cp", {}).items(), key=lambda kv: kv[1], reverse=True)[:5]
+        if top:
+            lines += ["", "**Most contribution**"] + [f"-# {i}. `{get_username(u)}` — {c:,}" for i, (u, c) in enumerate(top, 1)]
+        last = td.get("last_chest")
+        if last:
+            mine = next((r for r in last["rows"] if r["uid"] == user_id), None)
+            got = f"**{mine['tier']}** → {mine['crate']}" if mine and mine["crate"] else "no chest"
+            lines += ["", f"**Last week ({last['tag']}):** {got} · {len(last['milestones'])} milestone(s)"]
+        if td.get("payouts"):
+            lines.append(f"-# {emoji('refresh')} {len(td['payouts'])} reward(s) are being delivered to crate inventories.")
+    return [{"type": 17, "accent_color": acc, "spoiler": False, "components": [
+        {"type": 10, "content": "\n".join(lines)[:3900]}, {"type": 14, "divider": True, "spacing": 1},
+        nav_row, util_row]}]
+
+
 def build_tribe_components(user_id: str, tribe_name: str,
                             page: str = "main", sort_mode: str = "rank") -> list:
     td         = tribe_data[tribe_name]
@@ -11779,6 +12182,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
         ("roles",     "Roles",         "tribe_leader",  "Leader, officers, members, recruits"),
         ("log",       "Activity Log",  "clock",         "Recent tribe events"),
         ("treasury",  "Treasury",      "🏦",            "Pooled funds & upgrade votes"),
+        ("party",     "Hunting Party", "target",        "Hunt together for a tracking edge"),
+        ("territory", "Territory",     "location_pin",  "Outposts your tribe fights over"),
+        ("chest",     "Weekly Chest",  "gift",          "Contribution rewards & milestones"),
         ("boss",      "Tribe Boss",    "🐉",            "This week's shared boss fight"),
         ("emblem",    "Emblems",       "🎨",            "Tribe emblem & banner colour"),
         ("shop",      "Perk Shop",     "shop",          "Spend gems on tribe boosts"),
@@ -11824,6 +12230,12 @@ def build_tribe_components(user_id: str, tribe_name: str,
         else:
             lines.append(f"{USER_EMOJIS['xp']} **MAX LEVEL**")
 
+        _my_cp = td["week"].get("cp", {}).get(user_id, 0)
+        _ct = _chest_tier(_my_cp)
+        lines.append(f"{emoji('gift')} Weekly chest: **{_ct[0] if _ct else 'not yet'}** · {_my_cp:,} contribution")
+        _ops = _tribe_outposts(tribe_name)
+        if _ops:
+            lines.append(f"{emoji('location_pin')} Outposts held: **{len(_ops)}**")
         if lvl >= TRIBE_UNLOCK_CONTRACTS and td["week"]["contracts"]:
             cts = td["week"]["contracts"]
             avg_pct = sum(min(1.0, c["progress"] / c["target"]) if c["target"] else 1.0
@@ -12059,6 +12471,9 @@ def build_tribe_components(user_id: str, tribe_name: str,
                     "min_values": 1, "max_values": 1, "flows": {}, "options": opts[:25]}]})
         rows += [_nav_row(), _util_row()]
         return [{"type": 17, "accent_color": acc, "spoiler": False, "components": rows}]
+
+    elif page in ("party", "territory", "chest"):
+        return _build_tribe_teamwork_page(user_id, tribe_name, td, page, _nav_row(), _util_row())
 
     elif page == "boss":
         acc  = _tribe_accent(user_id, td)
@@ -13543,6 +13958,7 @@ def _encode_runtime_state() -> dict:
         "last_sighting_end": _last_sighting_end,
         "last_condition_announce_ts": _last_condition_announce_ts,
         "event_scheduler":  dict(_event_scheduler),
+        "territory":        dict(_territory),
         "last_weekly_lb_tag": _last_weekly_lb_tag,
         "alive_ts": int(time.time() // 60 * 60),   # changes once a minute -> rewritten once a minute
         "outages":  [list(o) for o in _outages],
@@ -13610,6 +14026,12 @@ def load_runtime_state() -> None:
     _saved_ev = raw.get("event")
     if _saved_ev and _saved_ev.get("ends_ts", 0) > cutoff:
         _active_event = _saved_ev
+    _tr = raw.get("territory")
+    if isinstance(_tr, dict):
+        _territory.update(tag=str(_tr.get("tag", "")),
+                          influence=_tr.get("influence") if isinstance(_tr.get("influence"), dict) else {},
+                          owners=_tr.get("owners") if isinstance(_tr.get("owners"), dict) else {},
+                          pending=_tr.get("pending") if isinstance(_tr.get("pending"), list) else [])
     _wc = raw.get("world_conditions") or {}
     _world_conditions = {b: c for b, c in _wc.items()
                          if isinstance(c, dict) and c.get("ends_ts", 0) > cutoff}
@@ -14725,7 +15147,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await smart_update_v2(interaction, build_myth_fight_components(owner_id))
                 return
             if outcome.get("kind") == "kill":
-                await award_tribe_xp(owner_id, "myth_kill")
+                await award_tribe_xp(owner_id, "myth_kill", biome=data[owner_id].get("biome", ""))
                 await _guild_goal_contribute(interaction, owner_id, 1)
             await smart_update_v2(interaction, build_myth_outcome_components(owner_id, outcome))
             await check_everything(interaction, owner_id)
@@ -23721,11 +24143,19 @@ async def tribe_maintenance_task():
     cutoff = TRIBE_RECRUIT_PROBATION_H * 3600
     exp_reward_tribes: list[str] = []
     boss_reward_tribes: list[str] = []
+    payout_tribes: list[str] = []
     exp_finished: list[tuple[str, bool]] = []   # (tribe name, success) — announced after the lock
     async with tribe_only_transaction():
+        try:
+            _territory_settle()            # new week → new outpost holders
+            _territory_apply_pending()
+        except Exception as e:
+            print("territory settle error:", e)
         for tname, td in list(tribe_data.items()):
             try:
                 _ensure_tribe_fields(td)   # also rolls the week when its tag is stale
+                if td.get("payouts"):
+                    payout_tribes.append(tname)
                 promoted = []
                 for uid in list(td["roles"].get("recruits", [])):
                     if now - int(td.get("member_since", {}).get(uid, now)) >= cutoff:
@@ -23763,6 +24193,12 @@ async def tribe_maintenance_task():
             await _exp_pay_out(tname)
         except Exception as e:
             print(f"expedition pay-out failed for {tname}:", e)
+
+    for tname in dict.fromkeys(payout_tribes):
+        try:
+            await _tribe_pay_queue(tname)
+        except Exception as e:
+            print(f"tribe payout queue failed for {tname}:", e)
 
     for tname in dict.fromkeys(boss_reward_tribes):
         try:

@@ -58,5 +58,10 @@
     "key": "2026-10-08-emoji-art-pass",
     "title": "More custom icons across the game",
     "message": "- **Mythic fights:** Punch, Kick, Taunt and Flee now use the custom icon art on their buttons and in the fight log\n- **Tracking:** the Watch and Push choices and the trail scenes show custom icons\n- **World conditions:** Heavy Rain, Clear Skies and Aurora have their own art\n- **Tribes:** expeditions, routes, recruits and the Perks button got custom icons too\n-# Purely visual — nothing about gameplay or rewards changed."
+  },
+  {
+    "key": "2026-10-08-tribe-teamwork",
+    "title": "Tribes are teams now: Hunting Parties, Territory and a Weekly Chest",
+    "message": "- **Hunting Parties:** hunt the same biome as tribemates within 30 minutes of each other — nobody has to be online at once. **2 hunters** is a Duo, **3** a Hunting Party, **5** a Full Party, each with better odds on rare and mythic finds\n- **Territory:** every biome has an outpost. Hunting and mythic kills there earn your tribe influence; at the weekly reset the tribe with the most influence **per active hunter** holds it for a week (+5% rare odds there and bonus tribe XP). Three busy hunters can beat twenty casual ones\n- **Weekly Chest:** everything you do for the tribe now counts as contribution. Reach Bronze, Silver or Gold by the weekly reset and you get a crate — and tribe milestones (contracts, boss, expedition, outpost, party hunts) upgrade every chest\n- **Contracts pay you personally:** finish one and every participant gets a crate, not just tribe XP\n- **Built for small tribes:** contracts and bosses now scale from a 3-hunter tribe, expeditions need just 2 members and unlock at Tribe Level 4, and the boss arrives at Level 5 (was 8 and 10)\n- **Treasury:** two new shared upgrades — **Scout Network** (wider party window) and **Outpost Garrison** (more influence)\n-# Find it all under `/tribe` → Hunting Party, Territory and Weekly Chest."
   }
 ]

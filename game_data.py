@@ -264,6 +264,7 @@ EMOJI = {
     "dice":               "<:dice:1547384990554136738>",           # 🎲  gamble / dice
     "target":             "<:shot_on_target:1547384989031596183>", # 🎯  caught / catches-per-hunt
     "location_pin":       "<:destination_pin:1547384986297171978>",# 📍  you-are-here / region
+    "flag":               "🚩",                                       # 🚩  tribe outpost holder
     "refresh":            "<:refresh_button:1547384984934031432>", # 🔄  refresh buttons
     "announcement":       "<:annoucement:1547384983440728097>",    # 📢  dev mail / updates
     "link":               "<:links:1547384981989359730>",          # 🔗  invite links
@@ -1962,7 +1963,7 @@ GUILD_GOAL_CONTRIB_MIN = 25      # personal catches needed to earn the reward
 # Built ON TOP of tribe XP. A leader/officer opens one; members vote a route;
 # then normal play (hunts, myth kills, dailies) fills a shared progress bar.
 # Rewards are tribe XP + cosmetics + a crate each — never a cash flood.
-TRIBE_EXPEDITION_MIN_MEMBERS = 3
+TRIBE_EXPEDITION_MIN_MEMBERS = 2
 TRIBE_EXPEDITION_VOTE_MIN    = 15 * 60      # seconds before a route can be force-locked
 TRIBE_EXPEDITION_COOLDOWN_H  = 18          # hours after one finishes before the next
 TRIBE_EXPEDITIONS = {
@@ -3214,12 +3215,12 @@ def tribe_member_cap(level: int) -> int:
 # gated placeholders until their systems ship)
 TRIBE_UNLOCK_CONTRACTS   = 2
 TRIBE_UNLOCK_TREASURY    = 3
-TRIBE_UNLOCK_EXPEDITIONS = 8
-TRIBE_UNLOCK_BOSS        = 10
+TRIBE_UNLOCK_EXPEDITIONS = 4
+TRIBE_UNLOCK_BOSS        = 5
 
 TRIBE_RECRUIT_PROBATION_H = 24     # recruit → member auto-promote
 TRIBE_REJOIN_COOLDOWN_H   = 48     # after leaving/kick, wait before joining another
-TRIBE_CONTRACT_MIN_GROUP  = 5      # minimum scaling group so a 1-player tribe can't farm
+TRIBE_CONTRACT_MIN_GROUP  = 3      # minimum scaling group (a 3-hunter tribe can finish its own contracts)
 TRIBE_LOG_MAX             = 50
 
 # Weekly shared contracts. `target` is computed from the frozen scaling group.
@@ -3250,6 +3251,12 @@ TRIBE_UPGRADE_HISTORY   = 8           # resolved proposals kept for the Treasury
 # kind: "boost" (+step to a td field, capped by MAX_TRIBE_BOOST) · "slot" (+1 member cap)
 #       "level" (td["upgrades"][key] = 0..max). `costs` for "level" is per next-level.
 TRIBE_TREASURY_UPGRADES = {
+    "scout_network":    {"label": "Scout Network",   "kind": "level", "currency": "money",
+                         "costs": (400_000, 1_200_000, 3_000_000), "unlock": 4, "emoji": "🔭",
+                         "desc": "+10 min Hunting Party window per level"},
+    "garrison":         {"label": "Outpost Garrison", "kind": "level", "currency": "money",
+                         "costs": (600_000, 1_800_000, 4_500_000), "unlock": 5, "emoji": "🏰",
+                         "desc": "+15% territory influence per level"},
     "luck_boost":       {"label": "Luck Boost +5%",  "kind": "boost", "field": "luck_boost",
                          "step": 5, "currency": "money", "base": 50_000,  "unlock": 3, "emoji": "🍀"},
     "sell_price_boost": {"label": "Sell Boost +5%",  "kind": "boost", "field": "sell_price_boost",
@@ -3305,6 +3312,52 @@ TRIBE_BANNER_COLORS = {
     "violet":  ("Violet",  0x8E44AD), "onyx":   ("Onyx",   0x2C3E50),
 }
 TRIBE_BANNER_PRICE = 200_000
+
+# ─────────────────────────────────────────────
+# TRIBE TEAMWORK  ·  hunting parties, territory control, weekly reward chest
+# ─────────────────────────────────────────────
+# Built so a tribe of three genuinely active hunters can compete with a big one:
+# party tiers start at 2 members, territory is scored PER ACTIVE HUNTER, and the
+# weekly chest is judged against each member's own contribution, not the tribe's size.
+
+# Hunting Party — members who hunt the same biome within the window (they never need
+# to be online together). Gives a modest tracking edge: better rare/mythic odds.
+TRIBE_PARTY_WINDOW_MIN = 30
+TRIBE_PARTY_TIERS = (          # (distinct members, tier) — highest match wins
+    (5, {"name": "Full Party",    "rare": 1.18, "myth": 1.15}),
+    (3, {"name": "Hunting Party", "rare": 1.12, "myth": 1.08}),
+    (2, {"name": "Duo",           "rare": 1.06, "myth": 1.00}),
+)
+TRIBE_PARTY_CP_BONUS = 1       # extra weekly chest point for every hunt made inside a party
+
+# Territory — every biome has an outpost. Hunting (and mythic kills) there earn the
+# tribe influence; the top tribe PER ACTIVE HUNTER holds it for the following week.
+TRIBE_TERRITORY_UNLOCK       = 2      # tribe level
+TRIBE_TERRITORY_HUNT_PTS     = 1
+TRIBE_TERRITORY_CATCH_PTS    = 1
+TRIBE_TERRITORY_MYTH_PTS     = 30
+TRIBE_TERRITORY_DAY_CAP      = 150    # per member per day, across all biomes
+TRIBE_TERRITORY_ACTIVE_PTS   = 30     # a member counts as an active hunter there from this many points
+TRIBE_TERRITORY_MIN_SCORE    = 100    # influence per active hunter needed to claim an outpost
+TRIBE_TERRITORY_MIN_HUNTERS  = 3      # divisor floor, so one lone hunter can't win on a tiny denominator
+TRIBE_TERRITORY_RARE_MULT    = 1.05   # holders' members hunting there
+TRIBE_TERRITORY_TRIBUTE_XP   = 300    # tribe XP per held outpost, paid at settlement
+TRIBE_GARRISON_PER_LEVEL     = 0.15
+
+# Weekly Reward Chest — contribution points (CP) earned by individuals; at the week
+# rollover everyone over the threshold gets a chest, and tribe milestones improve it.
+TRIBE_CP_DAILY      = 25
+TRIBE_CP_TASK       = 50
+TRIBE_CP_MYTH       = 40
+TRIBE_CP_MYTH_CAP_DAY = 3
+TRIBE_CHEST_TIERS = (          # (min CP, label, base crate) — highest match wins
+    (1500, "Gold",   "Epic Crate"),
+    (500,  "Silver", "Rare Crate"),
+    (150,  "Bronze", "Uncommon Crate"),
+)
+TRIBE_CHEST_CRATE_LADDER = ("Common Crate", "Uncommon Crate", "Rare Crate", "Epic Crate", "Legendary Crate")
+TRIBE_CHEST_PARTY_HUNTS = 20   # party hunts in a week that count as a milestone
+TRIBE_CONTRACT_CRATES = ("Uncommon Crate", "Uncommon Crate", "Rare Crate")   # personal reward per contract
 
 # ─────────────────────────────────────────────
 # TRIBE BOSS  ·  one shared boss per week once a tribe reaches TRIBE_UNLOCK_BOSS
