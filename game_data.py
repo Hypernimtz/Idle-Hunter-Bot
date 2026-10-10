@@ -4029,7 +4029,11 @@ def parse_amount(raw: str) -> int | None:
 # ─────────────────────────────────────────────
 
 def generate_verify_code() -> str:
-    return "".join(random.choices(string.ascii_letters + string.digits, k=4))
+    """4-character check code from a cryptographic source (not the predictable PRNG), without the look-alike
+    characters that cause honest mistakes (0/O, 1/l/I)."""
+    import secrets as _secrets
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    return "".join(_secrets.choice(alphabet) for _ in range(4))
 
 def init_verify(_: str):
     return {"needed": False, "time": 250, "code": generate_verify_code()}
@@ -5041,7 +5045,7 @@ ROOKIE_GOALS = {
 # busywork with no real action behind it.
 HUNTERS_PATH_STEPS = [
     {"key": "buy_tool",         "label": "Buy your first real tool",
-     "emoji": "equipment", "panel": "shop",
+     "emoji": "equipment", "panel": "shop_tools",
      "hint": "Open `/shop` and buy a tool — it equips automatically.",
      "reward": {"gems": 10}},
     {"key": "hunt_with_tool",   "label": "Hunt with your new tool",

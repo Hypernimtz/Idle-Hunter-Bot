@@ -335,6 +335,8 @@ MYTH_XP_MULT             = 3.0   # mythic kills should out-XP a lucky danger-enc
 MYTH_WIN_HEAL_PCT        = 0.35  # a kill patches you up: +35% of max HP, so a win doesn't mean a medkit bill
 PRESTIGE_MIN_LEVEL    = 1000
 PRESTIGE_MIN_MONEY    = 1_000_000_000
+VERIFY_MAX_FAILS      = 5       # wrong /verify codes in a row before a temporary lockout
+VERIFY_LOCK_SECONDS   = 300
 PRESTIGE_BOOST_PER    = 20      # permanent +% Luck / Sell / XP per prestige
 PRESTIGE_DAILY_MAX    = 10      # prestiges that count toward the daily-reward bonus (+10% each -> +100% max)
 TRAVEL_MAX_MIN        = 60      # travel time between opposite edges of the world map
@@ -3806,7 +3808,7 @@ async def pause_running_timers(since: float, secs: float) -> int:
 # Register save callbacks (will be re-registered in on_ready after DB init).
 # Placeholders that do nothing until the real ones are set — must be async,
 # since the transaction managers `await` whatever is registered here.
-async def _noop_save() -> None:
+async def _noop_save(*_a) -> None:
     return None
 
 register_save_callbacks(_noop_save, _noop_save)
@@ -5851,6 +5853,32 @@ async def refresh_world_map_url(*, force: bool = False) -> None:
 # LOTTERY DRAW
 # ─────────────────────────────────────────────
 
+async def _lottery_pay_pending() -> bool:
+    """Deliver the lottery winner's prize if one is pending. Idempotent: the payout id is stored on the winner in
+    the SAME transaction as the money, so a retry after a crash (money saved, 'pending' not yet cleared) skips
+    the grant. Returns True once nothing is pending."""
+    pp = lottery_data.get("pending_payout")
+    if not pp:
+        return True
+    uid, amount, pid = str(pp["winner"]), int(pp["amount"]), pp["id"]
+    try:
+        init_user(uid)
+        async with user_transaction(uid):
+            paid = data[uid].setdefault("stats", {}).setdefault("lottery_paid", [])
+            if pid not in paid:
+                add_money(uid, amount, "lottery")
+                data[uid]["stats"]["lottery_wins"] = data[uid]["stats"].get("lottery_wins", 0) + 1
+                data[uid]["total_money_earned"] = data[uid].get("total_money_earned", 0) + amount
+                paid.append(pid)
+                del paid[:-100]
+    except Exception:
+        logger.exception("lottery payout failed — will retry")
+        return False
+    lottery_data.pop("pending_payout", None)
+    _write_text("lottery.json", json.dumps(lottery_data, indent=4, default=str))
+    return True
+
+
 async def run_lottery_draw():
     global lottery_data
     ld      = lottery_data
@@ -5876,23 +5904,16 @@ async def run_lottery_draw():
     cost           = winner_tickets * LOTTERY_TICKET_COST
     profit         = (pool - cost)
 
-    # Close the draw on disk BEFORE paying. If we crash between the payout and
-    # the reset, the old order re-drew the same pool on the next start (double
-    # payout); now the worst case is one missed payout, which an admin can grant.
+    # Close the draw on disk AND record the winner's payout as pending, in one write, BEFORE paying. A crash
+    # after this can't re-draw the pool (it is gone) and can't lose the prize either: the pending payout is
+    # retried on every lottery tick until it lands, and a marker saved with the money stops a double payment.
     ld["tickets"] = {}
     ld["pool"]    = 0
     ld["next_ts"] = next_ts
+    ld["pending_payout"] = {"id": f"lottery:{int(time.time())}:{winner_id}", "winner": winner_id, "amount": int(pool)}
     _write_text("lottery.json", json.dumps(ld, indent=4, default=str))
 
-    init_user(winner_id)
-    async with user_transaction(winner_id):
-        add_money(winner_id, pool, "lottery")
-        data[winner_id]["stats"]["lottery_wins"] = (
-            data[winner_id]["stats"].get("lottery_wins", 0) + 1
-        )
-        data[winner_id]["total_money_earned"] = (
-            data[winner_id].get("total_money_earned", 0) + pool
-        )
+    await _lottery_pay_pending()
     winner_name = get_username(winner_id)
 
     sorted_buyers = sorted(tickets.items(), key=lambda x: x[1], reverse=True)
@@ -8662,12 +8683,17 @@ def hunters_path_current_step(user_id: str) -> int:
             return i
     return len(HUNTERS_PATH_STEPS)
 
+HUNTERS_PATH_MYTH_LEVEL = 15
+
+
 def hunters_path_myths_allowed(user_id: str) -> bool:
     """Mythics are suppressed through the early stretch of the Path (see
     run_hunt) so they can't steal a moment from whichever step the player is
     mid-chasing, but stay off forever once the Path reaches its own
     'myth_lead' step — which needs one to actually fire."""
     if not hunters_path_active(user_id):
+        return True
+    if data[user_id].get("level", 1) >= HUNTERS_PATH_MYTH_LEVEL:      # ordinary progression unlocks them too
         return True
     return hunters_path_current_step(user_id) >= HUNTERS_PATH_MYTH_UNLOCK_STEP
 
@@ -10576,6 +10602,13 @@ def _onb_canonical_step(step: str) -> str:
         step = _ONB_RETIRED_STEP_SKIP[step]
     return step
 
+# Which onboarding step each button belongs to (a button from any other step is a stale click).
+_ONB_ACTION_STEPS = {
+    "tour": ("intro",), "track": ("intro",), "follow": ("intro", "catch"), "observe": ("intro", "catch"),
+    "shoot": ("catch",), "sell": ("sell",), "trial_hunt": ("trial",), "pack": ("pack",),
+}
+
+
 def onboarding_active(user_id: str) -> bool:
     if not FEATURE_ONBOARDING_V2:
         return False
@@ -10677,8 +10710,10 @@ def _onb_after_scripted_danger(user_id: str, outcome: dict) -> list:
     kind = outcome.get("kind")
     if kind == "win":
         _grant_title(user_id, "Rookie Hunter")
-        hi = data[user_id].setdefault("healing_inv", {})
-        hi["First Aid Kit"] = hi.get("First Aid Kit", 0) + 1
+        if not data[user_id].get("_onb_danger_rewarded"):          # one-time, independent of the fight itself
+            data[user_id]["_onb_danger_rewarded"] = True
+            hi = data[user_id].setdefault("healing_inv", {})
+            hi["First Aid Kit"] = hi.get("First Aid Kit", 0) + 1
         mark_user_dirty(user_id)
         analytics(user_id, "onboarding_danger_won")
         data[user_id]["_onb_danger_note"] = "won"
@@ -10724,7 +10759,7 @@ def _onb_tour_pages() -> list[str]:
          f"Idle Hunter is a hunting RPG that lives inside Discord. You travel **{n_biomes} regions** of the world — "
          f"each with its own wildlife, **{n_animals}+ real animals** in all.\n\n"
          "**1.** `/hunt` (or press **Hunt**) — you catch animals into your bag.\n"
-         "**2.** **Sell All** turns the bag into ◈ money and XP.\n"
+         "**2.** **Sell All** turns the bag into ◈ money (you earn XP the moment you catch an animal).\n"
          f"**3.** Spend it in `/shop` on better **tools** ({n_tools} of them), **ammo** and **vehicles**. "
          "A better tool catches more per hunt and unlocks deeper regions.\n"
          "**4.** Bows and guns need ammo — buy it, then load it in `/equip`.\n\n"
@@ -15599,6 +15634,8 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         await smart_update_v2(interaction, build_idle_components(user_id))
     elif panel == "quests":
         await smart_update_v2(interaction, build_quests_components(user_id))
+    elif panel == "shop_tools":
+        await smart_update_v2(interaction, build_shop_components(user_id, "tools"))
     elif panel == "hpath":
         await smart_update_v2(interaction, build_hunters_path_components(user_id))
     elif panel == "daily":
@@ -16052,6 +16089,9 @@ async def _open_crate_and_show(interaction, user_id: str, crate_name: str):
 # be "returned" by abandoning it. Boards started before the 2026-10-08 resize
 # still hold 16 cells, so everything below sizes itself off the stored board.
 
+SCRATCH_PAD_CONSOLATION_X = 3     # coins, in crate_value_scale units, when a card turns up no prize at all
+
+
 def start_scratch_pad(user_id: str) -> dict:
     """Roll a fresh board and store it as the user's active game. Mutates
     — call inside a ``user_transaction``."""
@@ -16086,6 +16126,10 @@ def reveal_scratch_pad_cell(user_id: str, idx: int) -> dict:
     if done:
         all_prizes = [c for c, shown in zip(board["cells"], board["revealed"])
                       if shown and c is not None]
+        if not all_prizes:                       # 0 of 5 found: a small consolation so a vote card never pays nothing
+            consolation = {"type": "money", "amount": max(1, int(SCRATCH_PAD_CONSOLATION_X * crate_value_scale(data[user_id].get("level", 1))))}
+            _apply_reward_simple(user_id, consolation, "scratch_pad")
+            all_prizes = [consolation]
         data[user_id]["scratch_pad"] = None
         return {"kind": "done", "prize": prize, "all_prizes": all_prizes}
     return {"kind": "revealed", "prize": prize}
@@ -17262,6 +17306,13 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         if not onboarding_active(owner_id):
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
+        _cur_step = _onb_canonical_step(_onb(owner_id).get("step", "intro"))
+        _need = _ONB_ACTION_STEPS.get(action)
+        if _need and _cur_step not in _need:
+            # An old panel (or a double click): accept only what belongs to the player's CURRENT step and just
+            # redraw where they actually are — never rewind, never start another scripted fight.
+            await smart_update_v2(interaction, build_onboarding_components(owner_id))
+            return
 
         if action == "tour":
             sub = parts[2] if len(parts) > 3 else "exit"
@@ -17317,11 +17368,16 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             analytics(owner_id, "onboarding_pack_selected", pack=key, granted=ok)
             analytics(owner_id, "onboarding_completed")
         elif action == "skip":
+            # Skip the story, keep the freebie: jump straight to the specialty pick (one screen), then done.
             async with user_transaction(owner_id):
-                _onb_set_step(owner_id, "done")
+                if not _onb(owner_id).get("starter_pack"):
+                    _onb_set_step(owner_id, "pack")
+                else:
+                    _onb_set_step(owner_id, "done")
             analytics(owner_id, "onboarding_skipped")
-            await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
-            return
+            if _onb(owner_id).get("completed"):
+                await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
+                return
         await smart_update_v2(interaction, build_onboarding_components(owner_id, tour=tour_page))
         return
 
@@ -19228,6 +19284,12 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction,
                     f"{emoji('cooldown')} Wait **{remaining:.1f}s** before gambling again.", 0xE67E22)
                 return
+            # Reserve the cooldown NOW: the check and the claim happen with no await in between, so several
+            # clicks queued behind the user lock can't all pass it. (Blackjack's hit/stand belong to a hand that
+            # was already paid for, so only the deal reserves.)
+            if not (parts[1] == "bj" and _sub2 != "deal"):
+                data[owner_id]["last_gamble"] = now
+                mark_user_dirty(owner_id)
 
         # A bet stored before a level reset (or a cap change) must not slip past the cap.
         _bet_keys = {"cf": "_cf_bet", "rl": "_roulette_bet", "rps": "_rps_bet",
@@ -20102,14 +20164,24 @@ class LotteryBuyModal(_V2Modal, title="Buy Lottery Tickets"):
                 f"{emoji('cross_mark')} Need **◈ {total_cost:,}** for {qty:,} ticket(s).", 0xE74C3C)
             return
         paid = False
-        async with user_transaction(self.user_id):
-            if data[self.user_id]["money"] >= total_cost:          # re-check under lock
-                paid = spend_money(self.user_id, total_cost, "lottery tickets")
-                if paid:
-                    ld = lottery_data
-                    ld["tickets"][self.user_id] = ld["tickets"].get(self.user_id, 0) + qty
-                    ld["pool"]                  = ld.get("pool", 0) + total_cost
-                    save_lottery(ld)
+        ld = lottery_data
+        try:
+            async with user_transaction(self.user_id):
+                if data[self.user_id]["money"] >= total_cost:          # re-check under lock
+                    paid = spend_money(self.user_id, total_cost, "lottery tickets")
+                    if paid:
+                        ld["tickets"][self.user_id] = ld["tickets"].get(self.user_id, 0) + qty
+                        ld["pool"]                  = ld.get("pool", 0) + total_cost
+                        # Durable BEFORE the money flush: a crash can give a free ticket, never take coins for nothing.
+                        _write_text("lottery.json", json.dumps(ld, indent=4, default=str))
+        except Exception:
+            if paid:                                                   # the purchase didn't stick: undo the tickets
+                ld["tickets"][self.user_id] = max(0, ld["tickets"].get(self.user_id, 0) - qty)
+                if ld["tickets"][self.user_id] <= 0:
+                    ld["tickets"].pop(self.user_id, None)
+                ld["pool"] = max(0, ld.get("pool", 0) - total_cost)
+                save_lottery(ld)
+            raise
         if not paid:
             await send_ephemeral_v2(interaction,
                 f"{emoji('cross_mark')} Need **◈ {total_cost:,}** for {qty:,} ticket(s).", 0xE74C3C)
@@ -21942,14 +22014,32 @@ async def verify_cmd(interaction: discord.Interaction, code: str):
     if not v["needed"]:
         await send_ephemeral_v2(interaction, f"{emoji('check_mark')} You don't need to verify right now!", 0x2ECC71)
         return
-    if code.upper() == v["code"].upper():
+    now = time.time()
+    if v.get("lock_until", 0) > now:
+        await send_ephemeral_v2(interaction,
+            f"{emoji('cooldown')} Too many wrong codes — try again <t:{int(v['lock_until'])}:R>.", 0xE67E22)
+        return
+    if code.strip().upper() == v["code"].upper():
         async with user_transaction(user_id):
             v["needed"] = False
             v["time"]   = 250
             v["code"]   = generate_verify_code()
+            v["fails"], v["lock_until"] = 0, 0
         await send_ephemeral_v2(interaction, f"### {emoji('check_mark')} Verified!\nHappy hunting!", 0x2ECC71)
     else:
-        await send_ephemeral_v2(interaction, f"### {emoji('cross_mark')} Wrong Code\nTry again.", 0xE74C3C)
+        async with user_transaction(user_id):
+            v["fails"] = v.get("fails", 0) + 1
+            locked = v["fails"] >= VERIFY_MAX_FAILS
+            if locked:
+                v["lock_until"] = now + VERIFY_LOCK_SECONDS
+                v["fails"] = 0
+                v["code"] = generate_verify_code()          # a fresh code after a lockout
+        if locked:
+            await send_ephemeral_v2(interaction,
+                f"### {emoji('cross_mark')} Wrong Code\nToo many tries — locked for {VERIFY_LOCK_SECONDS // 60} minutes. "
+                f"You'll get a new code afterwards.", 0xE74C3C)
+        else:
+            await send_ephemeral_v2(interaction, f"### {emoji('cross_mark')} Wrong Code\nTry again.", 0xE74C3C)
 
 @bot.tree.command(name="invite", description="Invite Idle Hunter to your server!")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -26480,9 +26570,9 @@ _add_staff_command(bot_group)
 # AUTOSAVE & TASKS
 # ─────────────────────────────────────────────
 
-@tasks.loop(seconds=120)
+@tasks.loop(seconds=30)
 async def autosave_users():
-    """Full safety-net save. Per-transaction flushes only write changed rows
+    """Full safety-net save every 30 s. Per-transaction flushes only write changed rows
     (see _flush_dirty_users); this catches any mutation made outside a
     transaction, so it stays a full write."""
     if data:
@@ -26554,6 +26644,8 @@ async def _arse(e): print("Autosave runtime-state error:", e)
 @tasks.loop(seconds=30)
 async def lottery_tick():
     global lottery_data
+    if lottery_data.get("pending_payout"):
+        await _lottery_pay_pending()                 # finish a payout a crash or a failed save interrupted
     if time.time() >= lottery_data.get("next_ts", 0):
         await run_lottery_draw()
 
@@ -27817,7 +27909,10 @@ async def on_ready():
     # Discord reply built on its result) completes. A fire-and-forget
     # asyncio.create_task() here would let the process crash between "the
     # player got their response" and "the row was actually written".
-    async def _flush_dirty_users():
+    async def _flush_dirty_users(only=()):
+        """Write every changed user. If the batch fails, retry each row on its own so one unsavable account
+        can't block the rest. Raises SaveFailed only when an account in ``only`` (the one the calling
+        transaction touched) could not be written — the transaction manager then rolls the action back."""
         if not _dirty_users:
             return
         batch_ids = [uid for uid in list(_dirty_users) if uid in data]
@@ -27827,12 +27922,21 @@ async def on_ready():
         batch = {uid: data[uid] for uid in batch_ids}
         try:
             await bulk_save_users(batch)
+            return
         except Exception as e:
-            # The write failed — put the markers back so the next flush (or
-            # the 20s full autosave) retries instead of silently dropping them.
-            for uid in batch_ids:
-                _dirty_users.add(uid)
-            print(f"incremental user save failed, re-queued {len(batch_ids)}: {e}")
+            print(f"incremental user save failed ({len(batch_ids)} rows), retrying one by one: {e}")
+        failed = []
+        for uid in batch_ids:
+            try:
+                await bulk_save_users({uid: data[uid]})
+            except Exception as e2:
+                failed.append(uid)
+                print(f"  could not save {uid}: {e2}")
+        for uid in failed:
+            _dirty_users.add(uid)          # retried by the next flush / the periodic autosave
+        mine = set(map(str, only or ())) & set(failed)
+        if mine:
+            raise backend.SaveFailed(f"could not save {sorted(mine)}")
 
     async def _flush_tribes_cb():
         # Write only the tribes a transaction actually touched (and drop rows of
@@ -27856,6 +27960,7 @@ async def on_ready():
             if all_dirty:
                 backend.mark_tribes_dirty()
             print(f"incremental tribe save failed, re-queued: {e}")
+            raise backend.SaveFailed("could not save tribes") from e
 
     register_save_callbacks(_flush_dirty_users, _flush_tribes_cb)
 

@@ -163,5 +163,10 @@
     "key": "2026-10-10-leaderboards",
     "title": "Leaderboard accuracy",
     "message": "- **Daily & Weekly \"Money\" boards now rank money you actually EARNED** (selling, quests, dailies, crates, kills…) — not balance growth, so gifts, gambling winnings and market trades no longer count\n- **Last week's Top Earner results are frozen at the rollover**, so they can't change when someone opens the leaderboard or the bot restarts\n- Daily and weekly baselines are set right at midnight UTC, so early activity isn't lost\n- Players with the same level are now ranked by XP everywhere\n- Rank-drop DMs ignore categories where nobody has a score yet"
+  },
+  {
+    "key": "2026-10-10-safety-onboarding",
+    "title": "Safer saves, lottery & a smoother start",
+    "message": "- **Nothing is confirmed unless it was actually saved** — if a save fails the action is undone instead of showing a success that a restart could erase\n- **Lottery payouts** are recorded before they're paid, retried until they land, and can't be paid twice; ticket purchases are no longer lost if something goes wrong\n- **/verify** now locks for 5 minutes after 5 wrong codes, and codes avoid look-alike characters\n- **Faster gambling clicks can't skip the cooldown** anymore\n- Autosave runs every 30 seconds\n- **New players:** old buttons from earlier tutorial screens no longer mess up the flow, skipping the intro still lets you pick your starter specialty, and Hunter's Path now opens the **Tools** shop for your first purchase\n- Mythicals appear from level 15 even if you haven't finished Hunter's Path\n- **Scratch Pads** always pay at least a small prize"
   }
 ]

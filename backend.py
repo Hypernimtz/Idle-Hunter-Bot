@@ -1283,16 +1283,27 @@ def register_save_callbacks(save_users: Callable, save_tribes: Callable) -> None
     _save_tribes_fn = save_tribes
 
 
-async def _flush_users() -> None:
+class SaveFailed(RuntimeError):
+    """A transaction's changes could not be written to the database. The transaction managers roll the
+    in-memory state back and re-raise this, so the action is NOT confirmed to the player (no "purchase
+    complete" for something a crash would erase)."""
+
+
+async def _flush_users(*uids: str) -> None:
     """Flush users to SQLite - awaited by transaction context managers so the
     write finishes before the transaction (and any reply built on its result)
-    does — no fire-and-forget task that could still be in flight on crash."""
+    does — no fire-and-forget task that could still be in flight on crash.
+    ``uids`` are the accounts this transaction touched: only a failure to save THEM raises SaveFailed
+    (someone else's unsavable row is retried and logged, but can't block everybody)."""
     if _save_users_fn is not None:
-        await _save_users_fn()
+        try:
+            await _save_users_fn(tuple(uids))
+        except TypeError:
+            await _save_users_fn()           # a callback registered without the argument
 
 
 async def _flush_tribes() -> None:
-    """Flush tribes to SQLite - see _flush_users."""
+    """Flush tribes to SQLite - see _flush_users. Raises SaveFailed when the write fails."""
     if _save_tribes_fn is not None:
         await _save_tribes_fn()
 
@@ -1397,9 +1408,16 @@ async def user_transaction(user_id: str):
             yield
         except BaseException:
             _restore_user(user_id, snap)
+            try:
+                await _flush_users(user_id)
+            except SaveFailed:
+                pass                          # the original error is the one that propagates
             raise
-        finally:
-            await _flush_users()
+        try:
+            await _flush_users(user_id)
+        except SaveFailed:
+            _restore_user(user_id, snap)      # not durable -> not done
+            raise
 
 
 @asynccontextmanager
@@ -1423,9 +1441,17 @@ async def multi_user_transaction(*user_ids: str):
         except BaseException:
             for uid, s in snaps.items():
                 _restore_user(uid, s)
+            try:
+                await _flush_users(*uniq)
+            except SaveFailed:
+                pass
             raise
-        finally:
-            await _flush_users()
+        try:
+            await _flush_users(*uniq)
+        except SaveFailed:
+            for uid, s in snaps.items():
+                _restore_user(uid, s)
+            raise
 
 
 @asynccontextmanager
@@ -1456,20 +1482,32 @@ async def user_tribe_transaction(user_id: str, *tribe_names: str):
             else:
                 tsnaps = None
                 full_snap = _snap_tribes()
-            try:
-                yield
-            except BaseException:
+            def _undo():
                 _restore_user(user_id, usnap)
                 if tsnaps is not None:
                     for name, s in tsnaps.items():
                         _restore_tribe(name, s)
                 else:
                     _restore_tribes(full_snap)
-                raise
-            finally:
+
+            try:
+                yield
+            except BaseException:
+                _undo()
                 mark_tribes_dirty(*tribe_names)
-                await _flush_users()
+                try:
+                    await _flush_users(user_id)
+                    await _flush_tribes()
+                except SaveFailed:
+                    pass
+                raise
+            mark_tribes_dirty(*tribe_names)
+            try:
+                await _flush_users(user_id)
                 await _flush_tribes()
+            except SaveFailed:
+                _undo()
+                raise
 
 
 @asynccontextmanager
@@ -1490,18 +1528,29 @@ async def tribe_only_transaction(*tribe_names: str):
         else:
             tsnaps = None
             full_snap = _snap_tribes()
-        try:
-            yield
-        except BaseException:
+        def _undo():
             if tsnaps is not None:
                 for name, s in tsnaps.items():
                     _restore_tribe(name, s)
             else:
                 _restore_tribes(full_snap)
-            raise
-        finally:
+
+        try:
+            yield
+        except BaseException:
+            _undo()
             mark_tribes_dirty(*tribe_names)
+            try:
+                await _flush_tribes()
+            except SaveFailed:
+                pass
+            raise
+        mark_tribes_dirty(*tribe_names)
+        try:
             await _flush_tribes()
+        except SaveFailed:
+            _undo()
+            raise
 
 
 # ─────────────────────────────────────────────
