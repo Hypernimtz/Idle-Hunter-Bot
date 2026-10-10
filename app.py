@@ -106,6 +106,8 @@ from game_data import (
     SCRATCH_PAD_GRID_SIZE, SCRATCH_PAD_COLS, SCRATCH_PAD_PRIZE_COUNT, SCRATCH_PAD_MAX_PICKS,
     SCRATCH_PAD_REWARDS, roll_scratch_pad_prize,
     VOTE_URL, VOTE_COOLDOWN_HOURS, VOTE_REWARD_CRATE, VOTE_REWARD_MONEY_X, VOTE_REWARD_GEMS,
+    VOTE_REWARD_CRATE_REPEAT, VOTE_CLAIM_WINDOW_HOURS,
+    DAILY_STREAK_FULL_DAYS, DAILY_STREAK_SLOW_PER_DAY, DAILY_STREAK_MAX_BONUS,
     # Quests
     QUEST_TEMPLATES, QUEST_TIERS, QUESTS_PER_DAY, QUESTS_MAX,
     WEEKLY_QUEST_TEMPLATES, QUESTS_PER_WEEK, WEEKLY_QUESTS_MAX, DAILY_QUEST_MILESTONES,
@@ -6207,6 +6209,18 @@ def _outage_forgiven_dates() -> set:
             secs[key] = secs.get(key, 0) + (seg_end - t)
             t = seg_end
     return {k for k, v in secs.items() if v >= OUTAGE_FORGIVE_SEC}
+
+def daily_streak_bonus(streak: int) -> float:
+    """Payout bonus from a daily streak: +1%/day for the first 100 days, +0.25%/day after, capped."""
+    streak = max(0, int(streak))
+    bonus = min(streak, DAILY_STREAK_FULL_DAYS) / 100 + max(0, streak - DAILY_STREAK_FULL_DAYS) * DAILY_STREAK_SLOW_PER_DAY
+    return min(bonus, DAILY_STREAK_MAX_BONUS)
+
+
+def daily_multiplier(streak: int, prestige: int) -> float:
+    """Streak + prestige part of a daily reward's multiplier (events are applied on top)."""
+    return 1 + daily_streak_bonus(streak) + min(max(0, prestige), PRESTIGE_DAILY_MAX) * 0.1
+
 
 def calc_streak(last_date_str: str, current_streak: int, forgiven: set = None) -> int:
     if not last_date_str:
@@ -12317,6 +12331,17 @@ def build_idle_haul_result_components(user_id: str, result: dict) -> list:
         ]},
     ]}]
 
+def vote_crate_for(user_id: str) -> str:
+    """The crate the player's NEXT vote claim pays: Epic for the first claim of a UTC day, Rare after."""
+    vd = data[user_id].get("vote_day") or {}
+    return VOTE_REWARD_CRATE if vd.get("tag") != today_utc() or vd.get("n", 0) <= 0 else VOTE_REWARD_CRATE_REPEAT
+
+
+def vote_checking_enabled() -> bool:
+    """Votes can only be paid when they can be verified against discordbotlist.com."""
+    return bool(DBL_TOKEN)
+
+
 def build_daily_components(user_id: str, claimed: bool = False,
                             reward_type: str = "", reward_amt: int = 0, streak: int = 0) -> list:
     last_date  = data[user_id].get("last_daily_date", "")
@@ -12328,7 +12353,7 @@ def build_daily_components(user_id: str, claimed: bool = False,
         body = (
             f"### {emoji('daily')} Daily Claimed!\n"
             f"You received **{icon}{reward_amt:,}**!\n"
-            f"-# {emoji('fire')} Streak: **{streak}** days · +{streak}% bonus\n"
+            f"-# {emoji('fire')} Streak: **{streak}** days · x{daily_multiplier(streak, data[user_id].get('prestige', 0)):.2f} payout\n"
             f"-# Resets <t:{nxt_ts}:R>"
         )
     elif already:
@@ -12339,23 +12364,32 @@ def build_daily_components(user_id: str, claimed: bool = False,
         )
     else:
         tier = get_daily_tier(data[user_id]["level"])
+        pres = data[user_id].get("prestige", 0)
+        nxt_streak = calc_streak(last_date, cur_streak) + 1          # the streak this claim would make
+        mult = daily_multiplier(nxt_streak, pres) * ev_daily_mult()
         body = (
             f"### {emoji('daily')} Daily Reward\nClaim your daily reward!\n"
-            f"-# {emoji('fire')} Streak: **{cur_streak}** days · +{cur_streak}% bonus\n"
-            f"-# {emoji('money_bag')} Possible: ◈ {tier['money_min']:,}–{tier['money_max']:,} "
-            f"or {emoji('gem')}{tier['gems_min']}–{tier['gems_max']}\n"
+            f"-# {emoji('fire')} Streak: **{cur_streak}** days → **{nxt_streak}** · streak +{int(daily_streak_bonus(nxt_streak) * 100)}%"
+            + (f" · prestige +{min(pres, PRESTIGE_DAILY_MAX) * 10}%" if pres else "")
+            + f" = **x{mult:.2f}**\n"
+            f"-# {emoji('money_bag')} Possible: ◈ {int(tier['money_min'] * mult):,}–{int(tier['money_max'] * mult):,} "
+            f"or {emoji('gem')}{int(tier['gems_min'] * mult)}–{int(tier['gems_max'] * mult)} (50/50)\n"
+            f"-# Missing a day only shaves your streak a little (1, 2, 4… days) — it doesn't reset to zero.\n"
             f"-# Resets <t:{nxt_ts}:R>"
         )
-    vote_ready = time.time() >= data[user_id].get("vote_cd", 0)
+    vote_ready = time.time() >= data[user_id].get("vote_cd", 0) and vote_checking_enabled()
     if vote_ready:
         _vm = int(VOTE_REWARD_MONEY_X * crate_value_scale(data[user_id].get("level", 1)))
+        _vc = vote_crate_for(user_id)
         vote_text = (
             f"### {emoji('ballot_box')} Vote reward ready!\n"
             f"Vote for Idle Hunter (every **{VOTE_COOLDOWN_HOURS}h**) and claim "
-            f"{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{_vm:,} · "
+            f"{CRATE_TIERS[_vc]['emoji']} 1× {_vc} · ◈ ~{_vm:,} · "
             f"{emoji('gem')} {VOTE_REWARD_GEMS} · {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad.\n"
             f"-# Vote first, then press **Claim Vote Reward**."
         )
+    elif not vote_checking_enabled():
+        vote_text = f"-# {emoji('ballot_box')} Vote rewards are paused until vote checking is set up."
     else:
         vote_text = (f"-# {emoji('ballot_box')} Next vote reward "
                      f"<t:{int(data[user_id].get('vote_cd', 0))}:R> · `/vote`")
@@ -18024,11 +18058,14 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         # lock. "since_ts" derives the last successful claim time from vote_cd
         # (it's always set to last_claim + VOTE_COOLDOWN_HOURS on a claim), so
         # a brand-new account (vote_cd == 0) accepts any vote on record.
-        if DBL_TOKEN:
-            since_ts = data[owner_id].get("vote_cd", 0) - VOTE_COOLDOWN_HOURS * 3600
-            verified = await check_dbl_recent_vote(owner_id, since_ts)
-        else:
-            verified = True   # no DBL_TOKEN configured — honor-system fallback
+        if not vote_checking_enabled():
+            # No honor system: without DBL_TOKEN a vote can't be verified, so nothing is paid.
+            await send_ephemeral_v2(interaction,
+                f"{emoji('cross_mark')} Vote rewards are paused — vote checking isn't set up right now.", 0xE74C3C)
+            return
+        _last_claim = data[owner_id].get("vote_cd", 0) - VOTE_COOLDOWN_HOURS * 3600 if data[owner_id].get("vote_cd", 0) else 0
+        since_ts = max(_last_claim, time.time() - VOTE_CLAIM_WINDOW_HOURS * 3600)   # old votes never count, even for a first claim
+        verified = await check_dbl_recent_vote(owner_id, since_ts)
         if verified is None:
             await send_ephemeral_v2(interaction,
                 f"{emoji('cross_mark')} Couldn't reach discordbotlist.com to check your vote — try again in a minute.",
@@ -18042,6 +18079,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
 
         claimed = False
         money_amt = 0
+        vcrate = VOTE_REWARD_CRATE
         async with user_transaction(owner_id):
             # Re-check under the lock so a double-click can't claim twice.
             if time.time() >= data[owner_id].get("vote_cd", 0):
@@ -18050,12 +18088,15 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 add_money(owner_id, money_amt, "vote")
                 add_gems(owner_id, VOTE_REWARD_GEMS, "vote")
                 data[owner_id]["total_money_earned"] = data[owner_id].get("total_money_earned", 0) + money_amt
+                vcrate = vote_crate_for(owner_id)
                 ci = data[owner_id].setdefault("crate_inv", {})
-                ci[VOTE_REWARD_CRATE] = ci.get(VOTE_REWARD_CRATE, 0) + 1
+                ci[vcrate] = ci.get(vcrate, 0) + 1
+                vd = data[owner_id].get("vote_day") or {}
+                data[owner_id]["vote_day"] = {"tag": today_utc(), "n": (vd.get("n", 0) if vd.get("tag") == today_utc() else 0) + 1}
                 add_item(owner_id, "Scratch Pad", 1)
                 data[owner_id]["vote_cd"] = time.time() + VOTE_COOLDOWN_HOURS * 3600
                 claimed = True
-        await smart_update_v2(interaction, build_vote_components(owner_id, claimed, money_amt))
+        await smart_update_v2(interaction, build_vote_components(owner_id, claimed, money_amt, vcrate))
         if claimed:
             await check_achievements_and_badges(interaction, owner_id)
         return
@@ -18087,7 +18128,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     level    = data[owner_id]["level"]
                     prestige = data[owner_id].get("prestige", 0)
                     tier     = get_daily_tier(level)
-                    bonus    = (1 + (streak / 100) + (min(prestige, PRESTIGE_DAILY_MAX) * 0.1)) * ev_daily_mult()
+                    bonus    = daily_multiplier(streak, prestige) * ev_daily_mult()
                     rtype    = random.choice(["money", "gems"])
                     if rtype == "money":
                         base = random.randint(tier["money_min"], tier["money_max"])
@@ -20771,17 +20812,24 @@ async def check_dbl_recent_vote(user_id: str, since_ts: float, bot_id: int | str
             return True
     return False
 
-def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 0) -> list:
+def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 0, crate_name: str = "") -> list:
     now = time.time()
-    ready = now >= data[user_id].get("vote_cd", 0)
-    verified = DBL_TOKEN and bot.user
+    enabled = vote_checking_enabled()
+    ready = now >= data[user_id].get("vote_cd", 0) and enabled
+    crate_name = crate_name or vote_crate_for(user_id)
     if claimed:
         body = (
             f"### {emoji('ballot_box')} Vote Reward Claimed!\n"
-            f"You received **{CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE}**, "
+            f"You received **{CRATE_TIERS[crate_name]['emoji']} 1× {crate_name}**, "
             f"**◈ {money_amt:,}**, **{emoji('gem')} {VOTE_REWARD_GEMS}**, "
             f"and **{ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad**!\n"
             f"-# {emoji('star')} Thanks for the support — come back in **{VOTE_COOLDOWN_HOURS}h**."
+        )
+    elif not enabled:
+        body = (
+            f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
+            f"Vote rewards are **paused** — vote checking isn't set up right now, so claims can't be verified.\n"
+            f"-# You can still support the bot with the button below."
         )
     elif not ready:
         body = (
@@ -20792,13 +20840,12 @@ def build_vote_components(user_id: str, claimed: bool = False, money_amt: int = 
     else:
         level = data[user_id].get("level", 1)
         preview_money = int(VOTE_REWARD_MONEY_X * crate_value_scale(level))
-        check_line = ("-# We check discordbotlist.com for your vote before paying out."
-                       if verified else
-                       "-# `⚠️` Vote checking isn't configured — claims aren't verified right now.")
+        check_line = (f"-# We check discordbotlist.com for your vote before paying out. "
+                      f"First claim each day gives a **{VOTE_REWARD_CRATE}**, a second one a **{VOTE_REWARD_CRATE_REPEAT}**.")
         body = (
             f"### {emoji('ballot_box')} Vote for Idle Hunter\n"
             f"Vote on discordbotlist.com, then come back and claim your reward:\n"
-            f"-# {CRATE_TIERS[VOTE_REWARD_CRATE]['emoji']} 1× {VOTE_REWARD_CRATE} · ◈ ~{preview_money:,} "
+            f"-# {CRATE_TIERS[crate_name]['emoji']} 1× {crate_name} · ◈ ~{preview_money:,} "
             f"· {emoji('gem')} {VOTE_REWARD_GEMS} · {ITEMS['Scratch Pad']['emoji']} 1× Scratch Pad\n"
             f"-# {emoji('clock')} One claim every **{VOTE_COOLDOWN_HOURS}h**.\n"
             f"{check_line}"

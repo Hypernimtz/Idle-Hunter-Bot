@@ -128,5 +128,10 @@
     "key": "2026-10-09-event-how-to-play",
     "title": "Events now explain themselves",
     "message": "- **Every event panel now has a \"How to play\"** — what to do, what you collect, how many you can earn a day, and exactly what you unlock at each milestone\n- **The daily \"Today\" panel tells you how to take part** each day (Explorer, Training, Workshop, Tribe, Most Wanted, Monster Rampage, Recovery) — including which buttons to press\n- Fox, Shipwreck and Duck events got a how-to too"
+  },
+  {
+    "key": "2026-10-09-daily-vote",
+    "title": "Daily & vote rewards",
+    "message": "- **Vote rewards are only paid for real, verified votes** — and a vote has to be recent (within 24h) to count\n- **Vote crates:** your first vote claim each day gives an **Epic Crate**; a second claim the same day gives a **Rare Crate**\n- **Daily streak bonus** is +1% per day up to 100 days, then grows slowly (your streak itself still counts forever)\n- **Level 1200+ daily rewards** are smoother (money 3M–20M, gems 40–80)\n- The **daily screen shows your real payout** — streak, prestige and the final multiplier, plus the range you can win"
   }
 ]

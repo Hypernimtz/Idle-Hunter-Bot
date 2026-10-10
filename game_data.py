@@ -3526,8 +3526,15 @@ DAILY_TIERS: list[dict] = [
     {"min_level":  250, "money_min":      50_000, "money_max":       200_000, "gems_min":  12, "gems_max":   25},
     {"min_level":  500, "money_min":     200_000, "money_max":     1_000_000, "gems_min":  18, "gems_max":   40},
     {"min_level": 1000, "money_min":   1_000_000, "money_max":    10_000_000, "gems_min":  30, "gems_max":   65},
-    {"min_level": 1200, "money_min":  10_000_000, "money_max":   100_000_000, "gems_min":  50, "gems_max":  110},
+    {"min_level": 1200, "money_min":   3_000_000, "money_max":    20_000_000, "gems_min":  40, "gems_max":   80},
 ]
+
+# Daily streak payout bonus: +1% per streak day up to DAILY_STREAK_FULL_DAYS, then only
+# +0.25% per extra day, never more than +DAILY_STREAK_MAX_BONUS (a 365-day streak is +1.66x, not +3.65x).
+# The streak itself keeps counting forever — only the payout bonus tapers.
+DAILY_STREAK_FULL_DAYS   = 100
+DAILY_STREAK_SLOW_PER_DAY = 0.0025
+DAILY_STREAK_MAX_BONUS   = 1.75
 
 
 def get_daily_tier(level: int) -> dict:
@@ -4911,7 +4918,9 @@ def roll_scratch_pad_prize(value_scale: int = 1) -> dict:
 # ── /vote — discordbotlist.com upvote reward ─────────────────────────────
 VOTE_URL             = "https://discordbotlist.com/bots/idle-hunter/upvote"
 VOTE_COOLDOWN_HOURS  = 12   # matches discordbotlist's real per-vote cooldown
-VOTE_REWARD_CRATE    = "Epic Crate"
+VOTE_REWARD_CRATE    = "Epic Crate"        # the first claim of each UTC day ...
+VOTE_REWARD_CRATE_REPEAT = "Rare Crate"    # ... later claims that same day give this (two votes/day is allowed)
+VOTE_CLAIM_WINDOW_HOURS = 24               # a vote older than this never counts, even for a first claim
 VOTE_REWARD_MONEY_X  = 10   # multiples of crate_value_scale(level)
 VOTE_REWARD_GEMS     = 5    # small on purpose — see the gem-faucet budget (100 gems ≈ $1)
 
