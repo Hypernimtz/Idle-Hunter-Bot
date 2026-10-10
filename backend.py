@@ -209,6 +209,19 @@ async def init_schema():
         )
     """)
 
+    # Referral delivery tracking (crash-safe payouts): qualification is recorded once with a fixed sequence
+    # number (so each milestone belongs to exactly one referral), and each side's reward is flagged delivered
+    # only AFTER it was saved on the player. NULL qual_seq = a pre-migration row (already paid).
+    for _col in ("qual_seq INTEGER", "referred_paid INTEGER DEFAULT 0", "referrer_paid INTEGER DEFAULT 0"):
+        try:
+            await _pool.execute(f"ALTER TABLE referrals ADD COLUMN {_col}")
+        except Exception:
+            pass     # already there
+    await _pool.execute(
+        "UPDATE referrals SET referred_paid = 1, referrer_paid = 1 "
+        "WHERE reward_claimed = 1 AND qual_seq IS NULL AND referred_paid = 0 AND referrer_paid = 0")
+    await _pool.commit()
+
     # Single-row table used to enforce "only one live bot instance" (see
     # claim_instance_lock). Two instances on one token double every payout / DM.
     await _pool.execute("""
@@ -1047,6 +1060,60 @@ async def claim_referral_reward_once(referred_id: str) -> bool:
     )
     await _pool.commit()
     return (cur.rowcount or 0) > 0
+
+
+async def referral_qualify(referred_id: str) -> dict | None:
+    """Record qualification ONCE, in a single statement, giving the referral its sequence number among the
+    referrer's qualified referrals (so a milestone can never be paid twice or skipped when two qualify at
+    once). Returns {referrer_id, qual_seq} to the one caller that recorded it, else None."""
+    if _pool is None:
+        return None
+    cur = await _pool.execute(
+        "UPDATE referrals SET qualified_at = datetime('now'), reward_claimed = 1, "
+        "qual_seq = (SELECT COUNT(*) FROM referrals r2 WHERE r2.referrer_id = referrals.referrer_id "
+        "            AND r2.qual_seq IS NOT NULL) + 1 "
+        "WHERE referred_id = ? AND qual_seq IS NULL AND reward_claimed = 0",
+        (str(referred_id),),
+    )
+    await _pool.commit()
+    if (cur.rowcount or 0) <= 0:
+        return None
+    async with _pool.execute("SELECT referrer_id, qual_seq FROM referrals WHERE referred_id = ?",
+                             (str(referred_id),)) as c2:
+        row = await c2.fetchone()
+    return {"referrer_id": row[0], "qual_seq": row[1]} if row else None
+
+
+async def referral_delivery(referred_id: str) -> dict | None:
+    if _pool is None:
+        return None
+    async with _pool.execute(
+        "SELECT referred_id, referrer_id, qual_seq, referred_paid, referrer_paid FROM referrals "
+        "WHERE referred_id = ? AND qual_seq IS NOT NULL", (str(referred_id),)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {"referred_id": row[0], "referrer_id": row[1], "qual_seq": row[2],
+            "referred_paid": bool(row[3]), "referrer_paid": bool(row[4])}
+
+
+async def referral_mark_paid(referred_id: str, side: str) -> None:
+    """Flag one side's reward as delivered (call only after it was saved on the player)."""
+    if _pool is None or side not in ("referred", "referrer"):
+        return
+    await _pool.execute(f"UPDATE referrals SET {side}_paid = 1 WHERE referred_id = ?", (str(referred_id),))
+    await _pool.commit()
+
+
+async def referral_undelivered(limit: int = 200) -> list[str]:
+    """Referred ids whose qualification was recorded but whose rewards aren't both delivered yet."""
+    if _pool is None:
+        return []
+    async with _pool.execute(
+        "SELECT referred_id FROM referrals WHERE qual_seq IS NOT NULL AND (referred_paid = 0 OR referrer_paid = 0) "
+        "LIMIT ?", (int(limit),)) as cur:
+        rows = await cur.fetchall()
+    return [r[0] for r in rows]
 
 
 async def referral_mark_qualified(referred_id: str) -> None:

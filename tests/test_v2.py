@@ -245,7 +245,7 @@ def test_referral_double_claim():
         _reset()
         A, B = "refA", "refB"
         _mk_user(A, username="A")
-        _mk_user(B, username="B")
+        _mk_user(B, username="B", joined_date="2020-01-01")
         code = await app._referral_get_code(A)
         ok, _ = await app._referral_bind(B, code)
         assert ok
@@ -274,7 +274,7 @@ def test_referral_anti_alt_days():
         _reset()
         A, B = "aaA", "aaB"
         _mk_user(A)
-        _mk_user(B, level=5)                             # low enough to enter a code
+        _mk_user(B, level=5, joined_date="2020-01-01")   # low enough to enter a code
         code = await app._referral_get_code(A)
         ok, msg = await app._referral_bind(B, code)
         assert ok, msg

@@ -193,11 +193,11 @@ def test_crash_mid_payout_resumes_without_double_paying():
     real = app._gw_grant
     calls = []
 
-    async def flaky(uid, prize):
+    async def flaky(uid, prize, gid=""):
         calls.append(uid)
         if uid == "B" and calls.count("B") == 1:
             raise RuntimeError("db hiccup")
-        return await real(uid, prize)
+        return await real(uid, prize, gid)
     app._gw_grant = flaky
     try:
         run(app.gw_finish(g["id"]))
@@ -304,6 +304,38 @@ def test_guess_secret_is_random_in_range_and_hidden_while_running():
 
 # ── hunt race ─────────────────────────────────────────────────
 
+def _set_caught(u, total):
+    """Pretend the player HUNTED up to `total` animals (bumps the race counter as run_hunt does)."""
+    d = app.data[u]
+    d.setdefault("stats", {})["race_catches"] = d["stats"].get("race_catches", 0) + (total - d.get("total_caught", 0))
+    d["total_caught"] = total
+
+
+def test_idle_camp_collections_do_not_count_in_a_hunt_race():
+    _reset()
+    _users("A", "B")
+    g = _mk("race", winners=1)
+    for u in "AB":
+        run(app.gw_join(g["id"], u))
+    app.data["A"]["total_caught"] += 195                 # a full camp haul collected right after joining
+    assert app._gw_score(g, "A") == 0
+    _set_caught("B", app.data["B"]["total_caught"] + 7)  # seven real hunted catches
+    assert app._gw_score(g, "B") == 7
+    run(app.gw_finish(g["id"]))
+    assert g["winners"] == ["B"]
+
+
+def test_payout_marker_stops_a_double_payment_after_a_crash():
+    _reset()
+    _users("A")
+    prize = {"type": "money", "amount": 1000, "name": ""}
+    run(app._gw_grant("A", prize, "gwX"))
+    run(app._gw_grant("A", prize, "gwX"))                # retried after a crash that lost the 'paid' record
+    assert app.data["A"]["money"] == 150 + 1000
+    run(app._gw_grant("A", prize, "gwY"))                # a different giveaway still pays
+    assert app.data["A"]["money"] == 150 + 2000
+
+
 def test_race_counts_only_catches_after_joining_and_needs_at_least_one():
     _reset()
     _users("A", "B", "C")
@@ -313,8 +345,8 @@ def test_race_counts_only_catches_after_joining_and_needs_at_least_one():
     for u in "ABC":
         assert run(app.gw_join(g["id"], u))[0]
     assert g["entrants"]["A"]["base"] == 100
-    app.data["A"]["total_caught"] = 130      # +30
-    app.data["B"]["total_caught"] = 150      # +50 -> winner
+    _set_caught("A", 130)      # +30
+    _set_caught("B", 150)      # +50 -> winner
     run(app.gw_finish(g["id"]))
     assert g["winners"] == ["B"] and g["scores"] == {"B": 50, "A": 30}
     assert "50 catches" in json.dumps(app._gw_card(g), ensure_ascii=False)
@@ -330,7 +362,7 @@ def test_race_joining_twice_does_not_reset_your_baseline():
     app.data["A"]["total_caught"] = 10
     g = _mk("race")
     run(app.gw_join(g["id"], "A"))
-    app.data["A"]["total_caught"] = 25
+    _set_caught("A", 25)
     ok, msg = run(app.gw_join(g["id"], "A"))
     assert ok and "15" in msg and g["entrants"]["A"]["base"] == 10
 

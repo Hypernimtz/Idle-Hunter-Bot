@@ -1943,6 +1943,7 @@ SHARE_STORE_TTL  = 3600   # seconds a pending share stays claimable
 REFERRAL_QUALIFY_LEVEL = 25
 REFERRAL_QUALIFY_HUNTS = 50
 REFERRAL_QUALIFY_DAYS  = 2     # played on >= this many distinct UTC days (anti-alt)
+REFERRAL_MIN_AGE_DAYS   = 3    # the referred account must be at least this many UTC dates old (>= ~2 full days)
 REFERRAL_CODE_MAX_LEVEL = 20   # you can only enter a code while still this low
 
 # gems both sides get the first time one of your referrals qualifies

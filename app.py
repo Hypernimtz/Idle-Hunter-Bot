@@ -20,7 +20,7 @@ from game_data import (
     TRACKING_ACTIONS, TRACKING_SCENES, TRACKING_EXPIRE_MIN,
     # Virality (Idle Hunter V2)
     SHARE_RARITY_MIN, SHARE_STORE_TTL,
-    REFERRAL_QUALIFY_LEVEL, REFERRAL_QUALIFY_HUNTS, REFERRAL_QUALIFY_DAYS,
+    REFERRAL_QUALIFY_LEVEL, REFERRAL_QUALIFY_HUNTS, REFERRAL_QUALIFY_DAYS, REFERRAL_MIN_AGE_DAYS,
     REFERRAL_CODE_MAX_LEVEL, REFERRAL_QUALIFY_GEMS, REFERRAL_MILESTONES,
     # Multiplayer (Idle Hunter V2)
     GUILD_GOAL_PER_MEMBER, GUILD_GOAL_MIN, GUILD_GOAL_MAX, GUILD_GOAL_CONTRIB_MIN,
@@ -7517,6 +7517,8 @@ def run_hunt(user_id: str) -> dict:
         total_val += sell_value
         data[user_id]["inv"].append(animal)
         record_catch(user_id, animal, tool_name, sell_value)
+        _rs = data[user_id].setdefault("stats", {})
+        _rs["race_catches"] = _rs.get("race_catches", 0) + 1       # hunted catches only (Hunt Race scoring)
         if tool_name not in data[user_id]["stats"].get("tools_used", []):
             data[user_id]["stats"].setdefault("tools_used", []).append(tool_name)
         if needs_ammo:
@@ -8055,71 +8057,111 @@ def _referral_qualifies(d: dict) -> bool:
     st = d.get("stats", {})
     return (d.get("level", 1) >= REFERRAL_QUALIFY_LEVEL
             and st.get("lifetime_hunts", 0) >= REFERRAL_QUALIFY_HUNTS
-            and st.get("active_days", 0) >= REFERRAL_QUALIFY_DAYS)
+            and st.get("active_days", 0) >= REFERRAL_QUALIFY_DAYS
+            and _account_age_days(d) >= REFERRAL_MIN_AGE_DAYS)       # not just two calendar dates minutes apart
 
 async def _referral_check_qualified(user_id: str) -> None:
-    """Fire once a referred player has genuinely started playing. Rewards both
-    sides and applies the referrer's milestone. Safe to call from anywhere and
-    from concurrent callers — the payout is gated by an atomic DB flip."""
+    """Fire once a referred player has genuinely started playing: record the qualification (once, with its
+    sequence number) and deliver both sides' rewards. Delivery is crash-safe: each reward is saved on the
+    player together with a marker, and only then flagged delivered in the database, so a crash can neither
+    lose a reward (it is retried) nor pay it twice (the marker stops the retry)."""
     if not FEATURE_REFERRALS:
         return
     uid = str(user_id)
     d = data.get(uid)
     if not d or d.get("_ref_done"):
         return
-    # Cheap gate: no DB round-trip until they could plausibly qualify.
-    if not _referral_qualifies(d):
+    if not _referral_qualifies(d):            # cheap gate: no DB round-trip until they could qualify
         return
     try:
         rec = await backend.referral_of(uid)
     except Exception:
         return
-    if not rec or rec.get("reward_claimed"):
+    if not rec:
         d["_ref_done"] = True
         return
-    # Atomic: exactly one caller wins the 0→1 flip and pays both sides.
-    won = await backend.claim_referral_reward_once(uid)
+    claim = await backend.referral_qualify(uid)
+    if claim:
+        analytics(uid, "referral_qualified", referrer=str(claim["referrer_id"]))
     d["_ref_done"] = True
-    if not won:
-        return
-    referrer = str(rec["referrer_id"])
-    analytics(uid, "referral_qualified", referrer=referrer)
+    await _referral_deliver(uid)
 
+
+async def _referral_grant_once(uid: str, key: str, grant) -> bool:
+    """Run ``grant()`` inside the player's transaction unless a marker says it already happened.
+    The marker is saved in the same transaction as the reward. True if the reward was newly granted."""
+    init_user(uid)
     async with user_transaction(uid):
-        add_gems(uid, REFERRAL_QUALIFY_GEMS, "referral")
-        _grant_title(uid, "Brought In")
-    try:
-        await _dm_user(uid, f"## {emoji('handshake')} Referral reward!\nYou hit Level {REFERRAL_QUALIFY_LEVEL} "
-                            f"— you and the hunter who invited you each earned "
-                            f"**{emoji('gem')} {REFERRAL_QUALIFY_GEMS}** and a title.")
-    except Exception:
-        pass
+        paid = data[uid].setdefault("stats", {}).setdefault("referral_paid", [])
+        if key in paid:
+            return False
+        grant()
+        paid.append(key)
+        del paid[:-300]
+    return True
 
-    init_user(referrer)
-    stats = await backend.referral_stats(referrer)
-    n_qual = stats.get("qualified", 0)
-    ms = REFERRAL_MILESTONES.get(n_qual)
-    async with user_transaction(referrer):
-        add_gems(referrer, REFERRAL_QUALIFY_GEMS, "referral")
-        got = []
-        if ms:
-            if ms.get("title") and _grant_title(referrer, ms["title"]):
-                got.append(f'title "{ms["title"]}"')
-            if ms.get("badge") and _grant_special_badge(referrer, ms["badge"]):
-                got.append(f'the {SPECIAL_BADGES.get(ms["badge"], {}).get("label", ms["badge"])} badge')
-            if ms.get("gems"):
-                add_gems(referrer, ms["gems"], "referral milestone")
-                got.append(f"{ms['gems']} gems")
-    analytics(referrer, "referral_reward", qualified_total=n_qual)
-    try:
-        extra = (" You also unlocked " + " + ".join(got) + "!") if got else ""
-        await _dm_user(referrer,
-            f"## {emoji('handshake')} One of your hunters made it!\n"
-            f"A hunter you referred just reached Level {REFERRAL_QUALIFY_LEVEL}. "
-            f"You earned **{emoji('gem')} {REFERRAL_QUALIFY_GEMS}**.{extra}\n"
-            f"-# Qualified referrals: **{n_qual}**")
-    except Exception:
-        pass
+
+async def _referral_deliver(referred_id: str) -> None:
+    """Pay whichever sides of a qualified referral haven't been delivered yet (idempotent, retryable)."""
+    rec = await backend.referral_delivery(str(referred_id))
+    if not rec:
+        return
+    uid, referrer, seq = str(rec["referred_id"]), str(rec["referrer_id"]), rec["qual_seq"]
+
+    if not rec["referred_paid"]:
+        def _g1():
+            add_gems(uid, REFERRAL_QUALIFY_GEMS, "referral")
+            _grant_title(uid, "Brought In")
+        if await _referral_grant_once(uid, f"ref:{uid}:referred", _g1):
+            try:
+                await _dm_user(uid, f"## {emoji('handshake')} Referral reward!\nYou hit Level {REFERRAL_QUALIFY_LEVEL} "
+                                    f"— you and the hunter who invited you each earned "
+                                    f"**{emoji('gem')} {REFERRAL_QUALIFY_GEMS}** and a title.")
+            except Exception:
+                pass
+        await backend.referral_mark_paid(uid, "referred")
+
+    if not rec["referrer_paid"]:
+        ms = REFERRAL_MILESTONES.get(seq)          # this referral's own milestone — fixed by its sequence number
+        got: list[str] = []
+
+        def _g2():
+            add_gems(referrer, REFERRAL_QUALIFY_GEMS, "referral")
+            if ms:
+                if ms.get("title") and _grant_title(referrer, ms["title"]):
+                    got.append(f'title "{ms["title"]}"')
+                if ms.get("badge") and _grant_special_badge(referrer, ms["badge"]):
+                    got.append(f'the {SPECIAL_BADGES.get(ms["badge"], {}).get("label", ms["badge"])} badge')
+                if ms.get("gems"):
+                    add_gems(referrer, ms["gems"], "referral milestone")
+                    got.append(f"{ms['gems']} gems")
+        if await _referral_grant_once(referrer, f"ref:{uid}:referrer", _g2):
+            analytics(referrer, "referral_reward", qualified_total=seq)
+            try:
+                extra = (" You also unlocked " + " + ".join(got) + "!") if got else ""
+                await _dm_user(referrer,
+                    f"## {emoji('handshake')} One of your hunters made it!\n"
+                    f"A hunter you referred just reached Level {REFERRAL_QUALIFY_LEVEL}. "
+                    f"You earned **{emoji('gem')} {REFERRAL_QUALIFY_GEMS}**.{extra}\n"
+                    f"-# Qualified referrals: **{seq}**")
+            except Exception:
+                pass
+        await backend.referral_mark_paid(uid, "referrer")
+
+
+async def _referral_recover() -> int:
+    """After a restart: finish any referral whose qualification was recorded but whose rewards weren't
+    both delivered (a crash between the steps). Safe to run repeatedly."""
+    if not FEATURE_REFERRALS:
+        return 0
+    n = 0
+    for rid in await backend.referral_undelivered():
+        try:
+            await _referral_deliver(rid)
+            n += 1
+        except Exception:
+            logger.exception("referral recovery failed for %s", rid)
+    return n
 
 def build_refer_components(user_id: str, code: str,
                            stats: dict | None = None, note: str = "") -> list:
@@ -23650,11 +23692,19 @@ def _gw_prize_text(p: dict) -> str:
         return f"{ITEMS.get(name, {}).get('emoji', '')} {n}× {name}"
     return name
 
-async def _gw_grant(uid: str, prize: dict) -> None:
-    """Pay one winner. Custom prizes are delivered by the host, so only the stat moves."""
+async def _gw_grant(uid: str, prize: dict, gid: str = "") -> None:
+    """Pay one winner. Custom prizes are delivered by the host, so only the stat moves.
+    With a giveaway id the payout is idempotent: a marker saved in the SAME transaction as the prize means a
+    retry after a crash (reward saved, giveaway record not yet) skips the grant instead of paying twice."""
     init_user(uid)
     with inv_source("giveaway"):          # item-ledger tag for the payout
         async with user_transaction(uid):
+            marks = data[uid].setdefault("stats", {}).setdefault("gw_paid", [])
+            if gid and gid in marks:
+                return
+            if gid:
+                marks.append(gid)
+                del marks[:-300]
             t, n, name = prize["type"], prize.get("amount", 1), prize.get("name", "")
             if t == "money":
                 add_money(uid, n, "giveaway")
@@ -23671,9 +23721,12 @@ async def _gw_grant(uid: str, prize: dict) -> None:
 # ── card ──────────────────────────────────────
 
 def _gw_score(g: dict, uid: str) -> int:
-    """Race score: animals caught since joining."""
-    base = (g.get("entrants", {}).get(uid) or {}).get("base", 0)
-    return max(0, int(data.get(uid, {}).get("total_caught", 0)) - int(base))
+    """Race score: animals caught by ACTIVE hunting since joining. Idle-camp collections don't count, so a
+    full haul can't be cashed in after joining. (Races started before this change fall back to total_caught.)"""
+    ent = g.get("entrants", {}).get(uid) or {}
+    if "base_hunt" in ent:
+        return max(0, int(data.get(uid, {}).get("stats", {}).get("race_catches", 0)) - int(ent["base_hunt"]))
+    return max(0, int(data.get(uid, {}).get("total_caught", 0)) - int(ent.get("base", 0)))
 
 def _gw_card(g: dict) -> list:
     icon, label = GW_KINDS[g["kind"]]
@@ -23811,7 +23864,8 @@ async def gw_join(gid: str, uid: str) -> tuple[bool, str]:
             return False, why
         if uid in g["entrants"]:
             return True, f"You're already racing — **{_gw_score(g, uid):,}** catches so far."
-        g["entrants"][uid] = {"ts": time.time(), "base": int(data[uid].get("total_caught", 0))}
+        g["entrants"][uid] = {"ts": time.time(), "base": int(data[uid].get("total_caught", 0)),
+                              "base_hunt": int(data[uid].get("stats", {}).get("race_catches", 0))}
         _gw_dirty.add(gid)
         await backend.giveaway_save(g)
         return True, "You're in the race! Every animal you catch from now on counts. 🏹"
@@ -23848,7 +23902,7 @@ async def gw_grab(gid: str, uid: str) -> tuple[bool, str, bool]:
         g["winners"].append(uid)
         g["entrants"][uid] = {"ts": time.time()}
         try:
-            await _gw_grant(uid, g["prize"])
+            await _gw_grant(uid, g["prize"], gid)
             g.setdefault("paid", []).append(uid)
         except Exception:
             logger.exception("loot drop grant failed for %s", uid)   # stays unpaid -> the ticker retries
@@ -23900,7 +23954,7 @@ async def gw_finish(gid: str) -> None:
             if uid in g.get("paid", []):
                 continue
             try:
-                await _gw_grant(uid, g["prize"])
+                await _gw_grant(uid, g["prize"], gid)
             except Exception:
                 logger.exception("giveaway payout failed for %s (will retry)", uid)
                 continue
@@ -23960,7 +24014,7 @@ async def gw_reroll(gid: str, count: int = 1) -> tuple[bool, str]:
         paid_now = []
         for uid in picks:
             try:
-                await _gw_grant(uid, g["prize"])
+                await _gw_grant(uid, g["prize"], gid)
             except Exception:
                 logger.exception("reroll payout failed for %s", uid)
                 continue
@@ -27867,6 +27921,12 @@ async def on_ready():
         print("pending updates failed:", e)
 
     print("Autosave started.")
+    try:
+        _rec = await _referral_recover()
+        if _rec:
+            print(f"Re-checked {_rec} referral payout(s) left unfinished by the last shutdown.")
+    except Exception as e:
+        print("referral recovery failed:", e)
     asyncio.ensure_future(status_online())
 
 @bot.event
