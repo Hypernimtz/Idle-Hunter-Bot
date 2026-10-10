@@ -51,6 +51,7 @@ def _reset(**state):
     app._boot_info["down_secs"] = 0
     app.STATUS_NOTIFY = True
     app.STATUS_NOTIFY_BOOT = True          # the boot/shutdown tests below opt in; see the silent-by-default test
+    app.STATUS_NOTIFY_WEBSITE = True       # the website tests opt in; see the off-by-default test
     app.STATUS_CHANNEL_ID = state.get("channel", 4242)
     app._lb_publisher = state.get("lb")
     app._cl_publisher = state.get("cl")
@@ -172,6 +173,20 @@ def test_website_outage_warns_once_and_announces_recovery():
     # a brand-new failure that is still inside the grace period stays quiet
     _reset(lb=_pub(False, fail_since=now - 60))
     assert run(app.status_watch_once(now)) == []
+
+
+def test_website_notices_are_off_by_default_and_never_send():
+    now = time.time()
+    pub = _pub(False, fail_since=now - 30 * 60)
+    _reset(lb=pub)
+    app.STATUS_NOTIFY_WEBSITE = False
+    try:
+        assert run(app.status_watch_once(now)) == [] and not SENT
+        assert run(app.status_watch_once(now + 3600)) == [] and not SENT
+        assert "Website leaderboard" in app.status_report()                           # /inspect status still shows it
+    finally:
+        app.STATUS_NOTIFY_WEBSITE = True
+    assert os.getenv("STATUS_NOTIFY_WEBSITE") is None and app.STATUS_NOTIFY_WEBSITE in (True, False)
 
 
 def test_shutdown_notice_and_the_off_switch():

@@ -24694,7 +24694,7 @@ async def on_message(message: discord.Message):
 # ─────────────────────────────────────────────
 # Posts to STATUS_CHANNEL_ID (token.env) — or DMs the bot owner when that isn't set — when the
 # bot comes online (and how long it was down), reconnects after a gateway drop, has been cut off
-# for more than STATUS_DISCONNECT_GRACE seconds, or loses/regains the website push. Ordinary
+# for more than STATUS_DISCONNECT_GRACE seconds (website notices only with STATUS_NOTIFY_WEBSITE=1). Ordinary
 # boots and shutdowns (every deploy) stay silent unless STATUS_NOTIFY_BOOT=1; a boot after a
 # 10+ minute outage still speaks up. STATUS_NOTIFY=0 turns every message off. /inspect status shows
 # the same report on demand. A crash can't announce itself — the next boot reports the downtime.
@@ -24707,6 +24707,9 @@ STATUS_NOTIFY = (os.getenv("STATUS_NOTIFY", "1").strip().lower() not in ("0", "f
 # Routine "online" / "shutting down" notices (every deploy!) are OFF unless STATUS_NOTIFY_BOOT=1.
 # Problems always get through: a long outage before this boot, connection lost, website down.
 STATUS_NOTIFY_BOOT = (os.getenv("STATUS_NOTIFY_BOOT", "0").strip().lower() in ("1", "true", "yes", "on"))
+# The website-leaderboard "not connected" / "connected again" notices are OFF unless STATUS_NOTIFY_WEBSITE=1
+# (the site being down is not the bot's problem, and the warning was noise). /inspect status still shows it.
+STATUS_NOTIFY_WEBSITE = (os.getenv("STATUS_NOTIFY_WEBSITE", "0").strip().lower() in ("1", "true", "yes", "on"))
 STATUS_LONG_DOWNTIME = 600        # a boot after at least this long offline is worth a message
 STATUS_DISCONNECT_GRACE = 90      # seconds of dead gateway before we say so
 STATUS_RECONNECT_MIN = 30         # shorter blips are logged, not announced
@@ -24842,6 +24845,8 @@ async def status_watch_once(now: float | None = None) -> list[str]:
                           + status_report(), 0xE74C3C, key="lost", min_gap=0)
         sent.append("lost")
     pub = _lb_publisher
+    if not STATUS_NOTIFY_WEBSITE:
+        return sent                       # website notices are switched off (see STATUS_NOTIFY_WEBSITE)
     fail = getattr(pub, "fail_since", 0.0) if pub is not None else 0.0
     if fail and not _conn["site_warned"] and now - fail >= STATUS_WEBSITE_GRACE:
         _conn["site_warned"] = True
