@@ -182,6 +182,6 @@
   {
     "key": "2026-10-10-tool-levels",
     "title": "Tools now unlock by level",
-    "message": "- Buying a tool now needs a **minimum level** — the shop shows it on each locked tool (e.g. *Unlocks at level 130*) and the button turns into a locked **Lv N** button\n- The Slingshot is level 1, so new hunters can still buy their first tool right away; a few examples: Spear **10**, Longbow **30**, Musket **65**, Shotgun **130**, Plasma Caster **310**, Soul Snare **500**, Cosmic RPG **900**\n- Tools you already own are not affected"
+    "message": "- Buying a tool now needs a **minimum level** — the shop shows it on each locked tool (e.g. *Unlocks at level 300*) and the button turns into a locked **Lv N** button\n- The Slingshot is level 1, so new hunters can still buy their first tool right away; a few examples: Spear **10**, Longbow **110**, Musket **235**, Shotgun **300**, Plasma Caster **385**, Soul Snare **510**, Cosmic RPG **830**\n- Tools you already own are not affected"
   }
 ]

@@ -323,7 +323,7 @@ def test_export_sends_the_whole_log_as_a_text_file():
 
 def test_shop_purchases_record_which_item_and_which_button():
     _reset()
-    tr._mk_user("30", gems=5000, level=900)
+    tr._mk_user("30", gems=5000, level=830)
     app.maintenance_mode = False
     app._data_loaded_ok = True
     _baseline("30")

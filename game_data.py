@@ -1582,10 +1582,12 @@ USER_EMOJIS = {
 # Level needed to BUY a tool (owning one already, and admin grants, are unaffected). Spaced so each weapon is a
 # milestone of its own instead of a pure money race; the Slingshot stays at 1 because onboarding buys it.
 TOOL_MIN_LEVEL = {
-    "Slingshot": 1, "Hunting Knife": 5, "Spear": 10, "Shortbow": 20, "Longbow": 30, "Crossbow": 45,
-    "Musket": 65, "Hunting Rifle": 95, "Shotgun": 130, "Sniper Rifle": 180, "Tranq Gun": 240,
-    "Plasma Caster": 310, "Gravity Trap": 400, "Soul Snare": 500, "Void Bow": 600, "Celestial Lance": 700,
-    "Mythic Net": 780, "Dragon Cannon": 850, "Cosmic RPG": 900,    # nothing is gated above Celestial Peaks (L900)
+    "Slingshot": 1, "Hunting Knife": 5, "Spear": 10, "Shortbow": 40, "Longbow": 110, "Crossbow": 170,
+    "Musket": 235, "Hunting Rifle": 270, "Shotgun": 300, "Sniper Rifle": 330, "Tranq Gun": 360,
+    "Plasma Caster": 385, "Gravity Trap": 460, "Soul Snare": 510, "Void Bow": 580, "Celestial Lance": 680,
+    "Mythic Net": 740, "Dragon Cannon": 770, "Cosmic RPG": 830,
+    # Each tool opens a little BEFORE the biome that recommends it (BIOME_TOOL_TIER), so it gets some use in the
+    # biome(s) before — the top weapon opens 70 levels before Celestial Peaks (L900).
 }
 
 

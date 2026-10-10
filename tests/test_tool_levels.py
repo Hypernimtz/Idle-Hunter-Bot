@@ -50,7 +50,13 @@ def test_every_buyable_tool_has_a_sane_level():
         assert lv >= prev and lv >= 1, (name, lv, prev)
         prev = lv
     assert gd.tool_min_level("Slingshot") == 1
-    assert max(gd.TOOL_MIN_LEVEL.values()) <= 900          # Celestial Peaks opens at 900: no tool is gated beyond it
+    assert max(gd.TOOL_MIN_LEVEL.values()) < 900            # even the top weapon opens before Celestial Peaks
+    # every tool a biome recommends is buyable BEFORE that biome unlocks, so it gets used in the biomes before it
+    for biome, tier in gd.BIOME_TOOL_TIER.items():
+        need = dict(gd.BIOME_LEVELS).get(biome)
+        for name, tool in gd.TOOLS.items():
+            if tool["tier"] <= tier and name in gd.TOOL_MIN_LEVEL:
+                assert gd.tool_min_level(name) < need, (name, biome)
 
 
 def test_a_low_level_player_cannot_buy_a_high_tool_by_either_button():
@@ -59,14 +65,14 @@ def test_a_low_level_player_cannot_buy_a_high_tool_by_either_button():
     for via in ("tool_buy_acc", "tool_buy"):
         h = _buy("Shotgun", via)
         assert "Shotgun" not in d["owned_tools"] and d["money"] == 10 ** 9
-        assert "level 130" in " ".join(h.ephemerals), h.ephemerals
+        assert "level 300" in " ".join(h.ephemerals), h.ephemerals
     _buy("Cosmic RPG")
     assert "Cosmic RPG" not in d["owned_tools"] and d["gems"] == 10 ** 6
 
 
 def test_buying_works_at_the_required_level_and_slingshot_at_level_one():
     tt._reset()
-    d = tt._mk_user(U, level=130, money=10 ** 9)
+    d = tt._mk_user(U, level=300, money=10 ** 9)
     _buy("Shotgun")
     assert "Shotgun" in d["owned_tools"]
     d2 = tt._mk_user(U, level=1, money=10_000)
