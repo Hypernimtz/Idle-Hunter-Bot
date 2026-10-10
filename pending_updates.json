@@ -148,5 +148,10 @@
     "key": "2026-10-10-events-screen",
     "title": "Clearer Events screen",
     "message": "- The **Events** screen now has proper sections: what events are, **Today's Daily Theme**, how to take part, the season story and the whole week's themes\n- It now says clearly that a **Daily Theme** changes every day (it's not your `/daily` reward or quests)\n- The \"Today\" button is now called **Daily Theme**"
+  },
+  {
+    "key": "2026-10-10-achievements",
+    "title": "Achievements & badges",
+    "message": "- **Game Master** now works — Gold once all five gambling badges (Blackjack, Coinflip, Roulette, Slots, RPS) are Gold, Platinum once they're all Platinum; its progress shows properly\n- **Ammo Variety** is now earnable: fire at least one round from every ammo family (arrows, bolts, bullets, tranq darts, energy cells, soul shards, cosmic rounds)\n- **Events Completer** now counts every event you finish\n- **Legendary Hunter** counts lifetime catches, so prestiging doesn't erase it\n- Easier long-term badge targets (Legendary Hunter 250K / 1M, Ammo Master 250K / 1M, gambling badges 1K / 10K wins, Lottery 10 / 50, Prestige Master 10 / 25, Leveler 1K / 3K) — tiers you already have are kept\n- First achievements now pay starter-sized rewards (e.g. first daily ◈1,000, first crate ◈3,000)\n- \"Buy/Use All Tools\" no longer needs the special Nuke Launcher; the empty Gamble tab is hidden"
   }
 ]

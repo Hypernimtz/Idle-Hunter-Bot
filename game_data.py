@@ -3722,40 +3722,40 @@ COMMAND_ID = {
 # `tracks` → plain-English description of the stat (shown in /info).
 # `blurb`  → a funny one-liner (shown in /info).
 BADGES = {
-    "ammo_master":      {"label": "Ammo Master",         "abbr": "AM", "stat": "ammo_used",        "gold": 1_000_000, "plat": 5_000_000, "icon": "ammo_master",
+    "ammo_master":      {"label": "Ammo Master",         "abbr": "AM", "stat": "ammo_used",        "gold": 250_000, "plat": 1_000_000, "icon": "ammo_master",
                          "tracks": "Total ammo rounds fired while hunting",
                          "blurb": "You have personally littered the wilderness with enough shell casings to qualify as a landfill."},
     "ammo_variety":     {"label": "Ammo Variety",        "abbr": "AV", "stat": "ammo_variety",     "gold": 1,         "plat": None,      "icon": "ammo_variety",
-                         "tracks": "Fire at least one of every ammo type",
+                         "tracks": "Fire at least one round from every ammo family (arrows, bolts, bullets, tranq darts, energy cells, soul shards, cosmic rounds)",
                          "blurb": "Tried every kind of ammo at least once. Commitment issues, but make it tactical."},
     "daily_daily_g":    {"label": "Daily Daily",         "abbr": "DD", "stat": "daily_streak",     "gold": 730,       "plat": 1825,      "icon": "daily_daily",
                          "tracks": "Consecutive days claiming your daily reward",
                          "blurb": "Two straight years of pressing one button every single day. Streaks like this end marriages."},
-    "legendary_hunter": {"label": "Legendary Hunter",    "abbr": "LH", "stat": "animals_caught",   "gold": 1_000_000, "plat": 5_000_000, "icon": "legendary_hunter",
+    "legendary_hunter": {"label": "Legendary Hunter",    "abbr": "LH", "stat": "animals_caught",   "gold": 250_000, "plat": 1_000_000, "icon": "legendary_hunter",
                          "tracks": "Total animals and creatures caught",
                          "blurb": "A million kills. The local wildlife has started filing restraining orders."},
     "game_master":      {"label": "Game Master",         "abbr": "GM", "stat": "game_master",      "gold": 1,         "plat": 2,         "icon": "game_master",
-                         "tracks": "Reach Platinum on every gambling badge",
+                         "tracks": "Gold: every gambling badge at Gold · Platinum: every gambling badge at Platinum (Blackjack, Coinflip, Roulette, Slots, Rock-Paper-Scissors)",
                          "blurb": "Platinumed every game in the casino. The house would like a word — and its money back."},
-    "bj_dealer":        {"label": "Blackjack Dealer",    "abbr": "BD", "stat": "bj_wins",          "gold": 10_000,    "plat": 100_000,   "icon": "blackjack_dealer",
+    "bj_dealer":        {"label": "Blackjack Dealer",    "abbr": "BD", "stat": "bj_wins",          "gold": 1_000,    "plat": 10_000,   "icon": "blackjack_dealer",
                          "tracks": "Blackjack hands won",
                          "blurb": "So many blackjack wins the dealer leaves the table when you sit down."},
-    "cf_tosser":        {"label": "Coinflip Tosser",     "abbr": "CT", "stat": "cf_wins",          "gold": 10_000,    "plat": 100_000,   "icon": "coinflip_tosser",
+    "cf_tosser":        {"label": "Coinflip Tosser",     "abbr": "CT", "stat": "cf_wins",          "gold": 1_000,    "plat": 10_000,   "icon": "coinflip_tosser",
                          "tracks": "Coinflips won",
                          "blurb": "Ten thousand coin flips. That coin has seen things."},
-    "rl_spinner":       {"label": "Roulette Spinner",    "abbr": "RS", "stat": "rl_wins",          "gold": 10_000,    "plat": 100_000,   "icon": "roulette_spinner",
+    "rl_spinner":       {"label": "Roulette Spinner",    "abbr": "RS", "stat": "rl_wins",          "gold": 1_000,    "plat": 10_000,   "icon": "roulette_spinner",
                          "tracks": "Roulette rounds won",
                          "blurb": "You spin that wheel like rent is due. It usually is."},
-    "slots_machine":    {"label": "Slots Human-Machine", "abbr": "SH", "stat": "slots_wins",       "gold": 10_000,    "plat": 100_000,   "icon": "slots_human_machine",
+    "slots_machine":    {"label": "Slots Human-Machine", "abbr": "SH", "stat": "slots_wins",       "gold": 1_000,    "plat": 10_000,   "icon": "slots_human_machine",
                          "tracks": "Slots spins won",
                          "blurb": "At this point you and the slot machine share a bank account."},
-    "rps_npc":          {"label": "RPS NPC",             "abbr": "RN", "stat": "rps_wins",         "gold": 10_000,    "plat": 100_000,   "icon": "rps_npc",
+    "rps_npc":          {"label": "RPS NPC",             "abbr": "RN", "stat": "rps_wins",         "gold": 1_000,    "plat": 10_000,   "icon": "rps_npc",
                          "tracks": "Rock-Paper-Scissors rounds won",
                          "blurb": "Beat a random number generator at rock-paper-scissors ten thousand times. Somehow."},
-    "lottery_winner":   {"label": "Lottery Winner",      "abbr": "LW", "stat": "lottery_wins",     "gold": 100,       "plat": 1_000,     "icon": "lottery_winner",
+    "lottery_winner":   {"label": "Lottery Winner",      "abbr": "LW", "stat": "lottery_wins",     "gold": 10,       "plat": 50,     "icon": "lottery_winner",
                          "tracks": "Lottery draws won",
                          "blurb": "Won the lottery more times than statistics technically permits. We're watching you."},
-    "prestige_master":  {"label": "Prestige Master",     "abbr": "PM", "stat": "prestige",         "gold": 10,        "plat": 50,        "icon": "prestige_master",
+    "prestige_master":  {"label": "Prestige Master",     "abbr": "PM", "stat": "prestige",         "gold": 10,        "plat": 25,        "icon": "prestige_master",
                          "tracks": "Times you have prestiged",
                          "blurb": "Threw away everything you built, on purpose, dozens of times. Very healthy."},
     "xp_explosion":     {"label": "XP Explosion",        "abbr": "XE", "stat": "total_xp_earned",  "gold": 100_000,   "plat": 500_000,   "icon": "xp_explosion",
@@ -3764,7 +3764,7 @@ BADGES = {
     "events_completer": {"label": "Events Completer",    "abbr": "EC", "stat": "events_completed", "gold": 10,        "plat": 20,        "icon": "events_completer",
                          "tracks": "Global events completed",
                          "blurb": "Showed up to every event. The only one who did. Every time."},
-    "leveler":          {"label": "Leveler",             "abbr": "LV", "stat": "level",            "gold": 1_000,     "plat": 10_000,    "icon": "leveler",
+    "leveler":          {"label": "Leveler",             "abbr": "LV", "stat": "level",            "gold": 1_000,     "plat": 3_000,    "icon": "leveler",
                          "tracks": "Your hunter level",
                          "blurb": "Level ten thousand. There is no biome left for you. There is only the grind."},
     "crate_master":     {"label": "Crate Master",        "abbr": "CM", "stat": "crates_opened",    "gold": 100,       "plat": 1_000,     "icon": "crate_master",
@@ -3775,7 +3775,13 @@ BADGES = {
                          "blurb": "Put down enough cryptids that Bigfoot now hunts YOU for sport."},
 }
 
-# ── SPECIAL BADGES — handed out by admins, not earned by a stat ──────────────
+# The five gambling badges that Game Master is built from.
+GAMBLING_BADGES = ("bj_dealer", "cf_tosser", "rl_spinner", "slots_machine", "rps_npc")
+
+# Ammo families a player must fire once for the Ammo Variety badge (the Nuke is a one-off special, not required).
+AMMO_VARIETY_TYPES = tuple(sorted({a["ammo_type"] for a in AMMO.values()} - {"nuke_only"}))
+
+# ── SPECIAL BADGES — cosmetic: some handed out by admins, others earned through events and referrals ─────
 # Deliberately NOT part of BADGES: the achievement checker and the "all badges
 # platinum → Game Master" logic both iterate BADGES and must never see these.
 # Stored on the player as data[uid]["special_badges"] = [key, ...].
@@ -3837,9 +3843,9 @@ ACHIEVEMENTS: dict[str, list | dict] = {
 
     # ── Daily Streak ──────────────────────────────────────────────
     "daily_streak": [
-        (       1,  [("money",              10_000)]),
-        (      20,  [("money",              20_000)]),
-        (      50,  [("money",              50_000)]),
+        (       1,  [("money",               1_000)]),
+        (      20,  [("money",              10_000)]),
+        (      50,  [("money",              30_000)]),
         (      67,  [("money",              67_000)]),
         (     100,  [("money",           1_000_000), ("gems",                   40)]),
         (     183,  [("money",           5_000_000)]),
@@ -3855,9 +3861,9 @@ ACHIEVEMENTS: dict[str, list | dict] = {
 
     # ── Animals Caught ────────────────────────────────────────────
     "animals_caught": [
-        (       100, [("money",              50_000)]),
-        (       250, [("money",             100_000)]),
-        (       500, [("money",             500_000)]),
+        (       100, [("money",               5_000)]),
+        (       250, [("money",              15_000)]),
+        (       500, [("money",              60_000)]),
         (     1_000, [("gems",                   80)]),
         (     1_500, [("money",           1_000_000)]),
         (     2_000, [("money",           2_000_000)]),
@@ -3878,10 +3884,10 @@ ACHIEVEMENTS: dict[str, list | dict] = {
 
     # ── Ammo Used ─────────────────────────────────────────────────
     "ammo_used": [
-        (       100, [("money",             100_000)]),
-        (       250, [("money",             500_000)]),
-        (       500, [("money",           1_000_000)]),
-        (     1_000, [("money",           5_000_000)]),
+        (       100, [("money",               5_000)]),
+        (       250, [("money",              25_000)]),
+        (       500, [("money",              75_000)]),
+        (     1_000, [("money",             500_000)]),
         (     5_000, [("money",          40_000_000)]),
         (    10_000, [("money",         100_000_000)]),
         (    50_000, [("money",       1_000_000_000)]),
@@ -3900,9 +3906,9 @@ ACHIEVEMENTS: dict[str, list | dict] = {
 
     # ── Crates Opened ─────────────────────────────────────────────
     "crates_opened": [
-        (      1, [("money",           100_000)]),
-        (     10, [("money",         1_000_000)]),
-        (     50, [("money",        10_000_000)]),
+        (      1, [("money",             3_000)]),
+        (     10, [("money",            30_000)]),
+        (     50, [("money",           400_000)]),
         (    100, [("gems",                120)]),
         (    250, [("money",       100_000_000)]),
         (    500, [("money",       500_000_000)]),

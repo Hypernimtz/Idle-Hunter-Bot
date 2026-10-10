@@ -90,6 +90,7 @@ from game_data import (
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
     TRACK_MIN_PROGRESS_FRAC, TRACK_EXTRA_STEPS,
+    GAMBLING_BADGES, AMMO_VARIETY_TYPES,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
@@ -553,7 +554,7 @@ def _grant_special_badge(user_id: str, key: str) -> bool:
     sb.append(key)
     return True
 
-def _grant_event_reward(user_id: str, *, title: str = "", badge: str = "") -> list[str]:
+def _grant_event_reward(user_id: str, *, title: str = "", badge: str = "", completes_event: bool = False) -> list[str]:
     """Idempotently grant an event title / cosmetic badge. Returns what was new."""
     got = []
     if title:
@@ -562,6 +563,8 @@ def _grant_event_reward(user_id: str, *, title: str = "", badge: str = "") -> li
             et.append(title); got.append(f'title **"{title}"**')
     if badge and _grant_special_badge(user_id, badge):
         got.append(f"the **{SPECIAL_BADGES.get(badge, {}).get('label', badge)}** badge")
+        if completes_event:
+            _count_event_completed(user_id)          # the mini-game's final badge = a completed event
     return got
 
 async def _event_hunt_hook(user_id: str) -> None:
@@ -1240,7 +1243,7 @@ def _fox_reward(user_id: str) -> str:
         bits.append(f"a **{cr}**")
     got = []
     if st.get("perfect", True) and st["recovered"] >= FOX_TITLE_AT:
-        got = _grant_event_reward(user_id, title="Outfoxed", badge="event_fox")
+        got = _grant_event_reward(user_id, title="Outfoxed", badge="event_fox", completes_event=True)
     st["lead"] = FOX_LEAD_START + st["recovered"]   # the fox gets craftier
     line = "`🦊` You corner the fox and grab the parcel — " + " and ".join(bits) + "!"
     if got:
@@ -1377,7 +1380,7 @@ def _duck_try_claim(user_id: str) -> list[str]:
     st = data[user_id].get("event", {})
     if st.get("key") != "duck" or st.get("contrib", 0) < DUCK_CONTRIB_MIN:
         return []
-    return _grant_event_reward(user_id, title=DUCK_ENDINGS[ev["ending"]]["title"], badge="event_duck")
+    return _grant_event_reward(user_id, title=DUCK_ENDINGS[ev["ending"]]["title"], badge="event_duck", completes_event=True)
 
 def _duck_resolve(ev: dict) -> None:
     """Fire once when the community goal is reached — picks the ending and
@@ -1394,7 +1397,7 @@ def _duck_resolve(ev: dict) -> None:
         st = d.get("event", {})
         if st.get("key") == "duck" and st.get("started") == ev["started_ts"] \
                 and st.get("contrib", 0) >= DUCK_CONTRIB_MIN:
-            if _grant_event_reward(uid, title=end["title"], badge="event_duck"):
+            if _grant_event_reward(uid, title=end["title"], badge="event_duck", completes_event=True):
                 granted += 1
             mark_user_dirty(uid)
     try:
@@ -1657,6 +1660,9 @@ def _ev3_award(uid: str, spec: dict, n: int) -> list[str]:
         return []
     st["tok"] += n
     st["prog"] += n
+    if st["prog"] >= spec["token_cap"] and not st.get("completed"):
+        st["completed"] = True                       # the whole story of this event is done: counts once
+        _count_event_completed(uid)
     mark_user_dirty(uid)
     return _ev3_unlocks(uid, spec)
 
@@ -5504,14 +5510,61 @@ def get_badge_stat(user_id: str, stat: str) -> int | float:
     d = data[user_id]
     s = d.get("stats", {})
     if stat == "daily_streak":    return d.get("daily_streak", 0)
-    if stat == "animals_caught":  return d.get("total_caught", 0)
+    if stat == "animals_caught":  return lifetime_caught(user_id)      # a lifetime badge: survives prestige
     if stat == "prestige":        return d.get("prestige", 0)
     if stat == "level":           return d.get("level", 1)
     if stat == "ammo_variety":
-        return 1 if s.get("ammo_variety_done", False) else 0
+        return 1 if (s.get("ammo_variety_done") or set(AMMO_VARIETY_TYPES) <= set(s.get("ammo_types_used", []))) else 0
     if stat == "game_master":
-        return s.get("game_master_score", 0)
+        return game_master_level(user_id)
     return s.get(stat, 0)
+
+
+def game_master_level(user_id: str) -> int:
+    """0 / 1 / 2: Gold once every gambling badge is Gold, Platinum once every one is Platinum. Reads only
+    the five gambling badges, so Game Master never depends on itself."""
+    badges = data[user_id].get("badges", {})
+    tiers = [badges.get(k, {}).get("tier", 0) for k in GAMBLING_BADGES]
+    return 2 if all(t >= 2 for t in tiers) else 1 if all(t >= 1 for t in tiers) else 0
+
+
+def _ach_tools() -> list[str]:
+    """The tools that count for Buy / Use All Tools — the 25,000-gem Nuke Launcher is a special extra and doesn't."""
+    return [t for t, info in TOOLS.items() if info.get("tier", 0) < 100]
+
+
+def achievement_sources(user_id: str) -> dict:
+    """Current value of every achievement track (one definition for the checker, the page and the callout)."""
+    d = data[user_id]
+    s = d.get("stats", {})
+    tools = _ach_tools()
+    return {
+        "daily_streak":     d.get("daily_streak", 0),
+        "animals_caught":   lifetime_caught(user_id),
+        "ammo_used":        s.get("ammo_used", 0),
+        "tools_bought_all": 1 if all(t in d.get("owned_tools", []) for t in tools) else 0,
+        "tools_used_all":   1 if all(t in s.get("tools_used", []) for t in tools) else 0,
+        "gamble":           0,
+        "crates_opened":    s.get("crates_opened", 0),
+    }
+
+
+def _note_ammo_type(user_id: str, ammo_name: str) -> None:
+    """Remember which ammo families the player has fired (Ammo Variety badge)."""
+    at = AMMO.get(ammo_name or "", {}).get("ammo_type")
+    if not at:
+        return
+    s = data[user_id].setdefault("stats", {})
+    lst = s.setdefault("ammo_types_used", [])
+    if at not in lst:
+        lst.append(at)
+        if set(AMMO_VARIETY_TYPES) <= set(lst):
+            s["ammo_variety_done"] = True
+
+
+def _count_event_completed(user_id: str) -> None:
+    s = data[user_id].setdefault("stats", {})
+    s["events_completed"] = s.get("events_completed", 0) + 1
 
 # ─────────────────────────────────────────────
 # BOOST HELPERS
@@ -7468,6 +7521,7 @@ def run_hunt(user_id: str) -> dict:
             data[user_id]["stats"].setdefault("tools_used", []).append(tool_name)
         if needs_ammo:
             data[user_id]["stats"]["ammo_used"] = data[user_id]["stats"].get("ammo_used", 0) + 1
+            _note_ammo_type(user_id, ammo_name)
         data[user_id]["stats"]["total_xp_earned"] = \
             data[user_id]["stats"].get("total_xp_earned", 0) + xp_earned
 
@@ -9281,20 +9335,11 @@ def build_achievements_pages(user_id: str) -> list[str]:
             cur_page.clear()
         cur_lines = 0
 
-    all_tools_owned = all(t in d.get("owned_tools", []) for t in TOOLS)
-    all_tools_used  = all(t in s.get("tools_used", []) for t in TOOLS)
-
-    ACH_SOURCES = {
-        "daily_streak":    d.get("daily_streak", 0),
-        "animals_caught":  d.get("total_caught", 0),
-        "ammo_used":       s.get("ammo_used", 0),
-        "tools_bought_all":1 if all_tools_owned else 0,
-        "tools_used_all":  1 if all_tools_used  else 0,
-        "gamble":          0,
-        "crates_opened": d.get("stats", {}).get("crates_opened", 0),
-    }
+    ACH_SOURCES = achievement_sources(user_id)
 
     for ach_key, tiers in ACHIEVEMENTS.items():
+        if not tiers:
+            continue                    # the unfinished Gamble track stays hidden until it has tiers
         label         = ACH_LABELS.get(ach_key, ach_key.replace("_", " ").title())
         claimed_up_to = d["achievements"].get(ach_key, {}).get("claimed_up_to", -1)
         current_val   = ACH_SOURCES.get(ach_key, 0)
@@ -9357,17 +9402,7 @@ def _closest_achievement_reward(user_id: str) -> tuple[dict | None, int]:
     Powers Progression's 'closest reward' callout."""
     d = data[user_id]
     s = d.get("stats", {})
-    all_tools_owned = all(t in d.get("owned_tools", []) for t in TOOLS)
-    all_tools_used  = all(t in s.get("tools_used", []) for t in TOOLS)
-    ACH_SOURCES = {
-        "daily_streak":    d.get("daily_streak", 0),
-        "animals_caught":  d.get("total_caught", 0),
-        "ammo_used":       s.get("ammo_used", 0),
-        "tools_bought_all":1 if all_tools_owned else 0,
-        "tools_used_all":  1 if all_tools_used  else 0,
-        "gamble":          0,
-        "crates_opened":   s.get("crates_opened", 0),
-    }
+    ACH_SOURCES = achievement_sources(user_id)
     candidates = []
     for ach_key, tiers in ACHIEVEMENTS.items():
         if not tiers:
@@ -15319,17 +15354,7 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
     d = data[user_id]
     notifs = []
 
-    all_tools_owned = all(t in d.get("owned_tools", []) for t in TOOLS)
-    all_tools_used = all(t in d.get("stats", {}).get("tools_used", []) for t in TOOLS)
-
-    ACH_SOURCES = {
-        "daily_streak":    d.get("daily_streak", 0),
-        "animals_caught":  d.get("total_caught", 0),
-        "ammo_used":       d.get("stats", {}).get("ammo_used", 0),
-        "tools_bought_all": 1 if all_tools_owned else 0,
-        "tools_used_all":  1 if all_tools_used else 0,
-        "crates_opened": d.get("stats", {}).get("crates_opened", 0),
-    }
+    ACH_SOURCES = achievement_sources(user_id)
 
     for ach_key, tiers in ACHIEVEMENTS.items():
         if not tiers or not isinstance(tiers, list):
@@ -15397,25 +15422,17 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
                         0x3498DB,
                     ))
 
-    # Badges
-    all_ach_done = all(
-        len(ACHIEVEMENTS.get(k, [])) > 0 and
-        d["achievements"].get(k, {}).get("claimed_up_to", -1) >= len(ACHIEVEMENTS[k]) - 1
-        for k in ACHIEVEMENTS if ACHIEVEMENTS.get(k) and isinstance(ACHIEVEMENTS[k], list)
-    )
-
-    for badge_key, bdef in BADGES.items():
+    # Badges (Game Master last: it is built from the gambling badges updated just before it)
+    for badge_key in [k for k in BADGES if k != "game_master"] + ["game_master"]:
+        bdef = BADGES[badge_key]
         stat = bdef["stat"]
         gold_t = bdef["gold"]
         plat_t = bdef["plat"]
         abbr = bdef["abbr"]
         label = bdef["label"]
         
-        if stat == "game_master":
-            cur = 1 if all_ach_done else 0
-        else:
-            cur = get_badge_stat(user_id, stat)
-            
+        cur = get_badge_stat(user_id, stat)
+
         bstate = d["badges"].setdefault(badge_key, {"tier": 0, "notified_gold": False, "notified_plat": False})
         cur_tier = bstate.get("tier", 0)
 
@@ -15437,17 +15454,6 @@ async def check_achievements_and_badges(interaction: discord.Interaction, user_i
                 notifs.append((f"{emoji('trophy')} Platinum Badge Earned!",
                     f"**{label}** `[{abbr}🏆]`", 0xE8E8E8))
 
-    all_badge_plat = all(
-        d["badges"].get(k, {}).get("tier", 0) >= (2 if BADGES[k]["plat"] else 1)
-        for k in BADGES
-    )
-    if all_badge_plat:
-        gm = d["badges"].setdefault("game_master", {"tier": 0, "notified_gold": False, "notified_plat": False})
-        if gm.get("tier", 0) < 2 and not gm.get("notified_plat"):
-            gm["tier"] = 2
-            gm["notified_plat"] = True
-            notifs.append((f"{emoji('trophy')} Platinum Badge Earned!",
-                "**Game Master** `[GM🏆]`\nYou've completed everything. Legendary.", 0xE8E8E8))
 
     # Send notifications
     for title, body, color in notifs:
