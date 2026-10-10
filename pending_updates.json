@@ -123,5 +123,10 @@
     "key": "2026-10-09-market-gift-safety",
     "title": "Market & gifting safety",
     "message": "- **Money gifts now need a level 10, 3-day-old account** (like gems) and have a daily limit that scales with your level\n- **Gift limits apply to the receiver too** — each account can only receive so much a day from gifts, sized by its own level\n- Unconfirmed gifts **expire after 10 minutes**\n- Market sales always burn at least 1 coin of tax, and listings can't be bought or cancelled before they're fully saved\n- Resetting / prestiging now removes your crate and item market listings for good before the wipe"
+  },
+  {
+    "key": "2026-10-09-event-how-to-play",
+    "title": "Events now explain themselves",
+    "message": "- **Every event panel now has a \"How to play\"** — what to do, what you collect, how many you can earn a day, and exactly what you unlock at each milestone\n- **The daily \"Today\" panel tells you how to take part** each day (Explorer, Training, Workshop, Tribe, Most Wanted, Monster Rampage, Recovery) — including which buttons to press\n- Fox, Shipwreck and Duck events got a how-to too"
   }
 ]

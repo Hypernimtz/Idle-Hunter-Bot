@@ -1125,7 +1125,8 @@ def build_events_components(user_id: str) -> list:
     content = (
         f"# {g['emoji']} {ev['name']}\n"
         f"{g['blurb']}\n\n"
-        f"-# Started <t:{int(ev.get('started_ts',0))}:R> · **ends <t:{int(ev['ends_ts'])}:R>**"
+        + (("**How to take part**\n" + "\n".join(f"- {a}" for a in g.get("actions", [])) + "\n\n") if g.get("actions") else "")
+        + f"-# Started <t:{int(ev.get('started_ts',0))}:R> · **ends <t:{int(ev['ends_ts'])}:R>**"
     )
     return [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False, "components": [
         {"type": 10, "content": content},
@@ -1202,7 +1203,12 @@ def _build_fox_panel(user_id: str) -> list:
         f"-# {st['lead']} lengths ahead" + ("" if st.get('perfect', True) else " · trail broken (no *Outfoxed* this run)") + "\n"
         f"-# {emoji('gift')} Parcel tokens: **{st.get('parcels',0)}** · recovered **{st.get('recovered',0)}**"
         + (f" (need {FOX_TITLE_AT} clean for *Outfoxed*)" if st.get('recovered',0) < FOX_TITLE_AT else "") + "\n"
-        f"-# {emoji('animal_fallback')} Tracking runs left today: **{left}/{FOX_ATTEMPTS_DAY}** · {_event_end_line(ev)[2:]}"
+        f"-# {emoji('animal_fallback')} Tracking runs left today: **{left}/{FOX_ATTEMPTS_DAY}** · {_event_end_line(ev)[2:]}\n\n"
+        f"**How to play**\n"
+        f"-# Pick a route below — each one tries to close the fox's lead (safer routes close less, risky ones more but can lose ground). "
+        f"Get the lead to **0** to recover a parcel (a **parcel token**, sometimes a crate).\n"
+        f"-# You have {FOX_ATTEMPTS_DAY} runs a day. Recover **{FOX_TITLE_AT}** parcels without a broken trail for the *Outfoxed* title. "
+        f"Spend parcel tokens in the **Event Shop**. Nothing you own is ever at risk."
     )
     rows = [{"type": 10, "content": content}, {"type": 14, "divider": True, "spacing": 1}]
     rows.append({"type": 1, "components": [
@@ -1251,7 +1257,11 @@ def _build_shipwreck_panel(user_id: str) -> list:
         f"`⚓` **Unbanked salvage:** {st.get('unbanked',0)}  (at risk on deep dives)\n"
         f"{emoji('bank')} **Banked salvage:** {st.get('banked',0)}  (safe — spend it in the shop)\n"
         f"-# `🤿` Dives left today: **{left}/{SHIP_DIVES_DAY}** · {_event_end_line(ev)[2:]}\n"
-        f"-# Nothing you own or bought is ever at risk — only unbanked salvage."
+        f"-# Nothing you own or bought is ever at risk — only unbanked salvage.\n\n"
+        f"**How to play**\n"
+        f"-# Choose a dive spot: each adds **unbanked salvage** (shallow = small and safe, deep = bigger but a beam can collapse "
+        f"and you drop part of your unbanked pile).\n"
+        f"-# Press **Bank Salvage** to make it safe, then spend banked salvage in the **Event Shop**. {SHIP_DIVES_DAY} dives a day."
     )
     rows = [{"type": 10, "content": content}, {"type": 14, "divider": True, "spacing": 1}]
     rows.append({"type": 1, "components": [
@@ -1355,7 +1365,12 @@ def _build_duck_panel(user_id: str) -> list:
         + (f" {emoji('check_mark')} (qualifies for the reward)" if st.get('contrib',0) >= DUCK_CONTRIB_MIN else f" (need {DUCK_CONTRIB_MIN} to earn the ending reward)") + "\n\n"
         f"**The flock is {int(100*min(1, comm['progress']/max(1,comm['goal'])))}% fed**\n"
         f"{_progress_bar(comm['progress'], comm['goal'])}\n-# {comm['progress']:,}/{comm['goal']:,} crumbs · {_event_end_line(ev)[2:]}\n\n"
-        f"**Vote:** {tally}" + end_line
+        f"**Vote:** {tally}" + end_line + "\n\n"
+        f"**How to play**\n"
+        f"-# **Hunt** to find Bread Crumbs (they drop on successful hunts, capped per day), then press **Feed the Ducks** "
+        f"({DUCK_FEED_CHUNK} at a time) to fill the community bar.\n"
+        f"-# **Vote** once on how the takeover ends. When the flock is fed everyone who contributed **{DUCK_CONTRIB_MIN}+** "
+        f"crumbs gets the ending's title and the Bread Winner badge."
     )
     rows = [{"type": 10, "content": content}, {"type": 14, "divider": True, "spacing": 1}]
     rows.append({"type": 1, "components": [
@@ -2173,6 +2188,44 @@ def _ev3_head(uid: str, ev: dict, spec: dict, st: dict) -> str:
             f"**{tok_name}:** {st['prog']}/{spec['token_cap']} {bar} · to spend: **{_ev3_balance(st)}**{story}")
 
 
+def _ev3_reward_label(r: dict) -> str:
+    bits = []
+    if r.get("title"):
+        bits.append(f'title "{r["title"]}"')
+    if r.get("keepsake"):
+        k = ED.KEEPSAKES.get(r["keepsake"])
+        bits.append(f"keepsake {k[0]} {k[1]}" if k else "a keepsake")
+    if r.get("badge"):
+        bits.append(f"the {SPECIAL_BADGES.get(r['badge'], {}).get('label', 'event')} badge")
+    return " + ".join(bits) or "a reward"
+
+
+def _ev3_howto(spec: dict, *, compact: bool = False) -> str:
+    """What to do, how it finishes and what it pays — shown on the event panel so nobody has to guess."""
+    tok = spec["token"][0]
+    lines = []
+    if not compact:
+        lines.append("### How to play")
+        lines += [f"- {a}" for a in spec.get("actions", [])]
+    miles = "  ·  ".join(f"**{n}** → {_ev3_reward_label(r)}" for n, r in spec.get("rewards", []))
+    lines.append(f"**Goal:** collect **{spec['token_cap']} {tok}** to finish the whole story. "
+                 + (f"Milestones: {miles}" if miles else ""))
+    limits = []
+    if spec.get("day_cap"):
+        limits.append(f"up to {spec['day_cap']} {tok} a day")
+    if spec.get("attempts_day"):
+        limits.append(f"{spec['attempts_day']} tries a day")
+    if spec.get("rounds_day"):
+        limits.append(f"{spec['rounds_day']} rounds a day")
+    if spec.get("puzzles_day"):
+        limits.append(f"{spec['puzzles_day']} puzzle(s) a day")
+    if limits:
+        lines.append("-# Daily limit: " + ", ".join(limits) + ".")
+    if spec.get("shop"):
+        lines.append(f"-# Spend {spec['token'][1]}s in the **Shop** (button below) on cosmetics. Nothing here changes your income.")
+    return "\n".join(lines)
+
+
 def _ev3_nav_row(uid: str, spec: dict | None = None, extra: list | None = None) -> dict:
     btns = list(extra or [])
     if spec and spec.get("shop"):
@@ -2395,8 +2448,18 @@ def _build_ev3_panel(uid: str, ev: dict, spec: dict) -> list:
     if first:
         head = f"{spec['intro']}\n\n" + head
     content = (f"{flash}\n\n" if flash else "") + head
-    out = [{"type": 10, "content": content[:3900]}, {"type": 14, "divider": True, "spacing": 1},
-           {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}]
+    # Discord caps the total text of one message, so the how-to gets whatever room is left:
+    # the full guide if it fits, else just the goal line, else nothing.
+    room = 3900 - len(content) - len(body) - 120
+    howto = _ev3_howto(spec)
+    if len(howto) > room:
+        howto = _ev3_howto(spec, compact=True)
+    if len(howto) > room:
+        howto = ""
+    out = [{"type": 10, "content": content[:3900]}, {"type": 14, "divider": True, "spacing": 1}]
+    if howto:
+        out += [{"type": 10, "content": howto}, {"type": 14, "divider": True, "spacing": 1}]
+    out += [{"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1}]
     out += rows
     out.append(_ev3_nav_row(uid, spec))
     return [{"type": 17, "accent_color": 0x6C5CE7, "spoiler": False, "components": out}]
@@ -2868,11 +2931,37 @@ def _theme_action(uid: str, action: str, values: list) -> str:
     return ""
 
 
+_THEME_HOWTO = {
+    "explorer": ["Nothing to click — just **travel** between regions as normal and the trip takes half as long.",
+                 "Great day to cross to a new biome."],
+    "training":  ["Nothing to click — just **hunt**. Your first 40 successful hunts today earn +10% XP automatically.",
+                  "The counter below shows how many bonus hunts you've used."],
+    "workshop":  ["Nothing to click — open **/craft** and queue crystals. The first 5 you start today finish 20% faster.",
+                  "The counter below shows how many fast crafts you've used."],
+    "tribe":     ["You need to be in a **tribe**. Work on your tribe's weekly contracts as normal.",
+                  "Each contract that pays out today adds +25% tribe XP (up to 250 bonus XP for the whole tribe)."],
+    "wanted":    ["1. Read the clues below. 2. Pick the region from the dropdown. You get **one call**.",
+                  "Stuck? **Reveal another clue** first (up to 3) — the first three correct hunters are remembered, "
+                  "and everyone who tries gets a participation reward.",
+                  "Each region is a real place: Village = Pacific Northwest, Forest = British Isles, Woods = Scandinavia, "
+                  "Desert = Egypt, Sunken Coast = New England, Tundra = Carpathians, Jungle = SE Asia & Japan, "
+                  "Swamp = SE Australia, Volcanic = Anatolia, Cursed Ruins = Greece, Rainbow = Caribbean, "
+                  "Abyssal = Mediterranean deep, Celestial = Himalayas."],
+    "rampage":   ["1. Press **Engage** to fight — clear the Star Husk minions first, then the Colossus is exposed.",
+                  "2. You can engage 12 times today, 45 seconds apart. Fights cost HP but never knock you out.",
+                  "3. Do **3+ engagements**, then press **Claim reward** once the Colossus is down (cosmetic + one capped crate)."],
+    "recovery":  ["Nothing to click for the double HP regeneration — it's automatic all day.",
+                  "Press **Free full heal** once today to restore all your HP (not during a fight)."],
+}
+
+
 def build_theme_panel(uid: str, note: str = "") -> list:
     t = current_theme()
     k = t["key"]
     td = _theme_day(uid)
-    lines = [f"# {ev_icon(t)} {t['name']}", t["blurb"], f"-# {t['limit']}", f"-# *{t['lore']}*"]
+    lines = [f"# {ev_icon(t)} {t['name']}", t["blurb"],
+             "### How to take part", *[f"- {x}" for x in _THEME_HOWTO.get(k, [])],
+             f"-# {t['limit']}", f"-# *{t['lore']}*"]
     rows: list = []
     if k == "training":
         lines.append(f"\nTraining XP used: **{min(td['hunts'], ED.TRAINING_HUNT_CAP)}/{ED.TRAINING_HUNT_CAP}** hunts")
