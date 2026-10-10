@@ -113,5 +113,10 @@
     "key": "2026-10-09-crafting-and-clues",
     "title": "Crafting, forge & clue help",
     "message": "- **Crafting is cheaper** — 5 shards make a crystal and 4 crystals make a crate (20 shards per crate, was 81)\n- **Your forge gets faster as you level** — crystals fuse in 5 min at level 1, down to 3 min at level 1000\n- **No more wasted crate rewards** — a title you already own, or a permanent boost that's already maxed, now pays coins instead\n- Mythic Crates no longer claim they can hold a trophy (trophies come from Mythical kills)\n- **Event clue puzzles now explain how to read the clues** — what each clue means and how to match it to a region, animal or suspect"
+  },
+  {
+    "key": "2026-10-09-prestige-fixes",
+    "title": "Prestige fixes",
+    "message": "- **Prestige is a cleaner reset** — daily & weekly quests, healing items, any live fight or mythical hunt, your HP/injuries and the Field Guide are reset too, so nothing from your old run follows you (claim finished quests *before* you prestige)\n- **You can't prestige in the middle of a fight**\n- **Celestial Peaks now unlocks at Level 900**, so you can actually hunt the final biome before you prestige\n- The prestige screen now shows what you **gain** (+20%) and your **new total**\n- The daily-reward bonus from prestige tops out at +100% (10 prestiges); your permanent Luck / Sell / XP boost is unchanged"
   }
 ]

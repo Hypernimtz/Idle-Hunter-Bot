@@ -330,6 +330,8 @@ MYTH_XP_MULT             = 3.0   # mythic kills should out-XP a lucky danger-enc
 MYTH_WIN_HEAL_PCT        = 0.35  # a kill patches you up: +35% of max HP, so a win doesn't mean a medkit bill
 PRESTIGE_MIN_LEVEL    = 1000
 PRESTIGE_MIN_MONEY    = 1_000_000_000
+PRESTIGE_BOOST_PER    = 20      # permanent +% Luck / Sell / XP per prestige
+PRESTIGE_DAILY_MAX    = 10      # prestiges that count toward the daily-reward bonus (+10% each -> +100% max)
 TRAVEL_MAX_MIN        = 60      # travel time between opposite edges of the world map
 MAX_LOG_ENTRIES       = 50
 INV_DISPLAY_MAX       = 10
@@ -5350,7 +5352,7 @@ def add_personal_boost(user_id: str, stat: str, amount: int) -> None:
     b[stat] = cur if cur >= MAX_PERSONAL_BOOST else min(MAX_PERSONAL_BOOST, cur + amount)
 
 def get_prestige_boost(user_id: str) -> int:
-    return data[user_id].get("prestige", 0) * 20
+    return data[user_id].get("prestige", 0) * PRESTIGE_BOOST_PER
 
 # ─────────────────────────────────────────────
 # TROPHY CABINET  ·  consumable timed trophy effects (2026-09-27)
@@ -12353,6 +12355,14 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
         # reset and dodge the wipe entirely.
         "crate_inv": {}, "shards": {}, "crystals": {}, "craft_queue": [],
         "items": {}, "item_buffs": {},
+        # Run-scoped state that used to survive the wipe: quests (their rewards are priced for the
+        # old level — finishing one, resetting, then claiming would hand a level-1 hunter a huge XP
+        # grant), healing stock, a live fight / mythic hunt, HP, one-shot item flags, Field Guide.
+        "quests": [], "quests_last_roll": "", "weekly_quests": [], "weekly_quests_last_roll": 0,
+        "healing_inv": {}, "fight": None, "tracking": None,
+        "health": {"hp": PLAYER_BASE_HP, "max_hp": PLAYER_BASE_HP, "last_regen_ts": time.time(),
+                   "injuries": [], "rookie_revive_used": True},
+        "guide_seen": [], "_camp_rations": 0,
         # Camp resets fully too — no hired hunters, no capacity upgrades,
         # same as a brand-new account.
         "idle": {
@@ -12364,6 +12374,8 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
             "capacity_upgrades": 0,
         },
     })
+    for _flag in ("_lucky_hammer_active", "_danger_whistle_active"):
+        d.pop(_flag, None)
     _market_drop_crate_listings(user_id)   # listed crates are wiped with the rest
     mark_user_dirty(user_id)
     return d["prestige"]
@@ -12374,21 +12386,26 @@ def build_prestige_components(user_id: str) -> list:
     gems     = data[user_id].get("gems", 0)
     current  = data[user_id].get("prestige", 0)
     next_p   = current + 1
-    boost    = next_p * 20
+    boost    = next_p * PRESTIGE_BOOST_PER
+    unclaimed = sum(1 for q in data[user_id].get("quests", []) + data[user_id].get("weekly_quests", [])
+                    if q.get("completed") and not q.get("claimed"))
     lvl_ok   = level >= PRESTIGE_MIN_LEVEL
     money_ok = money >= PRESTIGE_MIN_MONEY
     body = (
         f"### {emoji('prestige')} Prestige {next_p}\n"
-        f"Current: **Prestige {current}** (+{current * 20}% all boosts)\n\n"
+        f"Current: **Prestige {current}** (+{current * PRESTIGE_BOOST_PER}% all boosts)\n\n"
         f"**Requirements:**\n"
         f"-# {emoji('check_mark') if lvl_ok else emoji('cross_mark')} Level **{PRESTIGE_MIN_LEVEL:,}** (you: {level:,})\n"
         f"-# {emoji('check_mark') if money_ok else emoji('cross_mark')} **◈ {PRESTIGE_MIN_MONEY:,}** (you: ◈ {money:,})\n\n"
-        f"**Reward:** +**{boost}%** permanent Luck, Sell & XP\n"
+        f"**Reward:** gain **+{PRESTIGE_BOOST_PER}%** permanent Luck, Sell & XP — new total **+{boost}%**\n"
+        + (f"{emoji('warning')} You have **{unclaimed}** finished quest{'s' if unclaimed != 1 else ''} you haven't claimed — "
+           f"claim {'them' if unclaimed != 1 else 'it'} first, quests are cleared when you prestige.\n" if unclaimed else "") +
         f"Prestiging costs almost everything: your gems drop to **{min(gems, RESET_GEM_CAP):,}** at most "
         f"(currently {emoji('gem')} {gems:,}) and your personal boosts are erased. "
         f"Please re-think about your decision before you click **Prestige**.\n"
         f"-# Resets: Level/XP, Money, Gems (max {RESET_GEM_CAP}), Personal & Temporary Boosts, Tools, Ammo, Vehicle, "
-        f"Animal Inventory, Biome, Field Guide, Total Caught, Travel, Camp (Hunters/Upgrades/Haul/Location), Crates/Materials\n"
+        f"Animal Inventory, Biome, Field Guide, Total Caught, Travel, Camp (Hunters/Upgrades/Haul/Location), Crates/Materials, "
+        f"Items & Healing Items, Daily/Weekly Quests, HP & any live fight\n"
         f"-# Kept: Prestige Bonus, Badges, Achievements, Titles, Tribe, Special Badges, "
         f"Lifetime Stats, Cosmetics, Hunt History"
     )
@@ -12409,7 +12426,7 @@ def build_prestige_done_components(user_id: str, new_prestige: int) -> list:
         {"type": 10, "content": (
             f"### {emoji('prestige')} Prestige {new_prestige}!\n"
             f"All progress reset. Welcome back, hunter.\n"
-            f"-# Permanent bonus: +**{new_prestige * 20}%** to all boosts · "
+            f"-# Permanent bonus: +**{new_prestige * PRESTIGE_BOOST_PER}%** to all boosts (+{PRESTIGE_BOOST_PER}% this time) · "
             f"Gems: {emoji('gem')} {data[user_id].get('gems', 0):,}"
         )},
         {"type": 1, "components": [
@@ -17979,7 +17996,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     level    = data[owner_id]["level"]
                     prestige = data[owner_id].get("prestige", 0)
                     tier     = get_daily_tier(level)
-                    bonus    = (1 + (streak / 100) + (prestige * 0.1)) * ev_daily_mult()
+                    bonus    = (1 + (streak / 100) + (min(prestige, PRESTIGE_DAILY_MAX) * 0.1)) * ev_daily_mult()
                     rtype    = random.choice(["money", "gems"])
                     if rtype == "money":
                         base = random.randint(tier["money_min"], tier["money_max"])
@@ -18026,13 +18043,18 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
 
-        _ok = False
+        _ok = _busy = False
         async with user_transaction(owner_id):
             # Re-check under the lock: a double-click must not prestige twice
             # (the first reset drops level/money below the requirements).
-            if data[owner_id]["level"] >= PRESTIGE_MIN_LEVEL and data[owner_id]["money"] >= PRESTIGE_MIN_MONEY:
+            if player_in_combat(owner_id):
+                _busy = True
+            elif data[owner_id]["level"] >= PRESTIGE_MIN_LEVEL and data[owner_id]["money"] >= PRESTIGE_MIN_MONEY:
                 new_p = apply_account_reset(owner_id, prestige=True)
                 _ok = True
+        if _busy:
+            await send_ephemeral_v2(interaction, f"{emoji('warning')} Finish your fight before you prestige.", 0xE74C3C)
+            return
         if not _ok:
             await send_ephemeral_v2(interaction, "Requirements not met.", 0xE74C3C)
             return

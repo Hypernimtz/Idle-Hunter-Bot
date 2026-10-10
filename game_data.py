@@ -1124,7 +1124,7 @@ BIOME_LEVELS = [
     ("cursed_ruins",      450),
     ("rainbow",           600),
     ("abyssal_depths",    800),
-    ("celestial_peaks",  1000),
+    ("celestial_peaks",   900),   # unlocks before Prestige (Level 1,000) so the last biome gets played
 ]
 
 # Built from the EMOJI registry at the top of this file — edit ids there.
