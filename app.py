@@ -6,7 +6,7 @@ import asyncio, discord, random, time, json, string, requests, secrets, logging,
 from discord.http import Route
 from discord import app_commands
 from discord.ext import commands, tasks
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as _dtime
 from collections import Counter, deque
 from game_data import (
     # Biomes
@@ -5457,8 +5457,21 @@ async def _tribe_perm(interaction, user_id: str, tribe_name: str,
 
 # `detail` says WHAT it was for (the tool bought, who a gift went to…); the command/button that
 # caused the change is recorded automatically. Both show up in /inspect log.
+# Money that moves between players, comes from gambling or is an admin / refund adjustment is not "earned" —
+# the Top Earner board counts gameplay income only (selling, quests, dailies, crates, kills, achievements...).
+_NOT_EARNED_PREFIXES = ("gift", "market", "admin", "fight", "giveaway", "lottery", "blackjack", "slots", "rps",
+                        "roulette", "dice", "coinflip", "highlow", "refund", "reset", "item overflow")
+
+
+def _is_earned_source(source: str) -> bool:
+    return not source.lower().startswith(_NOT_EARNED_PREFIXES)
+
+
 def add_money(user_id: str, amount: int, source: str, detail: str = "") -> None:
     data[user_id]["money"] += amount
+    if amount > 0 and _is_earned_source(source):
+        _es = data[user_id].setdefault("stats", {})
+        _es["money_earned"] = _es.get("money_earned", 0) + amount
     mark_user_dirty(user_id)
     if amount != 0:
         log_economy_event(user_id, source, amount, data[user_id]["money"], detail=detail, ctx=_inv_src.get())
@@ -14949,12 +14962,44 @@ def _lb_period_value(uid: str, stat: str, period: str) -> int:
     tag    = _lb_period_tag(period)
     snap   = snaps.get(period)
     if not snap or snap.get("tag") != tag:
+        if period == "weekly":
+            _lb_finalize_week(tag)          # freeze last week's standings BEFORE its baselines are replaced
         snap = _lb_make_snapshot(uid, period, tag)
         snaps[period] = snap
+    if stat == "Money":                      # periodic Money boards rank what was EARNED, not balance growth
+        return max(0, _lb_earned(uid) - snap.get("MoneyEarned", _lb_earned(uid)))
     return max(0, current - snap.get(stat, current))
 
+
+def _lb_earned(uid: str) -> int:
+    return int(data[uid].get("stats", {}).get("money_earned", 0) or 0)
+
+
+_weekly_final: dict = {"tag": "", "rows": []}
+
+
+def _lb_finalize_week(new_tag: str) -> list:
+    """Final Top Earner standings for the week that just ended: [(uid, earned)], best first. Computed ONCE per
+    rollover from each player's old weekly baseline and then kept (and persisted), so opening a leaderboard,
+    a late scheduled task or a restart can never change or lose them."""
+    if _weekly_final.get("tag") == new_tag:
+        return _weekly_final["rows"]
+    rows = []
+    for uid, d in data.items():
+        if not _lb_eligible(uid):
+            continue
+        snap = d.get("lb_snap", {}).get("weekly")
+        if not snap or snap.get("tag") == new_tag:
+            continue
+        gained = max(0, _lb_earned(uid) - snap.get("MoneyEarned", _lb_earned(uid)))
+        if gained > 0:
+            rows.append((uid, gained))
+    rows.sort(key=lambda r: r[1], reverse=True)
+    _weekly_final["tag"], _weekly_final["rows"] = new_tag, rows[:10]
+    return _weekly_final["rows"]
+
 # What a brand-new account holds (init_user) — the baseline for anyone who joined mid-period.
-_LB_NEW_PLAYER_BASELINE = {s: 0 for s in HUNTER_LB_STATS} | {"Level": 1, "Money": 150}
+_LB_NEW_PLAYER_BASELINE = {s: 0 for s in HUNTER_LB_STATS} | {"Level": 1, "Money": 150, "MoneyEarned": 0}
 
 def _lb_make_snapshot(uid: str, period: str, tag: str) -> dict:
     """Baseline for a player's daily/weekly gains. A player who joined during this
@@ -14962,7 +15007,7 @@ def _lb_make_snapshot(uid: str, period: str, tag: str) -> dict:
     baseline is what they hold right now."""
     if data[uid].get("joined_date", "") >= _lb_period_start_date(period):
         return {"tag": tag, **_LB_NEW_PLAYER_BASELINE}
-    return {"tag": tag, **{s: fn(uid) for s, fn in HUNTER_LB_STATS.items()}}
+    return {"tag": tag, **{s: fn(uid) for s, fn in HUNTER_LB_STATS.items()}, "MoneyEarned": _lb_earned(uid)}
 
 def _lb_period_start_date(period: str) -> str:
     """UTC date (YYYY-MM-DD) the current daily/weekly period began."""
@@ -15023,9 +15068,12 @@ def build_leaderboard_v2_components(user_id: str, guild, mode: str = "hunter",
         val_fn = lambda u: _lb_period_value(u, stat, period)
         def _rank_hunters():
             cands = get_server_user_ids(guild) if scope == "server" else list(data.keys())
-            return sorted((u for u in cands if _lb_eligible(u)), key=val_fn, reverse=True)
+            return sorted((u for u in cands if _lb_eligible(u)),
+                          key=(lambda u: (val_fn(u), data[u].get("xp", 0))) if (stat == "Level" and period == "all") else val_fn,
+                          reverse=True)
         ranked = _lb_cached(("h", scope, getattr(guild, "id", None) if scope == "server" else None,
                              stat, period, _lb_period_tag(period)), _rank_hunters)
+        ranked = [u for u in ranked if u in data and _lb_eligible(u)]      # an account deleted since caching
         total  = len(ranked)
         items  = ranked[page * PS:(page + 1) * PS]
         lines  = []
@@ -16180,6 +16228,7 @@ def _encode_runtime_state() -> dict:
         "themes":           dict(_theme_state),
         "duels":            {k: v for k, v in _duels.items() if v.get("status") in ("pending", "active")},
         "last_weekly_lb_tag": _last_weekly_lb_tag,
+        "weekly_final": {"tag": _weekly_final.get("tag", ""), "rows": [list(r) for r in _weekly_final.get("rows", [])]},
         "alive_ts": int(time.time() // 60 * 60),   # changes once a minute -> rewritten once a minute
         "outages":  [list(o) for o in _outages],
     }
@@ -16276,6 +16325,10 @@ def load_runtime_state() -> None:
     if isinstance(_es, dict):
         _event_scheduler.update(_es)
     _last_weekly_lb_tag = str(raw.get("last_weekly_lb_tag", "") or "")
+    _wf = raw.get("weekly_final") or {}
+    if isinstance(_wf, dict) and _wf.get("tag"):
+        _weekly_final["tag"] = str(_wf["tag"])
+        _weekly_final["rows"] = [(str(r[0]), int(r[1])) for r in _wf.get("rows", []) if len(r) == 2]
     try:
         _outages[:] = [[int(a), int(b)] for a, b in (raw.get("outages") or [])]
         if _alive:
@@ -26613,7 +26666,8 @@ async def leaderboard_rank_watch_task():
         await asyncio.sleep(0)   # let queued clicks run between the per-stat passes
         try:
             # only the top 3 matter: O(N) instead of a full O(N log N) sort per stat
-            top3 = heapq.nlargest(3, (u for u in list(data.keys()) if _lb_eligible(u)), key=fn)
+            top3 = [u for u in heapq.nlargest(3, (u for u in list(data.keys()) if _lb_eligible(u)), key=fn)
+                    if fn(u) > 0]          # nobody has a "rank" in a stat they have no score in
         except Exception as e:
             print(f"Leaderboard rank watch ({stat}) sort error:", e)
             continue
@@ -26909,22 +26963,9 @@ async def _wste(error): print("World sighting task error:", error)
 _last_weekly_lb_tag: str = ""
 
 def _weekly_leaderboard_recap_text(new_tag: str) -> str:
-    """Final standings for the week that just ended, from each player's
-    'weekly' leaderboard snapshot (the same lazy baseline /leaderboard's
-    weekly tab uses) — read BEFORE it gets rebased to the new week below.
-    Redesigned 2026-09-15 to spotlight the #1 earner as the headline instead
-    of a flat five-line list with no hierarchy."""
-    rows = []
-    for uid, d in data.items():
-        if not _lb_eligible(uid):
-            continue
-        snap = d.get("lb_snap", {}).get("weekly")
-        if not snap or snap.get("tag") == new_tag:
-            continue   # no baseline for the week that just ended
-        gained = max(0, HUNTER_LB_STATS["Money"](uid) - snap.get("Money", 0))
-        if gained > 0:
-            rows.append((uid, gained))
-    rows.sort(key=lambda r: r[1], reverse=True)
+    """Final standings for the week that just ended — money EARNED (gameplay income, not balance growth or
+    gifts), taken from the frozen rollover results so they can't be altered after the fact."""
+    rows = list(_lb_finalize_week(new_tag))
     if not rows:
         return announce_card("result", emoji('trophy'), "Weekly Leaderboard", subtitle="Top Earner",
                               flavor="No qualifying activity was recorded last week.")
@@ -26941,7 +26982,7 @@ def _weekly_leaderboard_recap_text(new_tag: str) -> str:
         actions=runner_ups,
     )
 
-@tasks.loop(minutes=30)
+@tasks.loop(minutes=5)
 async def weekly_leaderboard_task():
     """Post a Money-earned recap once per ISO week and re-seed every player's
     weekly snapshot right at the rollover, so next week's recap is complete
@@ -26951,7 +26992,7 @@ async def weekly_leaderboard_task():
         tag = _week_tag()
         if tag == _last_weekly_lb_tag:
             return
-        text = _weekly_leaderboard_recap_text(tag)
+        text = _weekly_leaderboard_recap_text(tag)                 # freezes last week's standings first
         for uid, d in data.items():
             d.setdefault("lb_snap", {})["weekly"] = _lb_make_snapshot(uid, "weekly", tag)
             mark_user_dirty(uid)
@@ -26965,7 +27006,7 @@ async def weekly_leaderboard_task():
 @weekly_leaderboard_task.error
 async def _wlte(error): print("Weekly leaderboard task error:", error)
 
-@tasks.loop(minutes=2)
+@tasks.loop(minutes=1)
 async def daily_leaderboard_task():
     """Re-seed every player's daily snapshot at the UTC day rollover (and once on
     boot — idempotent, it only touches stale snapshots)."""
@@ -27581,6 +27622,22 @@ if FEATURE_AUTO_EVENTS:
     _V2_BACKGROUND_TASKS.append(automatic_event_scheduler)
 _V2_BACKGROUND_TASKS.append(weekly_leaderboard_task)
 _V2_BACKGROUND_TASKS.append(daily_leaderboard_task)
+
+
+@tasks.loop(time=_dtime(0, 0, 1, tzinfo=timezone.utc))
+async def leaderboard_midnight_task():
+    """Right at 00:00:01 UTC: freeze the old week (Mondays) and seed the new day's baselines, so early activity
+    after midnight isn't lost waiting for the periodic checks."""
+    try:
+        await weekly_leaderboard_task.coro()
+        _lb_rebase_daily(_lb_period_tag("daily"))
+    except Exception as e:
+        print("leaderboard_midnight_task error:", e)
+
+@leaderboard_midnight_task.error
+async def _lmte(error): print("Leaderboard midnight task error:", error)
+
+_V2_BACKGROUND_TASKS.append(leaderboard_midnight_task)
 _V2_BACKGROUND_TASKS.append(giveaway_task)
 _V2_BACKGROUND_TASKS.append(fight_task)
 

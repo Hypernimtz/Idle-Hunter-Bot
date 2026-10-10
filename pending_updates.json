@@ -158,5 +158,10 @@
     "key": "2026-10-10-referrals-giveaways",
     "title": "Referrals & giveaways",
     "message": "- **Referral rewards can no longer get lost or doubled** if the bot restarts mid-payout — unfinished payouts are finished on the next start\n- **Referral milestones** are now exact (each one paid once, even if two friends qualify at the same moment)\n- A referred account now has to be **at least 3 days old** (on top of level 25, 50 hunts and 2 active days)\n- **Giveaway prizes can't be paid twice** after a restart\n- **Hunt Races** only count animals you actually **hunt** after joining — idle-camp hauls no longer count"
+  },
+  {
+    "key": "2026-10-10-leaderboards",
+    "title": "Leaderboard accuracy",
+    "message": "- **Daily & Weekly \"Money\" boards now rank money you actually EARNED** (selling, quests, dailies, crates, kills…) — not balance growth, so gifts, gambling winnings and market trades no longer count\n- **Last week's Top Earner results are frozen at the rollover**, so they can't change when someone opens the leaderboard or the bot restarts\n- Daily and weekly baselines are set right at midnight UTC, so early activity isn't lost\n- Players with the same level are now ranked by XP everywhere\n- Rank-drop DMs ignore categories where nobody has a score yet"
   }
 ]
