@@ -89,6 +89,7 @@ from game_data import (
     hunt_crate_chance, pick_biome_animal,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
+    TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
     crystal_craft_seconds, CRATE_DUPLICATE_PAYOUT_X,
@@ -5518,6 +5519,23 @@ def trophy_effect_value(user_id: str, effect_key: str, at: float | None = None) 
             total += eff["value"]
     return total
 
+def trophy_heal(user_id: str, effect_key: str) -> int:
+    """HP restored by a self-healing trophy right now, honouring its cooldown. Returns HP actually gained."""
+    amt = int(trophy_effect_value(user_id, effect_key))
+    if amt <= 0:
+        return 0
+    now = time.time()
+    stamps = data[user_id].setdefault("_trophy_heal_ts", {})
+    if now - stamps.get(effect_key, 0) < TROPHY_HEAL_COOLDOWN_S.get(effect_key, 0):
+        return 0
+    h = data[user_id]["health"]
+    before = h["hp"]
+    h["hp"] = min(effective_max_hp(user_id), before + amt)
+    if h["hp"] > before:
+        stamps[effect_key] = now
+    return h["hp"] - before
+
+
 def trophy_has_effect(user_id: str, effect_key: str) -> bool:
     return trophy_effect_value(user_id, effect_key) > 0
 
@@ -5974,10 +5992,7 @@ def collect_idle_haul(user_id: str) -> dict:
         is_rare    = random.random() < rare_catch_chance(luck_boost) + trophy_effect_value(user_id, "perfect_catch_pp") / 100
         if is_rare:
             sell_value *= 3; xp_earned *= 2; rares += 1
-            _chp = trophy_effect_value(user_id, "perfect_catch_hp_restore")   # Chupacabra: Hollow Fang
-            if _chp:
-                hh = data[user_id]["health"]
-                hh["hp"] = min(effective_max_hp(user_id), hh["hp"] + int(_chp))
+            trophy_heal(user_id, "perfect_catch_hp_restore")   # Chupacabra: Hollow Fang (rate-limited)
         sell_value = int(sell_value * _sell_ev)
         xp_earned  = int(xp_earned * _xp_ev)
         total_val += sell_value; total_xp += xp_earned
@@ -7332,10 +7347,7 @@ def run_hunt(user_id: str) -> dict:
         is_rare      = random.random() < _rare_p
         if is_rare:
             sell_value *= 3; xp_earned *= 2
-            _chp = trophy_effect_value(user_id, "perfect_catch_hp_restore")   # Chupacabra: Hollow Fang
-            if _chp:
-                hh = data[user_id]["health"]
-                hh["hp"] = min(effective_max_hp(user_id), hh["hp"] + int(_chp))
+            trophy_heal(user_id, "perfect_catch_hp_restore")   # Chupacabra: Hollow Fang (rate-limited)
         sell_value = int(sell_value * _sell_ev)
         xp_earned  = int(xp_earned * _xp_ev)
 
@@ -7369,10 +7381,7 @@ def run_hunt(user_id: str) -> dict:
             data[user_id]["stats"].get("total_xp_earned", 0) + xp_earned
 
     if catches:
-        _vhp = trophy_effect_value(user_id, "hunt_hp_restore")   # Vampires: Coffin Nail
-        if _vhp:
-            hh = data[user_id]["health"]
-            hh["hp"] = min(effective_max_hp(user_id), hh["hp"] + int(_vhp))
+        trophy_heal(user_id, "hunt_hp_restore")   # Vampires: Coffin Nail (rate-limited)
 
     # How much ammo this hunt actually consumed — captured before ammo_name is
     # cleared below, so the hunt that empties the stack still advances the quest.
@@ -8737,13 +8746,7 @@ def _myth_fight_lose(user_id: str, name: str, c: dict) -> dict:
         spend_money(user_id, loss, "myth death")
     stats["myths_died"] = stats.get("myths_died", 0) + 1
     rec = apply_ko_recovery(user_id)   # the existing cash penalty stands; HP still recovers
-    phoenix_save = False
-    if trophy_has_effect(user_id, "phoenix_revive_daily") and _trophy_daily_use(user_id, "phoenix"):
-        target_hp = int(trophy_effect_value(user_id, "phoenix_revive_daily"))
-        if rec["hp"] < target_hp:
-            data[user_id]["health"]["hp"] = min(effective_max_hp(user_id), target_hp)
-            rec["hp"] = data[user_id]["health"]["hp"]
-        phoenix_save = True
+    phoenix_save = False               # (the Phoenix now saves you mid-fight — see myth_fight_turn)
     mark_user_dirty(user_id)
     return {"kind": "death", "creature": name, "loss": loss,
             "balance": data[user_id]["money"], "rookie_save": rec["rookie_save"], "hp": rec["hp"],
@@ -8925,7 +8928,10 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
             log.append(f"{ico} The {name} lunges and misses.")
 
     if h["hp"] <= 0:
-        if trophy_has_effect(user_id, "hydra_survive_daily") and _trophy_daily_use(user_id, "hydra"):
+        if trophy_has_effect(user_id, "phoenix_revive_daily") and _trophy_daily_use(user_id, "phoenix"):
+            h["hp"] = min(effective_max_hp(user_id), int(trophy_effect_value(user_id, "phoenix_revive_daily")))
+            log.append(f"{emoji('fire')} **Everburning Ember** flares — you rise from the ashes at **{h['hp']} HP** and fight on!")
+        elif trophy_has_effect(user_id, "hydra_survive_daily") and _trophy_daily_use(user_id, "hydra"):
             h["hp"] = 1
             log.append(f"`🐍` **Immortal Head Tooth** flickers — you survive at **1 HP**.")
         else:
@@ -15971,10 +15977,10 @@ async def _start_scratch_pad_and_show(interaction, user_id: str):
     async with user_transaction(user_id):
         # Check + consume under the lock, same double-click guard as crates.
         it = data[user_id].get("items", {})
-        if it.get("Scratch Pad", 0) <= 0:
+        if data[user_id].get("scratch_pad"):
+            pass   # already have one going — just show it (even with no pad left), don't consume another
+        elif it.get("Scratch Pad", 0) <= 0:
             have = False
-        elif data[user_id].get("scratch_pad"):
-            pass   # already have one going — just show it, don't consume another
         else:
             it["Scratch Pad"] -= 1
             if it["Scratch Pad"] <= 0:
@@ -22394,8 +22400,13 @@ def _append_temp_boost(container: dict, stat: str, amount: int, minutes: int) ->
     and prune expired ones. ``container`` is either a player's data dict or a
     tribe's data dict — both store temp boosts the same shape."""
     tb = container.setdefault("temp_boosts", [])
-    tb.append({"stat": stat, "amount": amount, "expires_at": time.time() + minutes * 60})
-    container["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
+    now = time.time()
+    same = next((b for b in tb if b["stat"] == stat and b["amount"] == amount and b["expires_at"] > now), None)
+    if same:       # the same boost again lengthens it (up to TEMP_BOOST_MAX_MINUTES) instead of adding a second copy
+        same["expires_at"] = min(same["expires_at"] + minutes * 60, now + TEMP_BOOST_MAX_MINUTES * 60)
+    else:
+        tb.append({"stat": stat, "amount": amount, "expires_at": now + minutes * 60})
+    container["temp_boosts"] = [b for b in tb if b["expires_at"] > now]
 
 def _grant_temp_luck_or_xp(user_id: str, stat: str, amount: int, minutes: int) -> None:
     _append_temp_boost(data[user_id], stat, amount, minutes)
@@ -22465,12 +22476,20 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
             return
 
         if item_name == "Smoke Bomb":
-            if not animal_fight_active(user_id):
-                msg, color, consume = f"{emoji('cross_mark')} There's no danger encounter to escape right now.", 0xE74C3C, False
-            else:
+            boss = data[user_id].get("_boss")
+            if animal_fight_active(user_id):
                 animal = data[user_id]["fight"].get("animal", "it")
                 data[user_id]["fight"] = None
                 msg = f"{it['emoji']} Smoke fills the air — you slip away from the **{animal}** clean, no HP lost."
+            elif boss:
+                # Against a Mythical a plain Flee can fail messily; a Smoke Bomb is a guaranteed clean escape.
+                nm = boss.get("creature", "it")
+                data[user_id]["_boss"] = None
+                st = data[user_id].setdefault("stats", {})
+                st["myths_fled"] = st.get("myths_fled", 0) + 1
+                msg = f"{it['emoji']} A thick cloud swallows the clearing — you vanish from the **{nm}** with no HP lost."
+            else:
+                msg, color, consume = f"{emoji('cross_mark')} There's no danger encounter to escape right now.", 0xE74C3C, False
 
         elif item_name == "Ammo Pouch":
             ammo_name = _pouch_ammo_for(user_id)
@@ -22528,8 +22547,11 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
                 msg = f"{it['emoji']} {verb} — **+{amount}% {stat_label}** for {minutes} min."
 
         elif item_name == "Danger Whistle":
-            data[user_id]["_danger_whistle_active"] = True
-            msg = f"{it['emoji']} One sharp blow — you'll get the **ambush** in your next danger encounter."
+            if data[user_id].get("_danger_whistle_active"):
+                msg, color, consume = f"{emoji('cross_mark')} A whistle is already set — use your next danger encounter first.", 0xE74C3C, False
+            else:
+                data[user_id]["_danger_whistle_active"] = True
+                msg = f"{it['emoji']} One sharp blow — you'll get the **ambush** in your next danger encounter."
 
         elif item_name == "Trail Map":
             travel = data[user_id].get("travel")
@@ -22546,13 +22568,20 @@ async def _use_generic_item_and_show(interaction: discord.Interaction, user_id: 
             if not q:
                 msg, color, consume = f"{emoji('cross_mark')} Nothing is queued in the forge right now.", 0xE74C3C, False
             else:
-                q[0]["done_ts"] = time.time()
+                now_ts = time.time()
+                skipped = max(0.0, q[0].get("done_ts", now_ts) - now_ts)
+                for e in q:                          # the whole queue moves up, not just the first crystal
+                    e["done_ts"] = max(now_ts, e.get("done_ts", now_ts) - skipped)
+                q[0]["done_ts"] = now_ts
                 craft_tick(user_id)
-                msg = f"{it['emoji']} The forge roars — your next crystal finishes instantly."
+                msg = f"{it['emoji']} The forge roars — your next crystal finishes instantly and the rest of the queue moves up."
 
         elif item_name == "Lucky Hammer":
-            data[user_id]["_lucky_hammer_active"] = True
-            msg = f"{it['emoji']} One good knock — the next crate you open pays out **double** money/gems."
+            if data[user_id].get("_lucky_hammer_active"):
+                msg, color, consume = f"{emoji('cross_mark')} A hammer is already primed — open a crate first.", 0xE74C3C, False
+            else:
+                data[user_id]["_lucky_hammer_active"] = True
+                msg = f"{it['emoji']} One good knock — the next crate you open pays out **double** money/gems."
 
         elif item_name == "Haul Wagon":
             idle = data[user_id].get("idle", {})

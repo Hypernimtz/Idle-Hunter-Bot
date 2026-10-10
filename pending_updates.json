@@ -133,5 +133,10 @@
     "key": "2026-10-09-daily-vote",
     "title": "Daily & vote rewards",
     "message": "- **Vote rewards are only paid for real, verified votes** — and a vote has to be recent (within 24h) to count\n- **Vote crates:** your first vote claim each day gives an **Epic Crate**; a second claim the same day gives a **Rare Crate**\n- **Daily streak bonus** is +1% per day up to 100 days, then grows slowly (your streak itself still counts forever)\n- **Level 1200+ daily rewards** are smoother (money 3M–20M, gems 40–80)\n- The **daily screen shows your real payout** — streak, prestige and the final multiplier, plus the range you can win"
+  },
+  {
+    "key": "2026-10-09-items-trophies",
+    "title": "Items & trophies tuning",
+    "message": "- **Loch Silt Sample** now adds +2% to your finished-crate chance per hunt (was +12%)\n- **Everburning Ember (Phoenix)** really saves you now — a lethal hit in a Mythical fight leaves you at 30 HP and the fight goes on (once a day)\n- **Coffin Nail** and **Hollow Fang** self-healing now have a short cooldown, so healing items still matter\n- **Using the same timed boost again extends it** instead of stacking higher (a second War Horn extends the tribe buff too)\n- **Lucky Hammer** and **Danger Whistle** won't be wasted if one is already primed\n- **Forge Coal** moves your whole crafting queue up, not just the first crystal\n- **Smoke Bomb** now also gives a guaranteed clean escape from a Mythical\n- You can **resume an unfinished Scratch Pad** even with none left to use\n- Combat trophies are now labelled as **Mythical-fight** effects"
   }
 ]

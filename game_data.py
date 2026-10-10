@@ -2453,8 +2453,8 @@ TROPHY_EFFECTS = {
                                  "desc": "+6% XP while below 50% HP"},
     "Webbed Claw":             {"creature": "Grindylow",                "effect_key": "perfect_catch_pp",             "value": 3,
                                  "desc": "+3 percentage points to Perfect Catch chance"},
-    "Loch Silt Sample":        {"creature": "Loch Ness Monster",        "effect_key": "crate_drop_pp",                "value": 12,
-                                 "desc": "+12% chance to receive hunt crate drops"},
+    "Loch Silt Sample":        {"creature": "Loch Ness Monster",        "effect_key": "crate_drop_pp",                "value": 2,
+                                 "desc": "+2% chance of a finished crate on each hunt"},
     "Dripping Bridle":         {"creature": "Kelpie",                   "effect_key": "travel_time_pct",              "value": 12,
                                  "desc": "Travel time -12%"},
     "Petrified Troll Nose":    {"creature": "Troll",                    "effect_key": "hp_regen_pct",                 "value": 20,
@@ -2464,17 +2464,17 @@ TROPHY_EFFECTS = {
     "Weighing-Scale Feather":  {"creature": "Ammut",                    "effect_key": "sell_pct",                     "value": 6,
                                  "desc": "Sell value +6%"},
     "Grapnel Talon":           {"creature": "Roc",                      "effect_key": "combat_accuracy_pct",          "value": 6,
-                                 "desc": "Combat accuracy +6%"},
+                                 "desc": "In Mythical fights: combat accuracy +6%"},
     "Barrel-Thick Scale":      {"creature": "Sea Serpent of Cape Ann",  "effect_key": "incoming_dmg_pct",             "value": 8,
-                                 "desc": "Incoming combat damage -8%"},
+                                 "desc": "In Mythical fights: incoming damage -8%"},
     "Kraken Ink Vial":         {"creature": "Kraken",                   "effect_key": "sighting_double_clue_pct",     "value": 15,
                                  "desc": "15% chance a Global Sighting clue counts twice"},
     "Coffin Nail":             {"creature": "Vampires",                 "effect_key": "hunt_hp_restore",              "value": 3,
-                                 "desc": "Restore 3 HP after a successful hunt"},
+                                 "desc": "Restore 3 HP after a successful hunt (at most once every 15 s)"},
     "Silver-Burned Fang":      {"creature": "Werewolf",                 "effect_key": "myth_dmg_pct",                 "value": 10,
                                  "desc": "Damage against Mythicals +10%"},
     "Barbed Tail-Spine":       {"creature": "Manticore",                "effect_key": "punch_kick_accuracy_pct",      "value": 10,
-                                 "desc": "Punch/Kick attack accuracy +10%"},
+                                 "desc": "In Mythical fights: Punch/Kick accuracy +10%"},
     "Black-Cloud Wisp":        {"creature": "Nue",                      "effect_key": "luck_world_condition_pct",     "value": 8,
                                  "desc": "+8% Luck during world conditions"},
     "Billabong Tusk":          {"creature": "Bunyip",                   "effect_key": "camp_capacity_pct",            "value": 20,
@@ -2482,13 +2482,13 @@ TROPHY_EFFECTS = {
     "Coarse Yowie Hair":       {"creature": "Yowie",                    "effect_key": "camp_production_pct",          "value": 10,
                                  "desc": "Hunting Camp production +10%"},
     "Fire-Gland Sac":          {"creature": "Chimera",                  "effect_key": "first_hit_bonus_dmg",          "value": 10,
-                                 "desc": "First successful hit in a fight deals +10 bonus damage"},
+                                 "desc": "In Mythical fights: your first successful hit deals +10 bonus damage"},
     "Petrifying Eye":          {"creature": "Cockatrice",               "effect_key": "enemy_skip_pct",               "value": 8,
-                                 "desc": "8% chance an enemy skips its next attack"},
+                                 "desc": "In Mythical fights: 8% chance the enemy skips its next attack"},
     "Bronze Nose-Ring":        {"creature": "Minotaur",                 "effect_key": "tracking_extra_mistake",       "value": 1,
                                  "desc": "+1 allowed mistake during Mythical tracking"},
     "Immortal Head Tooth":     {"creature": "Hydra",                    "effect_key": "hydra_survive_daily",          "value": 1,
-                                 "desc": "Once/day, a lethal hit leaves you at 1 HP instead"},
+                                 "desc": "In Mythical fights: once/day, a lethal hit leaves you at 1 HP instead"},
     "Snake-Mane Scale":        {"creature": "Cerberus",                 "effect_key": "max_hp_bonus",                 "value": 15,
                                  "desc": "Maximum HP +15"},
     "Stone-Gaze Lens":         {"creature": "Gorgon",                   "effect_key": "tracking_reveal_risk",         "value": 1,
@@ -2496,15 +2496,15 @@ TROPHY_EFFECTS = {
     "Reeking Wing-Feather":    {"creature": "Harpies",                  "effect_key": "hunt_cooldown_reduction",      "value": 0.35,
                                  "desc": "Hunt cooldown -0.35 sec"},
     "Six-Fanged Collar":       {"creature": "Scylla",                   "effect_key": "double_hit_pct",               "value": 8,
-                                 "desc": "8% chance a successful combat attack hits twice"},
+                                 "desc": "In Mythical fights: 8% chance a successful attack hits twice"},
     "Bone-Reef Lyre String":   {"creature": "Sirens",                   "effect_key": "myth_flee_pct",                "value": 20,
                                  "desc": "Flee success against Mythicals +20%"},
     "Frost-Matted Pelt":       {"creature": "Yeti",                     "effect_key": "first_enemy_hit_reduction_pct","value": 50,
-                                 "desc": "First enemy hit each fight deals 50% less damage"},
+                                 "desc": "In Mythical fights: the first enemy hit deals 50% less damage"},
     "Bottle of Dragon Breath": {"creature": "Dragon",                   "effect_key": "burn_on_hit",                  "value": 1,
-                                 "desc": "First hit applies burn for bonus damage over 3 turns"},
+                                 "desc": "In Mythical fights: your first hit applies burn for bonus damage over 3 turns"},
     "Everburning Ember":       {"creature": "Phoenix",                  "effect_key": "phoenix_revive_daily",         "value": 30,
-                                 "desc": "Once/day, a KO restores you to 30 HP after the fight"},
+                                 "desc": "In Mythical fights: once/day, a lethal hit leaves you at 30 HP and the fight goes on"},
     "Gold-Threaded Feather":   {"creature": "Griffin",                  "effect_key": "luck_pct",                     "value": 6,
                                  "desc": "+6% Luck"},
     "Primary Flight Quill":    {"creature": "Hippogriff",               "effect_key": "travel_instant_pct",           "value": 10,
@@ -2512,7 +2512,7 @@ TROPHY_EFFECTS = {
     "Vial of Grave Dust":      {"creature": "Zombie",                   "effect_key": "ammo_save_pct",                "value": 12,
                                  "desc": "12% chance ammunition isn't consumed on a hunt"},
     "Hollow Fang":             {"creature": "Chupacabra",               "effect_key": "perfect_catch_hp_restore",     "value": 6,
-                                 "desc": "Perfect Catches restore 6 HP"},
+                                 "desc": "Perfect Catches restore 6 HP (at most once every 10 s)"},
 }
 
 def _slug(s: str) -> str:
@@ -2536,6 +2536,11 @@ def trophy_emoji(name: str) -> str:
 # longer for creatures from harder biomes: village 1h … celestial peaks 24h.
 # Using one that's already running adds its duration again, up to the max.
 TROPHY_MAX_ACTIVE_HOURS = 24
+# Trophy self-healing is rate-limited so it tops up between fights instead of replacing healing items
+# (3 HP a hunt every ~3 s was up to 60 HP/min against 4 HP/min of normal regen).
+TROPHY_HEAL_COOLDOWN_S = {"hunt_hp_restore": 15, "perfect_catch_hp_restore": 10}
+# Using the same timed-boost item again extends the running boost (up to this long) instead of adding a second copy.
+TEMP_BOOST_MAX_MINUTES = 360
 
 def trophy_duration_hours(trophy: str) -> int:
     creature = TROPHY_EFFECTS.get(trophy, {}).get("creature", "")
