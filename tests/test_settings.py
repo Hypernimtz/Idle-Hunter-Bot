@@ -143,6 +143,7 @@ def test_crate_charm_is_now_shard_charm_and_old_purchases_carry_over():
 def test_daily_panel_reminds_you_to_vote():
     import json
     d = _fresh("9")
+    app.vote_checking_enabled = lambda: True              # the vote panel needs a vote-check token; pretend it's configured
     d["vote_cd"] = 0
     ready = app.build_daily_components("9")
     blob = json.dumps(ready, ensure_ascii=False)
@@ -157,13 +158,15 @@ def test_daily_panel_reminds_you_to_vote():
     assert "Daily Claimed" in json.dumps(claimed, ensure_ascii=False)
 
 
-def test_intro_explains_the_bot_and_the_tour_walks_through_it():
+def test_intro_is_tiny_and_the_tour_lives_in_tutorial():
     import json
     d = _fresh("12", onboarding={"version": 2, "completed": False, "step": "intro", "starter_pack": None})
     intro = json.dumps(app.build_onboarding_components("12"), ensure_ascii=False)
-    for needle in ("hunting RPG", "regions", "Mythical creatures", "Hunting Camp", "Tribes", "Quick Tour", "Track It"):
+    for needle in ("Start Hunting", "Skip Tutorial"):
         assert needle in intro, needle
-    assert f"{len(app.MYTHIC_CREATURES)} legendary" in intro
+    for needle in ("Mythical creatures", "Hunting Camp", "Tribes", "Quick Tour"):
+        assert needle not in intro, needle            # no feature catalog in the first screen
+    assert "onb:tour:0:12" in json.dumps(app.build_tutorial_guide_components("12", 0))
     pages = app._onb_tour_pages()
     assert len(pages) == 4 and all(len(p) < 1800 for p in pages)
     with tr.Harness() as h:
@@ -172,14 +175,9 @@ def test_intro_explains_the_bot_and_the_tour_walks_through_it():
         async def grab(interaction, comps):
             seen.append(json.dumps(comps, ensure_ascii=False))
         app.smart_update_v2 = grab
-        run(tr._click("12", "onb:tour:0:12".rsplit(":", 1)[0] + ":12"))
         run(tr._click("12", "onb:tour:2:12"))
         assert "Quick tour · 3/4" in seen[-1] and "Hunting Camp" in seen[-1]
-        run(tr._click("12", "onb:tour:exit:12"))
-        assert "Quick Tour" in seen[-1] and "IDLE HUNTER" in seen[-1]
         assert d["onboarding"]["step"] == "intro"          # browsing the tour doesn't advance the flow
-        run(tr._click("12", "onb:track:12"))
-        assert d["onboarding"]["step"] == "catch"
 
 
 def test_gamble_is_a_group_with_a_command_per_game():

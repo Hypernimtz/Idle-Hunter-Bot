@@ -206,7 +206,8 @@ def test_scratch_pad_can_find_zero_prizes():
         return results
     results = run(_go())
     assert results[-1]["kind"] == "done"
-    assert results[-1]["all_prizes"] == []
+    # missing every prize is still reachable, but a card never pays nothing: it pays one consolation prize
+    assert len(results[-1]["all_prizes"]) == 1
 
 
 def test_scratch_pad_double_reveal_same_cell_is_noop():

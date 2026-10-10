@@ -3511,21 +3511,30 @@ DUCK_ENDINGS = {
 # ─────────────────────────────────────────────
 # STARTER SPECIALTIES  ·  chosen once, at the end of onboarding (Idle Hunter V2)
 # ─────────────────────────────────────────────
-# Grants a single 30-minute temp boost (data[uid]["temp_boosts"] entry). Purely
-# a first-session nudge — never repeatable (onboarding["starter_pack"] guards it).
+# A small, one-time nudge: one 30-minute temp boost (data[uid]["temp_boosts"]
+# entry) plus one tiny kit item. Never repeatable (onboarding["starter_pack"]
+# guards it). 2026-10-09 redesign: each specialty is ONE clear stat at the same
+# +25% — so the three feel different (rarer finds / faster levels / fatter
+# sales) without any being the "wrong" pick — and the little kit matches the
+# playstyle. All three are worth about the same: +25% of one stat for half an
+# hour, plus roughly one Bandage's worth of extra.
+#   "kit": {"smoke_bomb"/"bandage" → item/healing counts, "money" → coins}
 STARTER_PACKS = {
     "scout":  {"label": "Scout",  "emoji": "🐾",
-               "boosts": {"luck": 20, "xp": 10, "sell": 5},
+               "boosts": {"luck": 25},
+               "kit": {"item": {"Smoke Bomb": 1}},
                "duration": 1800,
-               "blurb": "+20% Luck, +10% XP, +5% Sell for 30 minutes — find rare catches sooner."},
+               "blurb": "+25% Luck for 30 min and a Smoke Bomb — rarer animals and new species sooner."},
     "hunter": {"label": "Hunter", "emoji": "🎯",
-               "boosts": {"xp": 35, "luck": 5, "sell": 5},
+               "boosts": {"xp": 25},
+               "kit": {"heal": {"Bandage": 1}},
                "duration": 1800,
-               "blurb": "+35% XP, +5% Luck, +5% Sell for 30 minutes — level up fast out of the gate."},
+               "blurb": "+25% XP for 30 min and a Bandage — level up faster and unlock regions sooner."},
     "trader": {"label": "Trader", "emoji": "💰",
-               "boosts": {"sell": 25, "xp": 10, "luck": 5},
+               "boosts": {"sell": 25},
+               "kit": {"money": 100},
                "duration": 1800,
-               "blurb": "+25% Sell Value, +10% XP, +5% Luck for 30 minutes — build a bankroll early."},
+               "blurb": "+25% Sell Value for 30 min and ◈ 100 — more coin for every catch."},
 }
 
 
@@ -5010,49 +5019,42 @@ def resync_item_emojis() -> list[str]:
             changed.append(name)
     return changed
 
-# ── The trial weapon (first-session onboarding, Plan B) ──
-# Rookie Rush (a separate 15-min auto-granted xp/luck/sell boost) was folded
-# into the chosen Starter Pack above — new players used to see two welcome
-# boosts ticking down side by side, which was confusing for no real benefit.
-TRIAL_TOOL_MIN      = 5
-TRIAL_TOOL          = "Shortbow"
+# ── First-session onboarding (2026-10-09 redesign) ──
+# Welcome → a REAL first hunt (the normal run_hunt path, guaranteed beginner-safe)
+# → Sell → buy the first real tool in the Tools tab → pick a specialty. No fake
+# loaner weapon: the first upgrade is a real, owned, equipped Slingshot.
+ONBOARDING_FIRST_ANIMAL = "Cottontail Rabbit"   # a safe village animal; the guided hunt is a Perfect Catch (x3)
+ONBOARDING_TOOL         = "Slingshot"           # the 500-coin first upgrade
 
-# "emoji" values below are EMOJI registry keys (resolve with emoji()/emoji_partial()),
-# not literal unicode, so the custom art shows.
-ROOKIE_GOALS = {
-    "catch_5":       {"label": "Catch 5 animals",           "emoji": "animal_fallback"},
-    "reach_level_5": {"label": "Reach Level 5",              "emoji": "sparkles"},
-    "discover_5":    {"label": "Discover 5 species",         "emoji": "book"},
-    "buy_tool":      {"label": "Buy your first tool",        "emoji": "equipment"},
-    "view_world":    {"label": "Check the World screen",     "emoji": "earth"},
-}
-
-# ── Hunter's Path — the first-hour progression spine (2026-09-15) ───────────
-# Originally a 4-step post-onboarding checklist; expanded per design review
-# into the actual backbone of the first hour, since the real problem was
-# never "too much tutorial" — it was a beginner finishing onboarding with
-# only /hunt and no reason to touch anything else. Onboarding V2 still owns
-# the very first hunt/sell/trial-tool beat; this picks up right after it and
-# walks through every system in the game once, in order, each step paying
-# out something real (money, gems, or a crate) instead of just checking a
-# box, so nothing in the first hour is a dead end.
-# Every completion is a LIVE check against state the game already tracks
-# (rookie_goals.buy_tool, tools_used, last_daily_date, a lifetime quest-claim
-# marker, guide_seen length, idle stack count, etc.) — never a separately
-# stored progress counter, so it can't desync from what actually happened.
+# ── The Beginner Track — ONE first-hour checklist (2026-10-09) ──────────────
+# This used to be two competing lists (five "Rookie Goals" with a Rookie Chest,
+# plus the twelve-step "Hunter's Path") on top of the onboarding. They are now
+# one ordered track that the menu shows as a single "next objective" (the full
+# list sits behind a button). The internal names (hunters_path, HUNTERS_PATH_*)
+# are kept so saved progress and the per-step "already paid" markers still line
+# up; the player-facing name is "Beginner Track".
+# Onboarding teaches hunt → sell → buy a tool; step 1 below is that purchase
+# (already done when the tutorial ends), step 2 is the hunt with the new tool,
+# and the track carries on through every system once, in order.
+# Every completion is a LIVE check against state the game already tracks (owned
+# tools, tools_used, last_daily_date, a lifetime quest-claim marker, guide_seen
+# length, idle stack count, etc.) — never a separately stored progress counter,
+# so it can't desync from what actually happened.
 # "Equip your tool" is deliberately not its own step: buying a tool already
-# auto-equips it in this game, so a standalone equip step would just be
-# busywork with no real action behind it.
+# auto-equips it in this game.
+# Payouts (rebalanced together with the old Rookie Chest, not on top of it):
+# ~70 gems spread over the steps + a completion bonus of 80 gems, a Rare Crate
+# and two titles = 150 gems total (the two old lists paid ~235 between them).
 HUNTERS_PATH_STEPS = [
     {"key": "buy_tool",         "label": "Buy your first real tool",
      "emoji": "equipment", "panel": "shop_tools",
-     "hint": "Open `/shop` and buy a tool — it equips automatically.",
+     "hint": "Open the Shop → Tools tab and buy the Slingshot — it equips automatically.",
      "reward": {"gems": 10}},
     {"key": "hunt_with_tool",   "label": "Hunt with your new tool",
      "emoji": "bow", "panel": "menu",
-     "hint": "Use `/hunt` now that you're properly equipped. You'll also get a Smoke Bomb "
+     "hint": "Press **Hunt** now that you're properly equipped. You'll also get a Smoke Bomb "
              "and a Bandage — try `/use` on them anytime.",
-     "reward": {"money": 500, "item": "Smoke Bomb", "heal_item": "Bandage"}},
+     "reward": {"money": 250, "item": "Smoke Bomb", "heal_item": "Bandage"}},
     {"key": "claim_daily",      "label": "Claim your daily reward",
      "emoji": "gift", "panel": "daily",
      "hint": "Open `/daily` and claim it — free money and XP, once a day.",
@@ -5088,14 +5090,22 @@ HUNTERS_PATH_STEPS = [
     {"key": "first_rare",       "label": "Land a Rare or Epic catch",
      "emoji": "sparkles", "panel": "menu",
      "hint": "Keep hunting — a rarer catch pays out a lot more.",
-     "reward": {"gems": 20}},
+     "reward": {"gems": 15}},
     {"key": "myth_lead",        "label": "Find your first Mythical lead",
      "emoji": "skull", "panel": "menu",
      "hint": "Keep hunting — cryptid sightings start showing up from here.",
-     "reward": {"gems": 30}},
+     "reward": {"gems": 20}},
 ]
-HUNTERS_PATH_REWARD_GEMS = 100
+# Completion bonus — what the old Rookie Chest (50 gems + a Rare Crate) and the old
+# Path bonus (100 gems) used to pay separately. Paid once, with both titles.
+HUNTERS_PATH_REWARD_GEMS = 80
+HUNTERS_PATH_REWARD_CRATE = "Rare Crate"
 HUNTERS_PATH_REWARD_TITLE = "Path Walker"
+BEGINNER_TRACK_EXTRA_TITLE = "Rookie Hunter"
+# The optional Coyote challenge (the old forced onboarding fight, now a choice).
+BEGINNER_CHALLENGE_ANIMAL = "Western Coyote"
+BEGINNER_CHALLENGE_STEP   = 2      # unlocked once the player has hunted with their new tool (step index)
+BEGINNER_CHALLENGE_REWARD = {"money": 500, "heal_item": "First Aid Kit", "title": "Rookie Hunter"}
 # Mythics stay suppressed only through the earlier stretch of the Path
 # (current_step below this index), so the final "myth_lead" step is actually
 # reachable instead of permanently gated — see hunters_path_myths_allowed()

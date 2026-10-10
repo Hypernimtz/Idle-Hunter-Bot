@@ -35,8 +35,10 @@ from game_data import (
     HEALING_ITEMS, MIN_ENCOUNTER_HUNTS_GAP,
     ANIMAL_ENCOUNTER_REWARD_MULT, ANIMAL_ENCOUNTER_XP_MULT, ANIMAL_ENCOUNTER_HEALTHY_BONUS,
     POWER_ATTACK_ACCURACY, POWER_ATTACK_DAMAGE_MULT,
-    TRIAL_TOOL_MIN, TRIAL_TOOL, ROOKIE_GOALS,
+    ONBOARDING_FIRST_ANIMAL, ONBOARDING_TOOL,
     HUNTERS_PATH_STEPS, HUNTERS_PATH_REWARD_GEMS, HUNTERS_PATH_REWARD_TITLE,
+    HUNTERS_PATH_REWARD_CRATE, BEGINNER_TRACK_EXTRA_TITLE,
+    BEGINNER_CHALLENGE_ANIMAL, BEGINNER_CHALLENGE_STEP, BEGINNER_CHALLENGE_REWARD,
     HUNTERS_PATH_MYTH_UNLOCK_STEP,
     animal_combat_stats, animal_encounter_chance, encounter_priority,
     tool_combat_damage, tool_combat_accuracy,
@@ -1059,28 +1061,6 @@ def apply_ko_recovery(user_id: str) -> dict:
         h["rookie_revive_used"] = True
     mark_user_dirty(user_id)
     return {"rookie_save": rookie, "hp": h["hp"]}
-
-# ── The temporary trial weapon — tasted, then taken away on purpose ─────────
-# Cosmetic/contextual: shown in the menu + equip panel and drives the scripted
-# onboarding beat. It deliberately does NOT re-route live hunting's ammo/tool
-# logic — see _onb_grant_trial_catches, which delivers the "two at once" feel
-# through the same guaranteed-catch path the rest of onboarding already uses,
-# so the real ammo-gated hunt loop is never at risk of being taught to a new
-# player who owns no arrows yet.
-
-def trial_tool_active(user_id: str) -> dict | None:
-    tr = data.get(user_id, {}).get("trial_tool")
-    if tr and tr.get("expires_at", 0) > time.time():
-        return tr
-    return None
-
-def trial_tool_line(user_id: str) -> str:
-    tr = trial_tool_active(user_id)
-    if not tr:
-        return ""
-    t_info = TOOLS.get(tr["tool"], {})
-    return (f"{t_info.get('emoji', emoji('bow'))} **Training {tr['tool']}** (loaner) — "
-           f"returns <t:{int(tr['expires_at'])}:R>")
 
 # ═══════════════════════════════════════════════════════════════
 # FIELD GUIDE  ·  collection / world-completion (V2, Phase 43-44)
@@ -3899,9 +3879,8 @@ def init_user(user_id: str):
         "healing_inv": {},
         "trial_tool": None,
         "fight": None,
-        "rookie_goals": dict.fromkeys(ROOKIE_GOALS, False),
-        "rookie_chest_claimed": False,
-        # Hunter's Path — a post-onboarding checklist (buy a tool, complete a
+        "rookie_chest_claimed": False,   # set when the Beginner Track's completion bonus is paid
+        # Beginner Track (a.k.a. hunters_path) — a post-onboarding checklist (buy a tool, complete a
         # quest, travel, start a camp) that teaches the systems onboarding
         # doesn't reach. Existing players are grandfathered as completed,
         # same reasoning as onboarding above: only brand-new accounts see it.
@@ -3916,7 +3895,6 @@ def init_user(user_id: str):
         data[user_id]["onboarding"] = dict(defaults["onboarding"])  # own copy
         data[user_id]["health"] = dict(defaults["health"])          # own copy
         data[user_id]["shop_bought"] = {}   # brand-new: no legacy boost-derived counts
-        data[user_id]["rookie_goals"] = dict(defaults["rookie_goals"])
         data[user_id]["hunters_path"] = dict(defaults["hunters_path"])  # own copy
         # Starting balances are minted out of thin air — record them so the
         # economy ledger reconciles with balances in circulation.
@@ -3972,7 +3950,6 @@ def init_user(user_id: str):
     data[user_id].setdefault("healing_inv", {})
     data[user_id].setdefault("trial_tool", None)
     data[user_id].setdefault("fight", None)
-    data[user_id].setdefault("rookie_goals", dict.fromkeys(ROOKIE_GOALS, False))
     data[user_id].setdefault("rookie_chest_claimed", False)
     refresh_health(user_id)
     data[user_id].setdefault("myth_items", {})         # mythic-creature trophies (count, still tracked for compat)
@@ -7008,7 +6985,6 @@ async def check_everything(interaction: discord.Interaction, user_id: str):
     await maybe_send_mail_notification(interaction, user_id)
     await maybe_grant_event_gift(interaction, user_id)
     await _referral_check_qualified(user_id)
-    _rookie_goal_scan(user_id)
 
 async def maybe_grant_event_gift(interaction: discord.Interaction, user_id: str):
     """Admin Error 404 greets each player once. There is no gift any more — a free bonus check
@@ -7293,7 +7269,12 @@ def craft_queue_summary(user_id: str) -> str:
 # HUNT LOGIC
 # ─────────────────────────────────────────────
 
-def run_hunt(user_id: str) -> dict:
+def run_hunt(user_id: str, guided: bool = False) -> dict:
+    """One hunt. ``guided=True`` is the onboarding's first hunt: the SAME code
+    path as every other hunt (cooldown, verify, travel, XP, level-ups, records,
+    quests, the Beginner Track checkpoint), only made beginner-safe and
+    predictable — a fixed, safe village animal caught as a Perfect Catch, and no
+    tip, mythic, dangerous-animal encounter or shard/crate roll to upstage it."""
     player_in_combat(user_id)          # expires a fight left hanging past the idle timeout
     init_user(user_id)
 
@@ -7395,7 +7376,7 @@ def run_hunt(user_id: str) -> dict:
     # Tips are opt-out and deliberately rare — a hard cooldown on top of the
     # dice roll so they can't cluster even for someone hunting constantly.
     tip = None
-    if (data[user_id].get("tips_enabled", True)
+    if (not guided and data[user_id].get("tips_enabled", True)
             and now - data[user_id].get("_last_tip_ts", 0) >= TIP_COOLDOWN_SEC
             and random.randint(1, TIP_CHANCE) == 1):
         tip = random.choice(TIPS)
@@ -7413,7 +7394,7 @@ def run_hunt(user_id: str) -> dict:
     # (once "travel" is done) since the Path's own final step needs one to
     # actually fire, and rolls exactly as before once the Path is done, was
     # never active, or the feature is disabled.
-    if not data[user_id].get("_boss") and hunters_path_myths_allowed(user_id):
+    if not guided and not data[user_id].get("_boss") and hunters_path_myths_allowed(user_id):
         myth_pool = BIOME_MYTHS.get(biome, [])
         _sight_roll = _sighting_encounter_roll(user_id, biome)
         _sg_here = get_active_sighting()
@@ -7495,7 +7476,8 @@ def run_hunt(user_id: str) -> dict:
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
                    + trophy_effect_value(user_id, "perfect_catch_pp") / 100)   # Grindylow: Webbed Claw
 
-    rolled = [pick_biome_animal(biome) for _ in range(multi)]
+    rolled = ([ONBOARDING_FIRST_ANIMAL] * multi if guided
+              else [pick_biome_animal(biome) for _ in range(multi)])
 
     # ── One dangerous animal, at most, becomes an interactive encounter ──
     # Every OTHER rolled animal (including any not selected) resolves as an
@@ -7504,7 +7486,7 @@ def run_hunt(user_id: str) -> dict:
     # keeps encounters a rare bonus moment, not a chained run of interruptions.
     danger_result = None
     gap_ok = data[user_id].get("hunts_since_fight", MIN_ENCOUNTER_HUNTS_GAP) >= MIN_ENCOUNTER_HUNTS_GAP
-    if (FEATURE_ANIMAL_COMBAT and gap_ok and not data[user_id].get("fight")
+    if (FEATURE_ANIMAL_COMBAT and not guided and gap_ok and not data[user_id].get("fight")
             and not data[user_id].get("_boss") and not tracking_active(user_id)
             and not ko_cooldown_left(user_id)):
         candidates = [a for a in rolled if random.random() < animal_encounter_chance(a)]
@@ -7522,7 +7504,7 @@ def run_hunt(user_id: str) -> dict:
         sell_value   = int(animal_value * (1 + sell_boost / 100))
         animal_xp    = ANIMAL_DATA.get(animal, {}).get("xp", 0)
         xp_earned    = int(animal_xp * (1 + xp_boost / 100))
-        is_rare      = random.random() < _rare_p
+        is_rare      = True if guided else random.random() < _rare_p   # "beginner's luck": the first catch is a Perfect Catch
         if is_rare:
             sell_value *= 3; xp_earned *= 2
             trophy_heal(user_id, "perfect_catch_hp_restore")   # Chupacabra: Hollow Fang (rate-limited)
@@ -7608,6 +7590,8 @@ def run_hunt(user_id: str) -> dict:
     _per_catch_crate_p = _hunt_crate_p / max(1, len(catches))
     for c in catches:
         c_rarity = ANIMAL_DATA.get(c["animal"], {}).get("rarity", "common")
+        if guided:
+            break                                  # no random drops in the scripted-safe first hunt
         roll = roll_catch_drops(c_rarity, crate_luck_boost,
                                 shard_chance=_ev_sh, crate_chance=_per_catch_crate_p, biome=biome)
         if roll["shard"]:
@@ -8446,7 +8430,8 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
 
     if intro or not f.get("log"):
         bonus_line = _ANIMAL_BONUS_BLURB.get(f.get("bonus", ""), "")
-        log_txt = f"-# A **{ico} {name}** turns to face you!" + (f"\n-# {bonus_line}" if bonus_line else "")
+        log_txt = (f"-# A **{ico} {name}** turns to face you!" + (f"\n-# {bonus_line}" if bonus_line else "")
+                   + ("\n-# Beginner challenge — win for a reward. It's optional: flee if it gets rough." if f.get("challenge") else ""))
     else:
         log_txt = "\n".join(f"-# {ln}" for ln in f.get("log", []))
 
@@ -8527,87 +8512,13 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
     ]}]
 
 # ═══════════════════════════════════════════════════════════════
-# ROOKIE GOALS + FIRST-DAY CHEST  (V2.1, Plan B)
+# BEGINNER TRACK — one first-hour checklist (was Rookie Goals + Hunter's Path)
 # ═══════════════════════════════════════════════════════════════
-# Five cheap, natural checkpoints. catch_5 / reach_level_5 / discover_5 are
-# threshold-scanned from stats already tracked elsewhere; buy_tool and
-# view_world are flipped directly at their own trigger points. buy_tool used
-# to be "win a dangerous encounter", but that's RNG-gated (Epic/Legendary-only,
-# 3%/12% chance) — a rookie could sit on 4/5 goals for a long time waiting on
-# luck. Buying a tool is guaranteed to happen in the first few minutes.
-
-_ROOKIE_CHEST_TITLE = "Rookie Hunter"
-_ROOKIE_CHEST_CRATE = "Rare Crate"
-_ROOKIE_CHEST_GEMS  = 50
-
-def _ensure_rookie_goals(d: dict) -> dict:
-    """Get-or-init d['rookie_goals'], self-healing its key set against the
-    current ROOKIE_GOALS — so renaming/adding a goal (e.g. win_combat ->
-    buy_tool) doesn't strand players whose dict was saved under the old shape.
-    A renamed key carries its old value forward rather than resetting it."""
-    rg = d.setdefault("rookie_goals", {})
-    if "buy_tool" not in rg and "win_combat" in rg:
-        rg["buy_tool"] = rg.pop("win_combat")
-    for k in ROOKIE_GOALS:
-        rg.setdefault(k, False)
-    return rg
-
-def _rookie_goal_scan(user_id: str) -> list[str]:
-    """Check the threshold-based goals, flip any newly met, grant the chest
-    once all five are done. Returns newly-completed keys."""
-    d = data.get(user_id)
-    if not d:
-        return []
-    rg = _ensure_rookie_goals(d)
-    newly = []
-    def _set(k, cond):
-        if not rg.get(k) and cond:
-            rg[k] = True
-            newly.append(k)
-    _set("catch_5", d.get("total_caught", 0) >= 5)
-    _set("reach_level_5", d.get("level", 1) >= 5)
-    _set("discover_5", len(d.get("record", {})) >= 5)
-    if newly:
-        mark_user_dirty(user_id)
-        analytics(user_id, "rookie_goal_progress", goals=newly)
-    if all(rg.values()) and not d.get("rookie_chest_claimed"):
-        _grant_rookie_chest(user_id)
-    return newly
-
-def _rookie_goal_progress(user_id: str, key: str) -> None:
-    """Directly flip a non-threshold rookie goal (buy_tool, view_world)."""
-    d = data.get(user_id)
-    if not d:
-        return
-    rg = _ensure_rookie_goals(d)
-    if key in rg and not rg[key]:
-        rg[key] = True
-        mark_user_dirty(user_id)
-        analytics(user_id, "rookie_goal_progress", goals=[key])
-    _rookie_goal_scan(user_id)
-
-def _grant_rookie_chest(user_id: str) -> None:
-    d = data[user_id]
-    if d.get("rookie_chest_claimed"):
-        return
-    d["rookie_chest_claimed"] = True
-    ci = d.setdefault("crate_inv", {})
-    ci[_ROOKIE_CHEST_CRATE] = ci.get(_ROOKIE_CHEST_CRATE, 0) + 1
-    add_gems(user_id, _ROOKIE_CHEST_GEMS, "rookie chest")
-    _grant_title(user_id, _ROOKIE_CHEST_TITLE)
-    mark_user_dirty(user_id)
-    analytics(user_id, "rookie_chest_claimed")
-
-def rookie_goals_block(user_id: str) -> str:
-    """A short progress block for the onboarding 'done' panel and /menu."""
-    d = data.get(user_id, {})
-    rg = _ensure_rookie_goals(d) if d else {}
-    done = sum(1 for v in rg.values() if v)
-    total = len(ROOKIE_GOALS)
-    lines = [f"{emoji('check_mark') if rg.get(k) else '▫️'} {emoji(spec['emoji'])} {spec['label']}"
-             for k, spec in ROOKIE_GOALS.items()]
-    chest = f" {emoji('gift')} Claimed!" if d.get("rookie_chest_claimed") else ""
-    return (f"**Rookie Goals — {done}/{total}**{chest}\n" + "\n".join(f"-# {ln}" for ln in lines))
+# The old five "Rookie Goals" and their Rookie Chest were folded into the
+# Hunter's Path (see HUNTERS_PATH_STEPS in game_data.py): one ordered list, one
+# "next objective" on the menu, one completion bonus (80 gems + a Rare Crate +
+# the Rookie Hunter and Path Walker titles). `rookie_chest_claimed` still guards
+# the Rare Crate so a player who already took the old chest isn't paid it twice.
 
 def three_goals_lines(user_id: str) -> list[str]:
     """Always-on 3-tier goal ladder — immediate (next tool), medium (next
@@ -8650,13 +8561,12 @@ def three_goals_lines(user_id: str) -> list[str]:
 
 def _hunters_path_done_flags(user_id: str) -> list[bool]:
     d = data.get(user_id, {})
-    rg = d.get("rookie_goals", {})
     stats = d.get("stats", {})
     tools_used = set(stats.get("tools_used", []))
     record = d.get("record", {})
     village_animals = set(BIOME_ANIMALS.get("village", []))
     return [
-        bool(rg.get("buy_tool")),                                    # buy_tool
+        bool(set(d.get("owned_tools", [])) - {"Bare Hands"}),         # buy_tool
         bool(tools_used - {"Bare Hands"}),                            # hunt_with_tool
         bool(d.get("last_daily_date")),                               # claim_daily
         bool(stats.get("first_quest_claim_ts")),                      # complete_quest
@@ -8741,36 +8651,55 @@ def hunters_path_maybe_complete(user_id: str) -> dict:
     just_finished = False
     if all_done and not hp.get("completed"):
         hp["completed"] = True
-        add_gems(user_id, HUNTERS_PATH_REWARD_GEMS, "hunter's path complete")
+        add_gems(user_id, HUNTERS_PATH_REWARD_GEMS, "beginner track complete")
         _grant_title(user_id, HUNTERS_PATH_REWARD_TITLE)
+        _grant_title(user_id, BEGINNER_TRACK_EXTRA_TITLE)
+        d = data[user_id]
+        if not d.get("rookie_chest_claimed"):          # the old Rookie Chest's crate — never paid twice
+            d["rookie_chest_claimed"] = True
+            ci = d.setdefault("crate_inv", {})
+            ci[HUNTERS_PATH_REWARD_CRATE] = ci.get(HUNTERS_PATH_REWARD_CRATE, 0) + 1
         analytics(user_id, "hunters_path_completed")
         just_finished = True
     if newly or just_finished:
         mark_user_dirty(user_id)
     return {"newly_done": newly, "all_done": just_finished}
 
-def hunters_path_line(user_id: str) -> str:
-    """Compact one-line summary for /menu's 'now' block."""
+def _reward_bits(r: dict) -> str:
+    bits = []
+    if "money" in r: bits.append(f"◈ {r['money']:,}")
+    if "gems" in r: bits.append(f"{emoji('gem')} {r['gems']}")
+    if "crate" in r: bits.append(r["crate"])
+    if "item" in r: bits.append(r["item"])
+    if "heal_item" in r: bits.append(r["heal_item"])
+    return " · ".join(bits)
+
+def beginner_objective(user_id: str) -> dict | None:
+    """The ONE next objective of the Beginner Track, or None when the track is
+    over / off. {'index', 'total', 'step', 'label', 'hint', 'reward'}"""
     if not hunters_path_active(user_id):
-        return ""
+        return None
     i = hunters_path_current_step(user_id)
     if i >= len(HUNTERS_PATH_STEPS):
-        return ""
+        return None
     step = HUNTERS_PATH_STEPS[i]
-    return f"{emoji('world_map')} **Hunter's Path** {i}/{len(HUNTERS_PATH_STEPS)} — {emoji(step['emoji'])} {step['label']}"
+    return {"index": i, "total": len(HUNTERS_PATH_STEPS), "step": step, "label": step["label"],
+            "hint": step["hint"], "reward": _reward_bits(step.get("reward") or {})}
+
+def hunters_path_line(user_id: str) -> str:
+    """Compact one-line summary of the next Beginner Track objective."""
+    o = beginner_objective(user_id)
+    if not o:
+        return ""
+    return (f"{emoji('world_map')} **Beginner Track** {o['index']}/{o['total']} — "
+            f"{emoji(o['step']['emoji'])} {o['label']}")
 
 def hunters_path_next_hint(user_id: str) -> str:
     """A short 'what to do next' line for panels that just finished a step —
-    the command-teaching chain from the design brief (finish a sale, get told
-    to open /shop; finish that, get told to open /quests; etc). Empty once
-    the whole path is done."""
-    if not hunters_path_active(user_id):
-        return ""
-    i = hunters_path_current_step(user_id)
-    if i >= len(HUNTERS_PATH_STEPS):
-        return ""
-    step = HUNTERS_PATH_STEPS[i]
-    return f"`➡️` **Next:** {step['hint']}"
+    the command-teaching chain (finish a sale, get told to open /shop; finish
+    that, get told to open /quests; etc). Empty once the whole track is done."""
+    o = beginner_objective(user_id)
+    return f"`➡️` **Next:** {o['hint']}" if o else ""
 
 async def _hunters_path_notify(interaction: discord.Interaction, user_id: str, result: dict) -> None:
     """Send the appropriate ephemeral toast after a Hunter's Path-relevant
@@ -8781,8 +8710,9 @@ async def _hunters_path_notify(interaction: discord.Interaction, user_id: str, r
         return
     if result.get("all_done"):
         await send_ephemeral_v2(interaction,
-            f"{emoji('party_popper')} **Hunter's Path complete!** +{HUNTERS_PATH_REWARD_GEMS} gems and the "
-            f"**{HUNTERS_PATH_REWARD_TITLE}** title — you've got the run of the place now.",
+            f"{emoji('party_popper')} **Beginner Track complete!** +{HUNTERS_PATH_REWARD_GEMS} gems, a "
+            f"**{HUNTERS_PATH_REWARD_CRATE}** and the **{HUNTERS_PATH_REWARD_TITLE}** title — "
+            f"you've got the run of the place now.",
             0x2ECC71)
         return
     newly = result.get("newly_done") or []
@@ -8795,8 +8725,68 @@ async def _hunters_path_notify(interaction: discord.Interaction, user_id: str, r
         lines.append(hint)
     await send_ephemeral_v2(interaction, "\n".join(lines), 0x3498DB)
 
+# ── The optional Coyote challenge ────────────────────────────────────────────
+# Used to be a forced, scripted fight in the middle of onboarding (before the
+# player had even bought a tool). Now it's a choice on the Beginner Track panel,
+# offered once the player has hunted with their first tool, and pays a one-time
+# reward. Same real fight engine, a softened Coyote, never required.
+
+def beginner_challenge_status(user_id: str) -> str:
+    """'' if the challenge can be started right now, else why not:
+    'locked' | 'claimed' | 'busy' | 'hurt' | 'off'."""
+    d = data.get(user_id, {})
+    if not FEATURE_ANIMAL_COMBAT:
+        return "off"
+    if d.get("_onb_danger_rewarded"):
+        return "claimed"
+    if onboarding_active(user_id) or not hunters_path_active(user_id):
+        return "locked"
+    if hunters_path_current_step(user_id) < BEGINNER_CHALLENGE_STEP:
+        return "locked"
+    if d.get("fight") or d.get("_boss") or tracking_active(user_id) or is_traveling(user_id) or ko_cooldown_left(user_id):
+        return "busy"
+    refresh_health(user_id)
+    hp, mx = player_hp(user_id)
+    if hp < mx * 0.5:
+        return "hurt"
+    return ""
+
+def _start_beginner_challenge(user_id: str) -> str:
+    """Start the softened Coyote fight (real engine). Returns the animal name."""
+    animal = (BEGINNER_CHALLENGE_ANIMAL if BEGINNER_CHALLENGE_ANIMAL in BIOME_ANIMALS.get("village", [])
+              else BIOME_ANIMALS["village"][-1])
+    refresh_health(user_id)
+    stats = animal_combat_stats(animal)
+    soft_hp = max(8, int(stats["hp"] * 0.4))    # a couple of solid hits should do it
+    data[user_id]["fight"] = {
+        "kind": "animal", "animal": animal, "biome": "village",
+        "eid": secrets.token_hex(4), "mhp": soft_hp, "mhp_max": stats["hp"],
+        "turn": 1, "guard": False, "log": [], "bonus": "ambush", "challenge": True,
+    }
+    st = data[user_id].setdefault("stats", {})
+    st["animal_fights_started"] = st.get("animal_fights_started", 0) + 1
+    analytics(user_id, "beginner_challenge_started", animal=animal)
+    mark_user_dirty(user_id)
+    return animal
+
+def _grant_beginner_challenge_reward(user_id: str) -> str:
+    """One-time reward for beating the challenge. Returns a display line ('' if already paid)."""
+    d = data[user_id]
+    if d.get("_onb_danger_rewarded"):
+        return ""
+    d["_onb_danger_rewarded"] = True
+    r = BEGINNER_CHALLENGE_REWARD
+    add_money(user_id, r["money"], "beginner challenge")
+    hi = d.setdefault("healing_inv", {})
+    hi[r["heal_item"]] = hi.get(r["heal_item"], 0) + 1
+    _grant_title(user_id, r["title"])
+    mark_user_dirty(user_id)
+    analytics(user_id, "beginner_challenge_won")
+    return (f"{emoji('trophy')} **Challenge won!** ◈ {r['money']:,} · {r['heal_item']} · "
+            f"title *\"{r['title']}\"*")
+
 def build_hunters_path_components(user_id: str) -> list:
-    """The full checklist panel. One button jumps to whatever system the
+    """The full Beginner Track list. One button jumps to whatever system the
     current step needs; every other step is listed but not buttoned — with
     12 steps there's no room for one button each, and only the step you can
     actually act on needs one."""
@@ -8804,13 +8794,13 @@ def build_hunters_path_components(user_id: str) -> list:
     cur  = hunters_path_current_step(user_id)
     total = len(HUNTERS_PATH_STEPS)
 
-    lines = [f"### {emoji('world_map')} Hunter's Path — {sum(done)}/{total}"]
+    lines = [f"### {emoji('world_map')} Beginner Track — {sum(done)}/{total}"]
     if cur >= total:
         lines.append("-# All done — you've got the run of the place now.")
     else:
-        lines.append("-# Finish these in order — each one pays out immediately, "
-                      f"and the whole path is worth {emoji('diamond_small')} **{HUNTERS_PATH_REWARD_GEMS} gems** "
-                      f"and the **{HUNTERS_PATH_REWARD_TITLE}** title.")
+        lines.append("-# Finish these in order — each one pays out immediately, and finishing the whole track "
+                      f"is worth {emoji('diamond_small')} **{HUNTERS_PATH_REWARD_GEMS} gems**, a "
+                      f"**{HUNTERS_PATH_REWARD_CRATE}** and the **{HUNTERS_PATH_REWARD_TITLE}** title.")
     for i, step in enumerate(HUNTERS_PATH_STEPS):
         if done[i]:
             mark = f"{emoji('check_mark')}"
@@ -8818,23 +8808,30 @@ def build_hunters_path_components(user_id: str) -> list:
             mark = "▶️"
         else:
             mark = emoji('lock')
-        r = step.get("reward") or {}
-        r_bits = []
-        if "money" in r: r_bits.append(f"◈{r['money']:,}")
-        if "gems" in r: r_bits.append(f"{emoji('gem')}{r['gems']}")
-        if "crate" in r: r_bits.append(r["crate"])
-        r_line = " · ".join(r_bits)
+        r_line = _reward_bits(step.get("reward") or {})
         lines.append(f"-# {mark} {emoji(step['emoji'])} {step['label']} — *{r_line}*" +
                      (f"\n-#   {step['hint']}" if i == cur else ""))
 
+    ch = beginner_challenge_status(user_id)
+    if ch in ("", "busy", "hurt"):
+        _r = BEGINNER_CHALLENGE_REWARD
+        lines.append(f"\n{emoji('target')} **Optional challenge:** take on a wild **{BEGINNER_CHALLENGE_ANIMAL}** "
+                     f"— ◈ {_r['money']:,}, a {_r['heal_item']} and the *{_r['title']}* title."
+                     + ("\n-# Heal up to half health first." if ch == "hurt" else
+                        "\n-# Finish what you're doing first." if ch == "busy" else ""))
+
     rows = []
+    row = []
     if cur < total:
         step = HUNTERS_PATH_STEPS[cur]
-        rows.append({"type": 1, "components": [
-            {"type": 2, "style": 1, "label": f"Go: {step['label']}",
-             "emoji": emoji_partial(step["emoji"]),
-             "custom_id": f"nav:{step['panel']}:{user_id}"},
-        ]})
+        row.append({"type": 2, "style": 1, "label": f"Go: {step['label']}"[:80],
+                    "emoji": emoji_partial(step["emoji"]),
+                    "custom_id": f"nav:{step['panel']}:{user_id}"})
+    if ch in ("", "busy", "hurt"):
+        row.append({"type": 2, "style": 4, "label": "Coyote Challenge", "emoji": emoji_partial("impact"),
+                    "disabled": ch != "", "custom_id": f"hpath:challenge:{user_id}"})
+    if row:
+        rows.append({"type": 1, "components": row})
     rows.append({"type": 1, "components": [
         {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"},
     ]})
@@ -9800,10 +9797,17 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     equip_block = f"\n-# {emoji('equipment')} Equipped: " + " · ".join(equip_bits)
 
     goal_block = ""
-    _goals = three_goals_lines(user_id)
-    if _goals:
-        _goal_text = _goals[0].split("**Now:** ", 1)[-1]
-        goal_block = f"\n\n{ph(emoji('target'))} **NEXT GOAL**\n{_goal_text}"
+    _obj = beginner_objective(user_id)
+    if _obj:
+        # ONE prominent objective: the next step of the Beginner Track (the full list is behind a button).
+        _rw = f"\n-# Reward: {_obj['reward']}" if _obj["reward"] else ""
+        goal_block = (f"\n\n{ph(emoji('target'))} **NEXT GOAL** · Beginner Track {_obj['index']}/{_obj['total']}\n"
+                      f"{emoji(_obj['step']['emoji'])} **{_obj['label']}**\n-# {_obj['hint']}{_rw}")
+    else:
+        _goals = three_goals_lines(user_id)
+        if _goals:
+            _goal_text = _goals[0].split("**Now:** ", 1)[-1]
+            goal_block = f"\n\n{ph(emoji('target'))} **NEXT GOAL**\n{_goal_text}"
 
     now_bits = []
     _wc_here = active_world_condition(biome)
@@ -9866,7 +9870,7 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     menu_rows = [row1, row2, more_row]
     if hunters_path_active(user_id):
         menu_rows.append({"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Hunter's Path", "emoji": emoji_partial('world_map'),
+            {"type": 2, "style": 2, "label": "Beginner Track", "emoji": emoji_partial('world_map'),
              "custom_id": f"nav:hpath:{user_id}"},
         ]})
 
@@ -10217,7 +10221,7 @@ def build_inventory_components(user_id: str, display_name: str, viewer_id: str =
 # HUNT PANELS
 # ─────────────────────────────────────────────
 
-def build_hunt_components(user_id: str, result: dict) -> list:
+def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) -> list:
     """Redesigned 2026-09-15: the old panel spent four separate '-#' lines on
     balance/HP/level/tool-and-ammo/inventory before a single catch was even
     shown. Condensed to one header line, one compact catch block per animal,
@@ -10330,6 +10334,14 @@ def build_hunt_components(user_id: str, result: dict) -> list:
     )
     drops_block = "\n".join(drop_bits)
 
+    if onboarding:
+        # The guided first hunt: the same panel, with one clear next step instead of the full button set.
+        content += ("\n\n-# **Beginner's luck — a Perfect Catch!** Now sell it: a trader in the village "
+                    "will pay you for it.")
+        comps = [{"type": 10, "content": content},
+                 {"type": 14, "divider": True, "spacing": 1},
+                 {"type": 1, "components": [_onb_btn(user_id, "sell", "Sell Your Catch", 1, "money_bag")]}]
+        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
     btn_row1 = {"type": 1, "components": [
         {"type": 2, "style": 3, "label": "Hunt Again", "custom_id": f"hunt:again:{user_id}"},
         {"type": 2, "style": 1, "label": "Sell All",   "custom_id": f"hunt:sell_all:{user_id}"},
@@ -10559,39 +10571,38 @@ def build_hunt_sold_components(user_id: str, sold: dict) -> list:
     ]}]
 
 # ═══════════════════════════════════════════════════════════════
-# ONBOARDING  ·  interactive first-hunt for brand-new players (V2 / V2.1)
+# ONBOARDING  ·  gameplay-first first minute (redesigned 2026-10-09)
 # ═══════════════════════════════════════════════════════════════
-# Steps: intro → catch → sell → trial → danger → pack → done. Every scripted
-# panel is one screen with 1-3 buttons (custom_id "onb:<action>:<uid>") except
-# "danger", which hands off to the REAL animal-fight engine
-# (build_animal_fight_components / hunt:afight) so a new player is taught the
-# actual system, not a throwaway lookalike.
+# Steps: intro → sell → upgrade → pack → done, four clicks for a brand-new player:
+#   1. intro   a tiny welcome — [Start Hunting] / [Skip Tutorial]. Start Hunting
+#              runs a REAL hunt through the normal run_hunt() code path
+#              (guided=True: a fixed safe village animal as a Perfect Catch, no
+#              mythic/danger/tip/drop rolls) and shows the normal hunt panel.
+#   2. sell    [Sell Your Catch] — the normal sell path; tops the wallet up to
+#              the first tool's price if the sale fell short (see
+#              _onb_topup_for_tool), then lands on…
+#   3. upgrade …the real Shop → Tools tab, pointed at the 500-coin Slingshot
+#              (build_shop_components adds a tutorial banner). Buying it is the
+#              normal purchase: it's owned and equipped for good. No loaner.
+#   4. pack    pick a starter specialty (Scout / Hunter / Trader).
+#   done       "you're ready" — ONE next objective from the Beginner Track.
+# The old 4-page feature tour, the Training Shortbow loan and the forced
+# Western Coyote fight are gone from this flow: the tour lives at /tutorial and
+# the fight is the optional Coyote Challenge on the Beginner Track panel.
 #
-# 2026-09-12: dropped "tracks" (a flavor-only follow/observe screen with no
-# mechanical branching — pure filler between intro and catch), and "world" /
-# "mystery" (full-screen explainers for world conditions and mythic creatures,
-# shown before the player had even decided they like hunting). Both concepts
-# are still teased in the "done" panel's goal list, and the real systems
-# introduce themselves the moment they actually fire in play — no need to
-# front-load the explanation. Six steps beats ten for a first-time player.
-#
-# Deliberate choice: don't give permanent gear or big money here. The first
-# catch, the trial weapon's double-catch and the scripted fight all pay through
-# the real inventory/sell/combat paths — no fake tutorial currency — but the
-# Training Shortbow is a LOAN (data[uid]["trial_tool"], never added to
-# owned_tools) that expires and dangles the real ◈25,000 purchase as a goal.
-# Guarded so nothing here can be farmed (onboarding.completed / starter_pack /
-# _onb_caught / trial_tool). Disable the whole flow with FEATURE_ONBOARDING_V2=0.
+# Guarded so nothing here can be farmed or replayed (onboarding.completed /
+# starter_pack / the per-step action gate _ONB_ACTION_STEPS, re-checked inside
+# the user lock). Disable the whole flow with FEATURE_ONBOARDING_V2=0.
 
-_ONB_STEPS = ("intro", "catch", "sell", "trial", "danger", "pack", "done")
+_ONB_STEPS = ("intro", "sell", "upgrade", "pack", "done")
 
-# Steps retired in the 2026-09-12 simplification above. Kept recognized (not
+# Steps retired by earlier simplifications / this redesign. Kept recognized (not
 # treated as corrupt data) purely so a player already mid-flow at deploy time
-# gets fast-forwarded to the nearest equivalent instead of being reset to
-# "intro" or stranded on a screen that no longer renders. See
-# _onb_canonical_step(), used by every write (_onb_set_step) and by the one
-# render entry point (build_onboarding_components).
-_ONB_RETIRED_STEP_SKIP = {"tracks": "catch", "world": "done", "mystery": "done"}
+# gets fast-forwarded to the nearest equivalent instead of being reset or
+# stranded on a screen that no longer renders. See _onb_canonical_step(), used
+# by every write (_onb_set_step) and by the one render entry point.
+_ONB_RETIRED_STEP_SKIP = {"tracks": "intro", "catch": "intro", "trial": "upgrade", "danger": "upgrade",
+                          "world": "done", "mystery": "done"}
 _ONB_LEGACY_STEPS = tuple(_ONB_RETIRED_STEP_SKIP)
 
 def _onb_canonical_step(step: str) -> str:
@@ -10602,10 +10613,13 @@ def _onb_canonical_step(step: str) -> str:
         step = _ONB_RETIRED_STEP_SKIP[step]
     return step
 
+# Buttons from panels that were already open before this redesign keep working
+# by acting as their modern equivalent.
+_ONB_ACTION_ALIASES = {"track": "hunt", "shoot": "hunt", "follow": "hunt", "observe": "hunt", "trial_hunt": "shop"}
+
 # Which onboarding step each button belongs to (a button from any other step is a stale click).
 _ONB_ACTION_STEPS = {
-    "tour": ("intro",), "track": ("intro",), "follow": ("intro", "catch"), "observe": ("intro", "catch"),
-    "shoot": ("catch",), "sell": ("sell",), "trial_hunt": ("trial",), "pack": ("pack",),
+    "hunt": ("intro",), "sell": ("sell",), "shop": ("upgrade",), "pack": ("pack",),
 }
 
 
@@ -10626,102 +10640,68 @@ def _onb_set_step(user_id: str, step: str) -> None:
         ob["completed"] = True
     mark_user_dirty(user_id)
 
-def _onb_first_animal() -> str:
-    pool = BIOME_ANIMALS.get("village", [])
-    for pick in ("Black-Tailed Deer", "Cottontail Rabbit"):
-        if pick in pool:
-            return pick
-    return pool[0] if pool else "Black-Tailed Deer"
+def _onb_step(user_id: str) -> str:
+    return _onb_canonical_step(_onb(user_id).get("step", "intro"))
 
-def _onb_grant_first_catch(user_id: str) -> tuple[str, int, int, int]:
-    """Deliver the guaranteed first catch through the real inventory path.
-    Also hands over one free Bandage — teaches healing exists before it's
-    ever needed. Returns (animal, value, xp, level_ups)."""
-    animal = _onb_first_animal()
-    val = int(ANIMAL_DATA.get(animal, {}).get("value", 0)) or 120
-    xp  = int(ANIMAL_DATA.get(animal, {}).get("xp", 0)) or 15
+def _onb_tool_price(user_id: str) -> int:
+    return int(ev_price(TOOLS[ONBOARDING_TOOL]["price"], currency=TOOLS[ONBOARDING_TOOL]["currency"], gear=True))
+
+def _onb_topup_for_tool(user_id: str) -> int:
+    """Guarantee the player can afford the first upgrade: if the (real) first
+    hunt's sale left them short of the Slingshot, top the wallet up by the
+    shortfall. Capped at one tool's price over the account's lifetime, so it
+    can't be turned into free money. Returns the amount added (0 normally)."""
     d = data[user_id]
-    level_ups = 0
-    if not d.get("_onb_caught"):
-        d["_onb_caught"] = True
-        d.setdefault("inv", []).append(animal)
-        d["_pending_sell"] = (d.get("_pending_sell") or 0) + val
-        d["xp"] = d.get("xp", 0) + xp
-        d["total_money_earned"] = d.get("total_money_earned", 0) + val
-        record_catch(user_id, animal, d.get("tool", "Bare Hands"), val)
-        while d["xp"] >= xp_for_level(d["level"]):
-            d["xp"] -= xp_for_level(d["level"]); d["level"] += 1; level_ups += 1
-        hi = d.setdefault("healing_inv", {})
-        hi["Bandage"] = hi.get("Bandage", 0) + 1
-        mark_user_dirty(user_id)
-    return animal, val, xp, level_ups
-
-def _onb_grant_trial_and_catches(user_id: str) -> tuple[list, dict]:
-    """Loan the Training Shortbow (never added to owned_tools — see module
-    docstring) and immediately deliver its signature double-catch, scripted
-    so a brand new account with zero arrows never hits the ammo gate. Returns
-    ([(animal,value,xp), ...], trial_tool_dict)."""
-    d = data[user_id]
-    tr = d.get("trial_tool")
-    if not tr or tr.get("expires_at", 0) <= time.time():
-        tr = {"tool": TRIAL_TOOL, "expires_at": time.time() + TRIAL_TOOL_MIN * 60}
-        d["trial_tool"] = tr
-    results = []
-    if not d.get("_onb_trial_caught"):
-        d["_onb_trial_caught"] = True
-        pool = [a for a in BIOME_ANIMALS.get("village", []) if a != _onb_first_animal()]
-        picks = pool[:2] if len(pool) >= 2 else (pool * 2)[:2]
-        for animal in picks:
-            val = int(ANIMAL_DATA.get(animal, {}).get("value", 0)) or 60
-            xp  = int(ANIMAL_DATA.get(animal, {}).get("xp", 0)) or 12
-            d.setdefault("inv", []).append(animal)
-            d["_pending_sell"] = (d.get("_pending_sell") or 0) + val
-            d["xp"] = d.get("xp", 0) + xp
-            d["total_money_earned"] = d.get("total_money_earned", 0) + val
-            record_catch(user_id, animal, TRIAL_TOOL, val)
-            results.append((animal, val, xp))
-        while d["xp"] >= xp_for_level(d["level"]):
-            d["xp"] -= xp_for_level(d["level"]); d["level"] += 1
-        mark_user_dirty(user_id)
-    return results, tr
-
-def _onb_start_scripted_danger(user_id: str) -> str:
-    """The first dangerous encounter — real engine, favourably seeded so a new
-    player is very likely to win in 1-2 clicks. Returns the animal name."""
-    animal = "Western Coyote" if "Western Coyote" in BIOME_ANIMALS.get("village", []) \
-        else BIOME_ANIMALS["village"][-1]
-    refresh_health(user_id)
-    stats = animal_combat_stats(animal)
-    scripted_hp = max(8, int(stats["hp"] * 0.4))   # a couple of solid hits should do it
-    data[user_id]["fight"] = {
-        "kind": "animal", "animal": animal, "biome": "village",
-        "eid": secrets.token_hex(4), "mhp": scripted_hp, "mhp_max": stats["hp"],
-        "turn": 1, "guard": False, "log": [], "bonus": "ambush",
-    }
-    st = data[user_id].setdefault("stats", {})
-    st["animal_fights_started"] = st.get("animal_fights_started", 0) + 1
-    analytics(user_id, "onboarding_scripted_danger", animal=animal)
+    if ONBOARDING_TOOL in d.get("owned_tools", []):
+        return 0
+    price = _onb_tool_price(user_id)
+    amount = min(price - d.get("money", 0), price - d.get("_onb_topup", 0))
+    if amount <= 0:
+        return 0
+    add_money(user_id, amount, "tutorial top-up")
+    d["_onb_topup"] = d.get("_onb_topup", 0) + amount
     mark_user_dirty(user_id)
-    return animal
+    return amount
+
+def _onb_focus_tool_page(user_id: str) -> None:
+    """Open the shop's Tools tab on the page that holds the first upgrade."""
+    names = [n for n, _t in get_all_tools_sorted()]
+    if ONBOARDING_TOOL in names:
+        _tool_shop_page[user_id] = names.index(ONBOARDING_TOOL) // 5
+
+def _onb_shop_banner(user_id: str) -> str:
+    """The tutorial line shown on top of the Shop while the player is on the
+    'upgrade' step ('' at any other time)."""
+    if not onboarding_active(user_id) or _onb_step(user_id) != "upgrade":
+        return ""
+    t = TOOLS[ONBOARDING_TOOL]
+    ob = _onb(user_id)
+    sold = f"Sold for **◈ {ob['last_sold']:,}**. " if ob.get("last_sold") else ""
+    return (f"### {emoji('gift')} Buy your first upgrade\n"
+            f"{sold}Pick up the {t['emoji']} **{ONBOARDING_TOOL}** (◈ {_onb_tool_price(user_id):,}) — press **Buy** below. "
+            "Tools are yours for good, equip themselves, and better ones reach wilder regions.")
+
+def _onb_after_tool_buy(user_id: str):
+    """Call after ANY successful tool purchase. If the player is on the
+    'upgrade' step, advance to the specialty pick and return that panel."""
+    if not onboarding_active(user_id) or _onb_step(user_id) != "upgrade":
+        return None
+    _onb_set_step(user_id, "pack")
+    analytics(user_id, "onboarding_upgrade_bought", tool=data[user_id].get("tool", ""))
+    return build_onboarding_components(user_id)
 
 def _onb_after_scripted_danger(user_id: str, outcome: dict) -> list:
-    """Route the scripted danger fight's outcome back into the guided flow —
-    win, KO or flee, a new player is never left stranded mid-combat."""
+    """A player who was mid-way through the old forced Coyote fight when this
+    redesign shipped: route the outcome back into the (new) guided flow — win,
+    KO or flee, they're never left stranded mid-combat — and pay the one-time
+    challenge reward for a win."""
     kind = outcome.get("kind")
     if kind == "win":
-        _grant_title(user_id, "Rookie Hunter")
-        if not data[user_id].get("_onb_danger_rewarded"):          # one-time, independent of the fight itself
-            data[user_id]["_onb_danger_rewarded"] = True
-            hi = data[user_id].setdefault("healing_inv", {})
-            hi["First Aid Kit"] = hi.get("First Aid Kit", 0) + 1
-        mark_user_dirty(user_id)
+        _grant_beginner_challenge_reward(user_id)
         analytics(user_id, "onboarding_danger_won")
-        data[user_id]["_onb_danger_note"] = "won"
     else:
-        note = "ko" if kind == "ko" else "fled"   # 'escape' (flee) also reads as 'fled'
-        analytics(user_id, "onboarding_danger_" + note)
-        data[user_id]["_onb_danger_note"] = note
-    _onb_set_step(user_id, "pack")
+        analytics(user_id, "onboarding_danger_" + ("ko" if kind == "ko" else "fled"))
+    _onb_set_step(user_id, "upgrade")
     return build_onboarding_components(user_id)
 
 def _onb_grant_pack(user_id: str, key: str) -> bool:
@@ -10731,11 +10711,20 @@ def _onb_grant_pack(user_id: str, key: str) -> bool:
     p = STARTER_PACKS.get(key)
     if not p:
         return False
-    tb = data[user_id].setdefault("temp_boosts", [])
+    d = data[user_id]
+    tb = d.setdefault("temp_boosts", [])
     expires_at = time.time() + p["duration"]
     for stat, amount in p["boosts"].items():
         tb.append({"stat": stat, "amount": amount, "expires_at": expires_at})
-    data[user_id]["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
+    d["temp_boosts"] = [b for b in tb if b["expires_at"] > time.time()]
+    kit = p.get("kit") or {}
+    for name, n in (kit.get("item") or {}).items():
+        add_item(user_id, name, n)
+    for name, n in (kit.get("heal") or {}).items():
+        hi = d.setdefault("healing_inv", {})
+        hi[name] = hi.get(name, 0) + n
+    if kit.get("money"):
+        add_money(user_id, kit["money"], "starter specialty")
     ob["starter_pack"] = key
     mark_user_dirty(user_id)
     return True
@@ -10749,7 +10738,8 @@ def _onb_btn(uid: str, action: str, label: str, style: int = 3, emoji_uni: str =
     return b
 
 def _onb_tour_pages() -> list[str]:
-    """The 'Quick Tour' shown from the intro: what the bot actually is, in four screens."""
+    """The 'Quick Tour': what the bot actually is, in four screens. No longer part of
+    first-time onboarding — it's offered from /tutorial."""
     n_animals = len(_CATCHABLE_ANIMALS)
     n_biomes  = len(BIOME_ANIMALS)
     n_myth    = len(MYTHIC_CREATURES)
@@ -10789,166 +10779,120 @@ def _onb_tour_pages() -> list[str]:
          "-# Lost? `/help` lists every command and `/settings` has your preferences."),
     ]
 
+def build_tour_components(user_id: str, page: int = 0) -> list:
+    """The 4-page Quick Tour as a standalone panel (reachable any time, from /tutorial)."""
+    pages = _onb_tour_pages()
+    page = max(0, min(int(page), len(pages) - 1))
+    body = pages[page] + f"\n\n-# Quick tour · {page + 1}/{len(pages)}"
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": body},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [
+            _onb_btn(user_id, f"tour:{page - 1}", "◀ Prev", 2) | ({"disabled": True} if page == 0 else {}),
+            _onb_btn(user_id, f"tour:{page + 1}", "Next ▶", 2) | ({"disabled": True} if page == len(pages) - 1 else {}),
+            {"type": 2, "style": 3, "label": "Back to the hunt", "emoji": emoji_partial("bow"),
+             "custom_id": f"nav:menu:{user_id}"},
+        ]},
+    ]}]
+
+def _onb_objective_line(user_id: str) -> str:
+    """The ONE next objective, for the 'you're ready' screen."""
+    o = beginner_objective(user_id)
+    if o:
+        reward = f" — *{o['reward']}*" if o["reward"] else ""
+        return (f"{emoji('target')} **Your goal:** {emoji(o['step']['emoji'])} {o['label']}{reward}\n"
+                f"-# {o['hint']}")
+    goals = three_goals_lines(user_id)
+    return f"{emoji('target')} **Your goal:** " + goals[0].split("**Now:** ", 1)[-1] if goals else ""
+
 def build_onboarding_components(user_id: str, tour: int | None = None) -> list:
     ob   = _onb(user_id)
     step = ob.get("step", "intro")
     if step in _ONB_LEGACY_STEPS:
-        # Self-heal a step persisted before the 2026-09-12 simplification —
-        # fast-forward instead of rendering a screen that no longer exists.
+        # Self-heal a step persisted before the redesign — fast-forward
+        # instead of rendering a screen that no longer exists.
         _onb_set_step(user_id, step)
         step = ob["step"]
-    acc  = 0x2ECC71
+    acc = 0x2ECC71
+    d = data[user_id]
 
-    if step in ("intro", "") and tour is not None:
-        pages = _onb_tour_pages()
-        tour = max(0, min(int(tour), len(pages) - 1))
-        body = pages[tour] + f"\n\n-# Quick tour · {tour + 1}/{len(pages)}"
-        rows = [{"type": 1, "components": [
-            _onb_btn(user_id, f"tour:{tour - 1}", "◀ Prev", 2) | ({"disabled": True} if tour == 0 else {}),
-            _onb_btn(user_id, f"tour:{tour + 1}", "Next ▶", 2) | ({"disabled": True} if tour == len(pages) - 1 else {}),
-            _onb_btn(user_id, "tour:exit", "Back to the hunt", 3, "bow"),
-        ]}]
+    if tour is not None:                       # pre-redesign panels with a tour page: show the standalone tour
+        return build_tour_components(user_id, tour)
 
-    elif step in ("intro", ""):
-        n_animals, n_biomes, n_myth = len(_CATCHABLE_ANIMALS), len(BIOME_ANIMALS), len(MYTHIC_CREATURES)
+    if step == "upgrade":
+        if d.get("fight"):                     # an old forced Coyote fight still open — finish it first
+            return build_animal_fight_components(user_id)
+        if set(d.get("owned_tools", [])) - {"Bare Hands"}:       # they already own a tool (bought it elsewhere)
+            _onb_set_step(user_id, "pack")
+            step = "pack"
+        else:
+            _onb_topup_for_tool(user_id)
+            _onb_focus_tool_page(user_id)
+            return build_shop_components(user_id, "tools")
+
+    if step in ("intro", ""):
         body = (
             f"# {emoji('bow')} IDLE HUNTER\n"
-            "### The Pacific Northwest\n"
             "Rain drums on the cedars. Mist sits low between the trunks. "
             "Something just moved in the brush ahead of you.\n\n"
-            f"**Idle Hunter** is a hunting RPG that lives in Discord. Hunt **{n_animals}+ real animals** across "
-            f"**{n_biomes} regions** of the world, sell your catch, buy better gear and push into wilder lands — "
-            "even while you're away.\n\n"
-            "🏹 **Hunt & upgrade** — tools, ammo, vehicles, and a Field Guide to fill\n"
-            f"👹 **Mythical creatures** — {n_myth} legendary cryptids (Bigfoot, Kraken, Dragons…) fought turn by turn\n"
-            "🏕️ **Idle income** — a Hunting Camp that earns while you're offline\n"
-            "🤝 **Tribes** — shared boosts, a treasury, weekly boss and expeditions\n"
-            "📦 **Crates, trading & events** — craft, trade on the market, join giveaways\n\n"
-            "-# Every hunter starts here. Track what moved — or take the quick tour first."
+            "**Hunt it. Sell it. Buy better gear.** That's the whole loop — and it takes about a minute to learn.\n\n"
+            "-# Everything else — tribes, mythical creatures, your camp — shows up once you're hunting."
         )
         rows = [{"type": 1, "components": [
-            _onb_btn(user_id, "track", "Track It", 3, "animal_fallback"),
-            _onb_btn(user_id, "tour:0", "Quick Tour", 2, "book"),
+            _onb_btn(user_id, "hunt", "Start Hunting", 3, "bow"),
+            _onb_btn(user_id, "skip", "Skip Tutorial", 2),
         ]}]
 
-    elif step == "catch":
-        animal = _onb_first_animal()
-        val = int(ANIMAL_DATA.get(animal, {}).get("value", 0)) or 120
-        xp  = int(ANIMAL_DATA.get(animal, {}).get("xp", 0)) or 15
-        a_em = animal_emoji(animal)
-        body = (
-            f"### {a_em} {animal}\n"
-            "There it is — head down, grazing, unaware of you.\n"
-            "Steady your hands. This is the shot.\n\n"
-            f"-# Value: **◈ {val:,}** · XP: **+{xp}**"
-        )
-        rows = [{"type": 1, "components": [_onb_btn(user_id, "shoot", "Take the Shot", 3, "bow")]}]
-
     elif step == "sell":
-        d = data[user_id]
-        animal = _onb_first_animal()
-        val = int(ANIMAL_DATA.get(animal, {}).get("value", 0)) or 120
-        xp  = int(ANIMAL_DATA.get(animal, {}).get("xp", 0)) or 15
-        a_em = animal_emoji(animal)
-        lvl_line = (f"\n\n`⬆️` **LEVEL {d['level']}!**" if d.get("level", 1) > 1 else "")
+        inv = d.get("inv", [])
+        worth = d.get("_pending_sell") or inv_sell_value(user_id)
+        names = ", ".join(f"{animal_emoji(a)} **{a}**" for a in inv[:3]) or "your catch"
         body = (
-            f"### {emoji('target')} CLEAN HIT!\n"
-            f"### {a_em} {animal}\n\n"
-            f"**+ {xp} XP** · **+ ◈ {val:,}**"
-            f"{lvl_line}\n\n"
-            f"{emoji('book')} **New Field Guide entry** — 1/{len(BIOME_ANIMALS.get('village', []))} "
-            f"Pacific Northwest species discovered\n"
-            f"{emoji('gift')} **+1 Bandage** (restores 25 HP — you'll want it later)\n\n"
-            "-# A trader in the village will take the catch off your hands. Money "
-            "buys better gear, and better gear reaches wilder places."
+            f"### {emoji('inventory')} Sell Your Catch\n"
+            f"{names} is in your bag — worth **◈ {worth:,}**.\n\n"
+            "-# A trader in the village will take it off your hands. Money buys better gear, "
+            "and better gear reaches wilder places."
         )
-        rows = [{"type": 1, "components": [_onb_btn(user_id, "sell", "Sell It", 1, "money_bag")]}]
-
-    elif step == "trial":
-        t_info = TOOLS.get(TRIAL_TOOL, {})
-        body = (
-            f"### {emoji('gift')} Training Loan\n"
-            f"{t_info.get('emoji', emoji('bow'))} **Training {TRIAL_TOOL}** — yours for the next "
-            f"**{TRIAL_TOOL_MIN} minutes**.\n\n"
-            f"-# Multi-catch: **{t_info.get('multi_catch', 2)}** — it catches more than "
-            f"one animal per hunt. Try it out."
-        )
-        rows = [{"type": 1, "components": [_onb_btn(user_id, "trial_hunt", "Hunt With It", 3, "bow")]}]
+        rows = [{"type": 1, "components": [
+            _onb_btn(user_id, "sell", "Sell Your Catch", 1, "money_bag"),
+            _onb_btn(user_id, "skip", "Skip Tutorial", 2),
+        ]}]
 
     elif step == "pack":
         lines = "\n".join(
             f"{p['emoji']} **{p['label']}** — {p['blurb']}"
             for p in STARTER_PACKS.values()
         )
-        note = data[user_id].pop("_onb_danger_note", None)
-        danger_line = ""
-        if note == "won":
-            danger_line = f"{emoji('trophy')} **First dangerous hunt won!** Title unlocked: *\"Rookie Hunter\"* · {emoji('gift')} First Aid Kit\n\n"
-        elif note == "ko":
-            danger_line = ("`💀` That one got the better of you — a ranger dragged you back. "
-                           f"{emoji('shield')} Rookie Protection covered you. Nothing lost.\n\n")
-        elif note == "fled":
-            danger_line = "`💨` It got away. Nothing lost — on to the next one.\n\n"
+        t = d.get("tool", "Bare Hands")
+        got = (f"{tool_emoji(t)} **{t}** is yours and equipped.\n\n" if t != "Bare Hands" else "")
         body = (
-            f"{danger_line}"
-            f"### {emoji('inventory')} Choose a Starting Specialty\n"
-            "Pick the edge that suits how you want to play. It lasts 30 minutes — "
-            "just enough to find your feet.\n\n" + lines
+            f"### {emoji('inventory')} You're ready — pick your edge\n"
+            f"{got}"
+            "One last choice: a small boost for your first half hour. They're equal in strength — "
+            "just a different flavour, so there's no wrong pick.\n\n" + lines
         )
         rows = [{"type": 1, "components": [
             _onb_btn(user_id, f"pack:{k}", STARTER_PACKS[k]["label"], 2, STARTER_PACKS[k]["emoji"])
             for k in STARTER_PACKS
         ]}]
 
-    elif step == "danger":
-        # Transient — the fight panel owns this step. Only reached on a stale
-        # re-render (e.g. a refresh mid-fight); never leaves the player stuck.
-        if data[user_id].get("fight"):
-            return build_animal_fight_components(user_id)
-        _onb_set_step(user_id, "pack")
-        return build_onboarding_components(user_id)
-
-    else:  # done
+    else:  # done — the "you're ready" screen: ONE objective, nothing else to read
         pk = STARTER_PACKS.get(ob.get("starter_pack") or "", {})
-        pk_line = (f"\n-# Active: {pk['emoji']} **{pk['label']}** ({pk['blurb'].split(' — ')[0]})"
+        pk_line = (f"\n-# Active for 30 min: {pk['emoji']} **{pk['label']}** — {pk['blurb'].split(' — ')[0]}"
                    if pk else "")
-        real_price = TOOLS.get(TRIAL_TOOL, {}).get("price", 25000)
+        tool_name = d.get("tool", "Bare Hands")
         body = (
-            f"### {emoji('bow')} You're a Hunter Now\n"
-            f"{USER_EMOJIS['levels']} Level **{data[user_id]['level']}** · "
-            f"{hp_status_line(user_id)} · {emoji('book')} **{len(data[user_id].get('record', {}))}** species discovered · "
-            f"**◈ {data[user_id]['money']:,}**\n"
-            f"{pk_line}\n\n"
-            "**Next goals:**\n"
-            f"{emoji('bow')} Earn your real **{TRIAL_TOOL}** — ◈ {real_price:,}\n"
-            f"{emoji('book')} Discover 5 Pacific Northwest species\n"
-            f"{emoji('earth')} Investigate your first World Condition\n"
-            f"`👹` Find your first Mythical Creature\n"
-            f"{emoji('tribe')} Join or create a Tribe\n\n"
-            f"{rookie_goals_block(user_id)}\n\n"
-            f"{emoji('handshake')} **Hunting is better with friends** — </refer:{COMMAND_ID.get('refer','0')}> "
-            f"gives you both {emoji('gem')} gems + a title when they get going, and "
-            f"</invite:{COMMAND_ID.get('invite','0')}> adds the bot to your own server."
+            f"### {emoji('bow')} You're a Hunter now\n"
+            f"{USER_EMOJIS['levels']} Level **{d['level']}** · {hp_status_line(user_id)} · "
+            f"**◈ {d['money']:,}**{pk_line}\n\n"
+            f"{_onb_objective_line(user_id)}"
         )
         rows = [{"type": 1, "components": [
-            {"type": 2, "style": 3, "label": "Hunt Again", "emoji": emoji_partial('bow'),
+            {"type": 2, "style": 3, "label": f"Hunt With {tool_name}"[:80], "emoji": emoji_partial('bow'),
              "custom_id": f"hunt:again:{user_id}"},
-            {"type": 2, "style": 2, "label": "View the World", "emoji": emoji_partial('world_map'),
-             "custom_id": f"nav:world:{user_id}"},
-            {"type": 2, "style": 2, "label": "Find a Tribe", "emoji": emoji_partial('tribe'),
-             "custom_id": f"nav:tribe:{user_id}"},
-        ]},
-        {"type": 1, "components": [
-            {"type": 2, "style": 1, "label": "Refer a Friend", "emoji": emoji_partial('handshake'),
-             "custom_id": f"nav:refer:{user_id}"},
-            {"type": 2, "style": 5, "label": "Add Bot to Server", "emoji": emoji_partial('link'),
-             "url": invite_url()},
+            {"type": 2, "style": 2, "label": "Menu", "emoji": emoji_partial('home'),
+             "custom_id": f"nav:menu:{user_id}"},
         ]}]
-
-    if step not in ("done", "danger"):
-        rows.append({"type": 1, "components": [
-            {"type": 2, "style": 2, "label": "Skip intro",
-             "custom_id": f"onb:skip:{user_id}"}]})
 
     return [{"type": 17, "accent_color": acc, "spoiler": False, "components": [
         {"type": 10, "content": body},
@@ -11117,7 +11061,6 @@ def build_world_components(user_id: str, goal_line: str = "") -> list:
     what's actually happening right now."""
     d = data[user_id]
     cur = d.get("biome", "village")
-    _rookie_goal_progress(user_id, "view_world")
 
     where = f"{BIOME_EMOJIS.get(cur,'')} **{BIOME_NAMES.get(cur, cur)}** — {biome_region(cur)['region']}"
     header = ui_header(emoji('earth'), "WORLD") + "\n" + where
@@ -11810,6 +11753,11 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                  page_nav_row,
                  _back_row(user_id)]
 
+    _banner = _onb_shop_banner(user_id)          # tutorial hint while the player is buying their first tool
+    if _banner:
+        comps.insert(0, {"type": 10, "content": _banner})
+        comps.insert(1, {"type": 1, "components": [_onb_btn(user_id, "skip", "Skip Tutorial", 2)]})
+        comps.insert(2, {"type": 14, "divider": True, "spacing": 1})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
 
 # ─────────────────────────────────────────────
@@ -11890,6 +11838,8 @@ def build_tutorial_guide_components(user_id: str, idx: int = 0) -> list:
              "disabled": idx == len(TUTORIAL_GUIDE) - 1},
         ]},
         {"type": 1, "components": [
+            {"type": 2, "style": 1, "label": "Quick Tour", "emoji": emoji_partial("book"),
+             "custom_id": f"onb:tour:0:{user_id}"},
             {"type": 2, "style": 2, "label": "◀ Settings",
              "custom_id": f"settings:nav:main:{user_id}"},
         ]},
@@ -17294,7 +17244,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_tutorial_guide_components(owner_id, idx))
             return
 
-    # ── ONBOARDING (interactive first hunt) ───
+    # ── ONBOARDING (guided first hunt) ───
     if parts[0] == "onb":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
@@ -17302,73 +17252,77 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             return
         init_user(owner_id)
         action = parts[1] if len(parts) > 2 else ""
-        tour_page = None
+        if action == "tour":
+            # The Quick Tour isn't part of onboarding any more — it's a standalone panel, open any time.
+            sub = parts[2] if len(parts) > 3 else "0"
+            await smart_update_v2(interaction, build_tour_components(owner_id, int(sub) if sub.lstrip("-").isdigit() else 0))
+            return
         if not onboarding_active(owner_id):
             await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
-        _cur_step = _onb_canonical_step(_onb(owner_id).get("step", "intro"))
+        action = _ONB_ACTION_ALIASES.get(action, action)
         _need = _ONB_ACTION_STEPS.get(action)
-        if _need and _cur_step not in _need:
+        if _need and _onb_step(owner_id) not in _need:
             # An old panel (or a double click): accept only what belongs to the player's CURRENT step and just
-            # redraw where they actually are — never rewind, never start another scripted fight.
+            # redraw where they actually are — never rewind, never run a second guided hunt.
             await smart_update_v2(interaction, build_onboarding_components(owner_id))
             return
 
-        if action == "tour":
-            sub = parts[2] if len(parts) > 3 else "exit"
-            tour_page = int(sub) if sub.lstrip("-").isdigit() else None
-        elif action == "track":
-            _onb_set_step(owner_id, "catch")
-        elif action in ("follow", "observe"):
-            # Retired "tracks" step buttons — only reachable via a stale panel
-            # still open in Discord from before this step was cut. Same
-            # destination as "track" above.
-            analytics(owner_id, "onboarding_first_track", choice=action)
-            _onb_set_step(owner_id, "catch")
-        elif action == "shoot":
+        if action == "hunt":
+            # The first hunt is the REAL hunt: same run_hunt() as every other hunt, just made beginner-safe.
             async with user_transaction(owner_id):
-                animal, val, xp, level_ups = _onb_grant_first_catch(owner_id)
-                _onb_set_step(owner_id, "sell")
-            analytics(owner_id, "onboarding_first_catch", animal=animal, value=val, level_ups=level_ups)
+                result = run_hunt(owner_id, guided=True) if _onb_step(owner_id) == "intro" else {"ok": False, "stale": True}
+                if result.get("ok") and result.get("catches"):
+                    _onb_set_step(owner_id, "sell")
+            if result.get("ok") and result.get("catches"):
+                await track_activity(owner_id, "hunt", catches=len(result["catches"]),
+                                     biome=result.get("biome", ""), result=result)
+                await _guild_goal_contribute(interaction, owner_id, len(result["catches"]))
+                c0 = result["catches"][0]
+                analytics(owner_id, "onboarding_first_catch", animal=c0["animal"], value=c0["sell_value"],
+                          level_ups=result.get("level_ups", 0))
+                data[owner_id]["_display_name"] = interaction.user.display_name
+                await smart_update_v2(interaction, build_hunt_components(owner_id, result, onboarding=True))
+                return
+            if result.get("verify"):
+                await send_ephemeral_v2(interaction,
+                    f"{emoji('lock')} **Verification Required**\nRun {_verify_cmd_ref()} with code `{data[owner_id]['verify']['code']}`",
+                    0xE67E22)
+                return
+            if result.get("remaining") or result.get("cooldown_ts"):
+                await send_ephemeral_v2(interaction,
+                    f"{emoji('cooldown')} Hunt again <t:{result.get('cooldown_ts', int(time.time() + 3))}:R>.", 0xE67E22)
+                return
         elif action == "sell":
             async with user_transaction(owner_id):
-                sold = sell_all_inv(owner_id)
-                _onb_set_step(owner_id, "trial")
+                sold = {"total": 0, "count": 0}
+                if _onb_step(owner_id) == "sell":
+                    sold = sell_all_inv(owner_id)
+                    _onb(owner_id)["last_sold"] = sold.get("total", 0)
+                    _onb_topup_for_tool(owner_id)           # the first upgrade must be affordable
+                    _onb_focus_tool_page(owner_id)
+                    _onb_set_step(owner_id, "upgrade")
+            if sold.get("count"):
+                analytics(owner_id, "sell", count=sold["count"], total=sold["total"])
             analytics(owner_id, "onboarding_first_sell", earned=sold.get("total", 0))
-        elif action == "trial_hunt":
-            # Grants the Training Shortbow loan + its guaranteed double-catch,
-            # then goes straight into the scripted danger encounter — the same
-            # "instant catches + one dangerous target" panel a real hunt shows.
+        elif action == "shop":
+            # A pre-redesign 'Hunt With It' button: the equivalent today is the shop on the first upgrade.
             async with user_transaction(owner_id):
-                results, tr = _onb_grant_trial_and_catches(owner_id)
-                danger_animal = _onb_start_scripted_danger(owner_id)
-                _onb_set_step(owner_id, "danger")
-            analytics(owner_id, "onboarding_trial_granted", tool=tr["tool"])
-            extra_catches = [{"animal": a} for a, _v, _x in results]
-            await smart_update_v2(interaction,
-                build_animal_fight_components(owner_id, intro=True, extra_catches=extra_catches))
-            return
-        elif action == "continue":
-            # Retired "world"/"mystery" step buttons — only reachable via a
-            # stale panel still open in Discord from before those steps were
-            # cut. _onb_set_step() canonicalizes either target straight to
-            # "done" (see _ONB_RETIRED_STEP_SKIP).
-            step = _onb(owner_id).get("step")
-            nxt = {"world": "mystery", "mystery": "done"}.get(step)
-            if nxt:
-                async with user_transaction(owner_id):
-                    _onb_set_step(owner_id, nxt)
-                if _onb(owner_id).get("step") == "done":
-                    analytics(owner_id, "onboarding_completed")
+                _onb_topup_for_tool(owner_id)
+                _onb_focus_tool_page(owner_id)
         elif action == "pack":
             key = parts[2] if len(parts) > 3 else ""
             async with user_transaction(owner_id):
-                ok = _onb_grant_pack(owner_id, key)
-                _onb_set_step(owner_id, "done")
+                ok = False
+                if _onb_step(owner_id) == "pack":
+                    ok = _onb_grant_pack(owner_id, key)
+                    if ok or _onb(owner_id).get("starter_pack"):
+                        _onb_set_step(owner_id, "done")
             analytics(owner_id, "onboarding_pack_selected", pack=key, granted=ok)
-            analytics(owner_id, "onboarding_completed")
+            if _onb(owner_id).get("completed"):
+                analytics(owner_id, "onboarding_completed")
         elif action == "skip":
-            # Skip the story, keep the freebie: jump straight to the specialty pick (one screen), then done.
+            # Skip the tutorial, keep the freebie: jump straight to the specialty pick (one screen), then done.
             async with user_transaction(owner_id):
                 if not _onb(owner_id).get("starter_pack"):
                     _onb_set_step(owner_id, "pack")
@@ -17378,7 +17332,25 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             if _onb(owner_id).get("completed"):
                 await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
                 return
-        await smart_update_v2(interaction, build_onboarding_components(owner_id, tour=tour_page))
+        await smart_update_v2(interaction, build_onboarding_components(owner_id))
+        return
+
+    # ── BEGINNER TRACK: optional challenge ───
+    if parts[0] == "hpath":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        init_user(owner_id)
+        if len(parts) > 2 and parts[1] == "challenge":
+            async with user_transaction(owner_id):
+                why = beginner_challenge_status(owner_id)
+                if not why:
+                    _start_beginner_challenge(owner_id)
+            if not why:
+                await smart_update_v2(interaction, build_animal_fight_components(owner_id, intro=True))
+                return
+        await smart_update_v2(interaction, build_hunters_path_components(owner_id))
         return
 
     # ── HUNT ──────────────────────────────────
@@ -17538,11 +17510,16 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await smart_update_v2(interaction,
                     build_menu_components(owner_id, interaction.user.display_name))
                 return
+            _challenge = False
+            _challenge_line = ""
             async with user_transaction(owner_id):
                 f = data[owner_id].get("fight")
+                _challenge = bool(f and f.get("challenge"))
                 outcome = (animal_fight_turn(owner_id, action)
                            if f and f.get("kind") == "animal" and f.get("eid") == eid
                            else {"kind": "none"})
+                if _challenge and outcome.get("kind") == "win":
+                    _challenge_line = _grant_beginner_challenge_reward(owner_id)     # one-time
             k = outcome.get("kind")
             if k == "win":
                 await _ev3_activity(owner_id, "fight")
@@ -17561,6 +17538,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await smart_update_v2(interaction, comps)
                 return
             await smart_update_v2(interaction, build_animal_fight_outcome_components(owner_id, outcome))
+            if _challenge_line:
+                await send_ephemeral_v2(interaction, _challenge_line, 0x2ECC71)
             await check_everything(interaction, owner_id)
             return
 
@@ -18104,8 +18083,11 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, err, 0xE74C3C)
                 return
             analytics(owner_id, "upgrade", tool=tool_name, price=t["price"])
-            _rookie_goal_progress(owner_id, "buy_tool")
             _hp_done = hunters_path_maybe_complete(owner_id)
+            _onb_comps = _onb_after_tool_buy(owner_id)       # first upgrade bought during the tutorial → on to the specialty pick
+            if _onb_comps:
+                await smart_update_v2(interaction, _onb_comps)
+                return
             await _hunters_path_notify(interaction, owner_id, _hp_done)
             await smart_update_v2(interaction, build_shop_components(owner_id, "tools"))
             return
@@ -18132,8 +18114,11 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 await send_ephemeral_v2(interaction, err, 0xE74C3C)
                 return
             analytics(owner_id, "upgrade", tool=tool_name, price=t["price"])
-            _rookie_goal_progress(owner_id, "buy_tool")
             _hp_done = hunters_path_maybe_complete(owner_id)
+            _onb_comps = _onb_after_tool_buy(owner_id)       # first upgrade bought during the tutorial → on to the specialty pick
+            if _onb_comps:
+                await smart_update_v2(interaction, _onb_comps)
+                return
             await _hunters_path_notify(interaction, owner_id, _hp_done)
             await smart_update_v2(interaction, build_shop_components(owner_id, "tools"))
             return

@@ -128,17 +128,18 @@ def test_onboarding_no_double_grant():
     app.init_user(u)                     # new account → onboarding active
     assert app.onboarding_active(u)
     app.data[u]["temp_boosts"] = []      # isolate from any pre-existing boosts
-    app._onb_set_step(u, "catch")
-    a1, v1, _x1, _l1 = app._onb_grant_first_catch(u)
-    a2, v2, _x2, _l2 = app._onb_grant_first_catch(u)   # second "click"
-    assert app.data[u]["inv"] == [a1]            # only one animal
-    assert app.data[u]["_pending_sell"] == v1
-    assert app.data[u]["healing_inv"].get("Bandage") == 1   # the free Bandage, once
+    app.data[u]["items"] = {}
+    app.data[u]["hunt_cd"] = 0
+    app.data[u]["verify"] = {"needed": False, "time": 10 ** 9, "code": "ABCD"}
+    # the first hunt is a real run_hunt; a second guided call while it sits in the bag can't be a second step
+    r1 = app.run_hunt(u, guided=True)
+    assert r1["ok"] and app.data[u]["inv"] == [r1["catches"][0]["animal"]]
     app._onb_set_step(u, "pack")
     assert app._onb_grant_pack(u, "scout") is True
     assert app._onb_grant_pack(u, "hunter") is False   # one-time
     tb = [b for b in app.data[u]["temp_boosts"] if b["stat"] == "luck"]
     assert len(tb) == 1
+    assert app.data[u]["items"].get("Smoke Bomb") == 1
     app._onb_set_step(u, "done")
     assert not app.onboarding_active(u)
 
@@ -617,25 +618,15 @@ def test_animal_flee_before_fight_no_combat():
     assert app.data[u].get("fight") is None   # no combat at all was started
 
 
-def test_rookie_goals_and_chest():
+def test_beginner_track_replaces_rookie_goals():
     _reset()
     u = "goals1"
     _mk_user(u)
-    app.data[u]["level"] = 5
-    for i in range(5):
-        app.record_catch(u, f"Test Animal {i}", "Bare Hands", 10)
-    app.data[u]["total_caught"] = 5
-    app._rookie_goal_progress(u, "buy_tool")
-    app._rookie_goal_progress(u, "view_world")
-    rg = app.data[u]["rookie_goals"]
-    assert all(rg.values()), rg
-    assert app.data[u]["rookie_chest_claimed"] is True
-    assert app.data[u]["crate_inv"].get("Rare Crate", 0) >= 1
-    assert "Rookie Hunter" in app.data[u]["earned_titles"]
-    # idempotent — claiming twice doesn't double the crate
-    crates_before = app.data[u]["crate_inv"]["Rare Crate"]
-    app._grant_rookie_chest(u)
-    assert app.data[u]["crate_inv"]["Rare Crate"] == crates_before
+    app.data[u]["hunters_path"] = {"completed": False, "rewarded": []}
+    assert not hasattr(app, "_grant_rookie_chest") and not hasattr(app, "ROOKIE_GOALS")
+    assert app.beginner_objective(u)["step"]["key"] == "buy_tool"
+    app.data[u]["owned_tools"] = ["Bare Hands", "Slingshot"]
+    assert app.beginner_objective(u)["step"]["key"] == "hunt_with_tool"
 
 
 def test_healing_item_used_in_combat():
@@ -651,49 +642,6 @@ def test_healing_item_used_in_combat():
     assert out["kind"] == "ongoing"
     assert app.data[u]["health"]["hp"] == 75   # +25 from the Bandage
     assert "Bandage" not in app.data[u]["healing_inv"]   # consumed, count hit 0
-
-
-def test_onboarding_scripted_danger_flow():
-    _reset()
-    u = "onbdanger"
-    app.data.pop(u, None)
-    app.init_user(u)
-    assert app.onboarding_active(u)
-    app._onb_set_step(u, "trial")
-    results, tr = app._onb_grant_trial_and_catches(u)
-    assert len(results) == 2
-    assert app.trial_tool_active(u) is not None
-    animal = app._onb_start_scripted_danger(u)
-    assert app.data[u]["fight"]["animal"] == animal
-    assert app.data[u]["fight"]["mhp"] < app.animal_combat_stats(animal)["hp"]  # softened
-    app._onb_set_step(u, "danger")
-    # win it (scripted HP is low — a top-tier weapon finishes it in one hit)
-    app.data[u]["owned_tools"] = ["Bare Hands"]
-    random.seed(2)
-    out = {"kind": "ongoing"}
-    for _ in range(15):
-        out = app.animal_fight_turn(u, "attack")
-        if out["kind"] != "ongoing":
-            break
-    assert out["kind"] in ("win", "ko", "escape")
-    comps = app._onb_after_scripted_danger(u, out)
-    assert app._onb(u)["step"] == "pack"
-    assert isinstance(comps, list) and comps[0]["type"] == 17
-    if out["kind"] == "win":
-        assert "Rookie Hunter" in app.data[u]["earned_titles"]
-        assert app.data[u]["healing_inv"].get("First Aid Kit", 0) >= 1
-
-
-def test_trial_tool_expiry_and_display():
-    _reset()
-    u = "trialexp"
-    _mk_user(u)
-    app.data[u]["trial_tool"] = {"tool": "Shortbow", "expires_at": time.time() + 300}
-    assert app.trial_tool_active(u) is not None
-    assert "Training Shortbow" in app.trial_tool_line(u)
-    app.data[u]["trial_tool"]["expires_at"] = time.time() - 1
-    assert app.trial_tool_active(u) is None
-    assert app.trial_tool_line(u) == ""
 
 
 def test_hp_regen_lazy_and_capped():
@@ -877,7 +825,7 @@ def test_fallback_art_borrowed_until_real_upload():
 
 def test_beginner_checklists_use_registry_keys():
     g = __import__("game_data")
-    for spec in list(g.ROOKIE_GOALS.values()) + list(g.HUNTERS_PATH_STEPS):
+    for spec in list(g.HUNTERS_PATH_STEPS):
         assert spec["emoji"].isascii() and spec["emoji"] in g.EMOJI, spec
 
 

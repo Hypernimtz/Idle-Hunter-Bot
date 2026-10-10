@@ -151,6 +151,7 @@ def test_arguments_bind_by_type_and_bad_ones_get_a_usage_hint():
 
 def test_commands_reply_in_the_channel_as_a_reply_to_the_message():
     _fresh("1004")
+    app.vote_checking_enabled = lambda: True              # the vote button needs a vote-check token; pretend it's configured
     msg = _msg("1004", "ih daily")
     app._prefix_last.clear()
     POSTS.clear()
