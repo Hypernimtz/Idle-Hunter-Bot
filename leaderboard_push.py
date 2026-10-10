@@ -27,6 +27,13 @@ def score(value):
         return 0
 
 
+def public_id(uid) -> str:
+    """A short, stable, non-reversible tag so two players with the same display name can be told apart on the
+    website without ever exposing their Discord id."""
+    import hashlib
+    return hashlib.sha256(('idle-hunter-lb:' + str(uid)).encode()).hexdigest()[:8]
+
+
 def public_name(value, fallback):
     text = ''.join(c for c in str(value or fallback) if ord(c) >= 32).strip()
     return text[:100] or fallback
@@ -80,11 +87,13 @@ async def build_payload(users, tribes, excluded=(), world=None):
     in a single loop step, so no cross-thread access to mutable bot state either.
     Only the finished, detached payload goes to a worker thread."""
     heaps = {key: [] for key, _ in _FIELDS}
+    uid_of = {}      # id(record) -> Discord id, only to derive the public id below (never exported)
     for n, (uid, record) in enumerate(list(users.items())):
         if str(uid) not in excluded and not record.get('is_tester'):
             for key, field in _FIELDS:
                 # (score, -position) so ties keep original order, like nlargest(key=score)
                 item = (score(_stat(record, field)), -n, record)
+                uid_of[id(record)] = str(uid)
                 heap = heaps[key]
                 if len(heap) < 100:
                     heapq.heappush(heap, item)
@@ -96,7 +105,8 @@ async def build_payload(users, tribes, excluded=(), world=None):
     for key, _ in _FIELDS:
         entries = []
         for sc, _n, d in sorted(heaps[key], key=lambda t: t[:2], reverse=True):
-            entry = {'name': public_name(d.get('username'), 'Unnamed hunter'), 'score': str(sc)}
+            entry = {'name': public_name(d.get('username'), 'Unnamed hunter'), 'score': str(sc),
+                     'id': public_id(uid_of[id(d)])}
             badge = featured_badge(d)
             if badge:
                 entry['badge'] = badge

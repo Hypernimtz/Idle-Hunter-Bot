@@ -118,6 +118,18 @@ def test_top3_alerts_only_consider_players_with_a_score():
     assert top == ["B"]
 
 
+def test_website_export_tells_same_named_players_apart_without_exposing_ids():
+    import leaderboard_push as lp
+    users = {"111111111111111111": {"username": "Same", "level": 9}, "222222222222222222": {"username": "Same", "level": 8}}
+    out = run(lp.build_payload(users, {}, set()))
+    rows = out["rankings"]["level"]
+    assert len(rows) == 2 and rows[0]["name"] == rows[1]["name"] == "Same"
+    ids = [r["id"] for r in rows]
+    assert len(set(ids)) == 2 and all(len(i) == 8 for i in ids)
+    assert not any("1111" in json.dumps(r) or "2222" in json.dumps(r) for r in rows)      # the Discord id never leaves the bot
+    assert ids[0] == lp.public_id("111111111111111111")                                    # stable between pushes
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
