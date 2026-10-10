@@ -89,6 +89,7 @@ from game_data import (
     hunt_crate_chance, pick_biome_animal,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
+    TRACK_MIN_PROGRESS_FRAC, TRACK_EXTRA_STEPS,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
     CRYSTAL_SHARD_COST, CRYSTAL_CRAFT_SECONDS, CRAFT_QUEUE_MAX, CRATE_CRYSTAL_COST,
@@ -699,6 +700,10 @@ WORLD_CONDITION_ANNOUNCE_GAP_H = 8   # min hours between condition announcements
 SIGHTING_ENCOUNTER_WINDOW_MIN  = 120    # the creature stays huntable this long after reveal
 SIGHTING_ENCOUNTER_CHANCE      = 0.15   # flat per-hunt chance during that window
 SIGHTING_ENCOUNTER_PITY_HUNTS  = 15     # guaranteed encounter after this many empty hunts
+SIGHTING_REPEAT_CHANCE         = 0.04   # after you have met it once, later encounters this sighting are rarer
+SIGHTING_CLUES_PER_PLAYER_MAX  = 25     # one player can supply at most half the clues, so it takes two hunters
+SIGHTING_REWARD_MIN_HUNTS      = 3      # hunts gathering clues to earn the participation reward
+SIGHTING_REWARD_ITEM           = "Scent Lure"
 
 def get_active_sighting() -> dict | None:
     global _active_sighting, _last_sighting_end
@@ -720,11 +725,16 @@ def _sighting_encounter_roll(user_id: str, biome: str) -> tuple[float, str] | No
     if not sg or sg.get("biome") != biome:
         return None
     if not sg.get("revealed"):
-        return (0.0, "")
+        # Still hidden: ordinary Mythicals can still turn up (at the base rate) — just never the sighted creature,
+        # which the encounter site filters out of the pool.
+        return (MYTH_ENCOUNTER_BASE, "")
     pity = data[user_id].setdefault("_myth_pity", {})
     if pity.get("sighting_id") != sg.get("id"):
         pity["sighting_id"] = sg.get("id")
         pity["count"] = 0
+        pity["enc_n"] = 0
+    if pity.get("enc_n", 0) >= 1:            # you have already met it: a normal, much smaller chance
+        return (SIGHTING_REPEAT_CHANCE, sg.get("creature", ""))
     pity["count"] = pity.get("count", 0) + 1
     chance = 1.0 if pity["count"] >= SIGHTING_ENCOUNTER_PITY_HUNTS else SIGHTING_ENCOUNTER_CHANCE
     return (chance, sg.get("creature", ""))
@@ -773,14 +783,24 @@ def _sighting_add_clues(user_id: str, biome: str) -> None:
     if not FEATURE_WORLD_SIGHTINGS:
         return
     sg = get_active_sighting()
-    if not sg or sg.get("biome") != biome or sg.get("revealed"):
-        if sg and sg.get("biome") == biome and sg.get("revealed"):
-            st = data[user_id].setdefault("stats", {})
-            st["sightings_joined"] = st.get("sightings_joined", 0) + 1
+    if not sg or sg.get("biome") != biome:
         return
+    if sg.get("revealed"):
+        st = data[user_id].setdefault("stats", {})
+        st["sightings_joined"] = st.get("sightings_joined", 0) + 1
+        _sighting_reward(user_id, sg)
+        return
+    mine = sg.setdefault("player_clues", {})
+    room = SIGHTING_CLUES_PER_PLAYER_MAX - mine.get(user_id, 0)
+    if room <= 0:
+        return                              # you have done your share of the searching — it takes other hunters too
     gained = random.randint(1, 3)
     if trophy_proc(user_id, "sighting_double_clue_pct"):   # Kraken: Kraken Ink Vial
         gained *= 2
+    gained = min(gained, room)
+    mine[user_id] = mine.get(user_id, 0) + gained
+    hunts = sg.setdefault("hunts", {})
+    hunts[user_id] = hunts.get(user_id, 0) + 1
     sg["clues"] = sg.get("clues", 0) + gained
     st = data[user_id].setdefault("stats", {})
     st["sightings_joined"] = st.get("sightings_joined", 0) + 1
@@ -795,6 +815,35 @@ def _sighting_add_clues(user_id: str, biome: str) -> None:
         # own (much shorter) countdown isn't long enough to actually go kill
         # the thing once it's finally found.
         sg["ends_ts"] = sg["revealed_ts"] + SIGHTING_ENCOUNTER_WINDOW_MIN * 60
+        _sighting_reward(user_id, sg)
+
+
+def _sighting_reward(user_id: str, sg: dict) -> None:
+    """A small thank-you for hunters who helped uncover the creature (once per sighting). Paid the next time
+    they hunt there, inside their own transaction, so it never touches another player's data."""
+    if sg.get("hunts", {}).get(user_id, 0) < SIGHTING_REWARD_MIN_HUNTS:
+        return
+    done = sg.setdefault("rewarded", [])
+    if user_id in done:
+        return
+    done.append(user_id)
+    add_item(user_id, SIGHTING_REWARD_ITEM, 1)
+
+
+def _sighting_pick_biome(pool: list[str]) -> str:
+    """Pick the sighting's region, favouring ones recently-active hunters can actually reach (level + tool tier),
+    while keeping a small chance of an endgame-only one."""
+    now = time.time()
+    weights = []
+    for b in pool:
+        need_lvl = biome_level(b)
+        need_tier = BIOME_TOOL_TIER.get(b, 1)
+        n = sum(1 for d in data.values()
+                if d.get("level", 1) >= need_lvl and d.get("hunt_cd", 0) > now - 86400
+                and get_tool_tier(d.get("tool", "Bare Hands")) >= need_tier)
+        weights.append(0.4 + n)
+    return random.choices(pool, weights=weights, k=1)[0]
+
 
 def spawn_world_sighting(force: bool = False) -> dict | None:
     """Start a new hidden sighting in a random myth-bearing region."""
@@ -808,7 +857,7 @@ def spawn_world_sighting(force: bool = False) -> dict | None:
     pool = [b for b, ms in BIOME_MYTHS.items() if ms and b != "village"]
     if not pool:
         return None
-    biome = random.choice(pool)
+    biome = _sighting_pick_biome(pool)
     creature = random.choice(BIOME_MYTHS[biome])
     now = time.time()
     _active_sighting = {
@@ -6898,11 +6947,15 @@ def start_travel(user_id: str, dest: str) -> dict:
     origin = data[user_id]["biome"]
     mins   = travel_time_min(origin, dest)
     now    = time.time()
+    prev   = data[user_id].get("travel")
+    rerouting = bool(prev and now < prev.get("arrive_ts", 0))
     if mins > 0:
         red = trophy_effect_value(user_id, "travel_time_pct")   # Kelpie: Dripping Bridle
         if red:
             mins = max(1, round(mins * (1 - red / 100)))
-        if trophy_proc(user_id, "travel_instant_pct"):          # Hippogriff: Primary Flight Quill
+        # The Hippogriff's instant-trip chance is rolled once per journey: re-routing mid-trip
+        # keeps the original roll, so spamming new departures can't fish for a free arrival.
+        if not rerouting and trophy_proc(user_id, "travel_instant_pct"):   # Primary Flight Quill
             mins = 0
     if mins <= 0:                     # instant (buff event, or a trophy proc) — just arrive
         data[user_id]["biome"]  = dest
@@ -7243,6 +7296,9 @@ def run_hunt(user_id: str) -> dict:
     if not data[user_id].get("_boss") and hunters_path_myths_allowed(user_id):
         myth_pool = BIOME_MYTHS.get(biome, [])
         _sight_roll = _sighting_encounter_roll(user_id, biome)
+        _sg_here = get_active_sighting()
+        if _sg_here and _sg_here.get("biome") == biome and not _sg_here.get("revealed"):
+            myth_pool = [c for c in myth_pool if c != _sg_here.get("creature")]   # no early peek at the hidden creature
         _forced_creature = ""
         if _sight_roll is not None:
             # An active sighting OWNS this biome's encounter roll — either
@@ -7260,7 +7316,9 @@ def run_hunt(user_id: str) -> dict:
         if myth_pool and random.random() < _enc:
             creature = _forced_creature or random.choice(myth_pool)
             if _forced_creature:
-                data[user_id].setdefault("_myth_pity", {})["count"] = 0
+                _pity = data[user_id].setdefault("_myth_pity", {})
+                _pity["count"] = 0
+                _pity["enc_n"] = _pity.get("enc_n", 0) + 1
             eff_cd = hunt_cooldown_s(user_id)
             data[user_id]["hunt_cd"] = now + eff_cd
             quest_progress(user_id, "hunts_done",      1)
@@ -7633,6 +7691,11 @@ _TRACK_GAIN_LINES = [
     "You move quiet and quick. It hasn't noticed you.",
 ]
 
+def _track_min_progress(tr: dict) -> int:
+    """Trail progress needed before the creature can be located."""
+    return -(-int(tr["goal"] * TRACK_MIN_PROGRESS_FRAC * 100) // 100)
+
+
 def tracking_choice(user_id: str, action: str) -> dict:
     """Resolve one tracking decision. Mutates — call inside a user_transaction.
     Returns {kind: 'ongoing'|'located'|'lost'|'none', line}."""
@@ -7668,8 +7731,13 @@ def tracking_choice(user_id: str, action: str) -> dict:
     mistake_cap = 2 + int(trophy_effect_value(user_id, "tracking_extra_mistake"))        # Minotaur: Bronze Nose-Ring
     if tr["mistakes"] >= mistake_cap:
         out = _tracking_lose(user_id, tr); out["line"] = line; return out
-    if tr["step"] >= tr["need"] or tr["progress"] >= tr["goal"] + 3:
+    need_progress = _track_min_progress(tr)
+    if tr["progress"] >= tr["goal"] + 3 or (tr["step"] >= tr["need"] and tr["progress"] >= need_progress):
         out = _tracking_locate(user_id, tr); out["line"] = line; return out
+    if tr["step"] >= tr["need"] + TRACK_EXTRA_STEPS:         # waited it out without ever closing the gap
+        out = _tracking_lose(user_id, tr)
+        out["line"] = "You played it too safe — the trail went cold before you got close."
+        return out
     return {"kind": "ongoing", "line": line}
 
 def _track_bar(cur: int, goal: int, width: int = 12) -> str:
@@ -7699,7 +7767,10 @@ def build_tracking_components(user_id: str, line: str = "") -> list:
         f"{scene['text']}\n\n"
         + (f"-# {line}\n" if line else "")
         + f"Trail: {_track_bar(tr['progress'], tr['goal'])}  ·  "
-          f"Missteps: {'●' * tr['mistakes']}{'○' * (mistake_cap - tr['mistakes'])}"
+          f"Missteps: {'●' * tr['mistakes']}{'○' * (mistake_cap - tr['mistakes'])}\n"
+          f"-# Get the trail to **{_track_min_progress(tr)}+/{tr['goal']}** to find it "
+          f"({max(0, tr['need'] + TRACK_EXTRA_STEPS - tr['step'])} step(s) before it goes cold). "
+          f"Careful moves are safe but slow; bold ones gain more but can spook it."
         + gorgon_hint
     )
 
@@ -17622,6 +17693,11 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             return
         if biome_key not in BIOME_NAMES:
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Unknown region.", 0xE74C3C)
+            return
+        if player_in_combat(owner_id) or tracking_active(owner_id):
+            await send_ephemeral_v2(interaction,
+                f"{emoji('warning')} You can't set off while you're fighting or tracking something — finish it (or flee) first.",
+                0xE74C3C)
             return
         lvl_req = next((lvl for k, lvl in BIOME_LEVELS if k == biome_key), 1)
         if data[owner_id]["level"] < lvl_req:

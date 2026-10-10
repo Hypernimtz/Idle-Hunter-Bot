@@ -138,5 +138,10 @@
     "key": "2026-10-09-items-trophies",
     "title": "Items & trophies tuning",
     "message": "- **Loch Silt Sample** now adds +2% to your finished-crate chance per hunt (was +12%)\n- **Everburning Ember (Phoenix)** really saves you now — a lethal hit in a Mythical fight leaves you at 30 HP and the fight goes on (once a day)\n- **Coffin Nail** and **Hollow Fang** self-healing now have a short cooldown, so healing items still matter\n- **Using the same timed boost again extends it** instead of stacking higher (a second War Horn extends the tribe buff too)\n- **Lucky Hammer** and **Danger Whistle** won't be wasted if one is already primed\n- **Forge Coal** moves your whole crafting queue up, not just the first crystal\n- **Smoke Bomb** now also gives a guaranteed clean escape from a Mythical\n- You can **resume an unfinished Scratch Pad** even with none left to use\n- Combat trophies are now labelled as **Mythical-fight** effects"
+  },
+  {
+    "key": "2026-10-10-world-exploration",
+    "title": "World & exploration",
+    "message": "- **Travel** can't be started while you're in a fight or tracking a Mythical, and a trophy's instant-travel chance is rolled once per trip (re-routing no longer re-rolls it)\n- **Tracking needs real progress** — you must build the trail up (about 60% of the goal) before you can find the creature; just watching and waiting will let it go cold\n- **Global sightings are more team-based** — one hunter can only supply half the clues, and everyone who helped uncover the creature gets a Scent Lure\n- After you've met a sighted creature once, further encounters in that sighting are much rarer (4%)\n- Sightings now favour regions active hunters can actually reach\n- A hidden sighting no longer stops other Mythicals from appearing in that region\n- **World condition descriptions** now say exactly what they do (Perfect Catch chance, hunt XP, hunting value — not species rarity)"
   }
 ]

@@ -1837,37 +1837,37 @@ WORLD_CONDITIONS = {
     "heavy_rain": {
         "name": "Heavy Rain", "emoji": EMOJI["rain_cloud"], "duration": 4 * 3600,
         "rare_mult": 1.15, "myth_mult": 1.05,
-        "blurb": "Tracks set deep in the mud and scent hangs low. Rare wildlife is easier to close on.",
+        "blurb": "Tracks set deep in the mud and scent hangs low. Perfect Catches come a little more often (+15%) and Mythicals are slightly likelier.",
     },
     "migration": {
         "name": "Migration", "emoji": "🦌", "duration": 4 * 3600,
         "rare_mult": 1.30,
-        "blurb": "The herds are moving through in numbers. Prize animals everywhere you look.",
+        "blurb": "The herds are moving through in numbers. Perfect Catches come much more often (+30%) — it does not change which species appear.",
     },
     "strange_tracks": {
         "name": "Strange Tracks", "emoji": "🐾", "duration": 3 * 3600,
         "myth_mult": 1.35,
-        "blurb": "Prints that don't match anything in the guide. Something legendary is nearby.",
+        "blurb": "Prints that don't match anything in the guide. Mythical encounters are +35% likelier here.",
     },
     "trading_boom": {
         "name": "Trading Boom", "emoji": EMOJI["coin_sample"], "duration": 3 * 3600,
         "sell_mult": 1.15,
-        "blurb": "Buyers are paying over the odds this week. Sell where the money is.",
+        "blurb": "Buyers are paying over the odds. Animals you catch while hunting here are worth +15% (Idle Camp hauls are not affected).",
     },
     "clear_skies": {
         "name": "Clear Skies", "emoji": EMOJI["sun"], "duration": 3 * 3600,
         "xp_mult": 1.15,
-        "blurb": "Perfect visibility and easy going. Every hunt teaches you a little more.",
+        "blurb": "Perfect visibility and easy going. Every hunt here gives +15% XP.",
     },
     "predators_stirring": {
         "name": "Predators Stirring", "emoji": "🐺", "duration": 3 * 3600,
         "myth_mult": 1.20, "rare_mult": 1.08,
-        "blurb": "The big animals are restless and bold. Higher stakes, better rewards.",
+        "blurb": "The big animals are restless and bold. Mythicals are likelier (+20%) and Perfect Catches come slightly more often (+8%).",
     },
     "aurora": {
         "name": "Aurora", "emoji": EMOJI["milky_way"], "duration": 3 * 3600,
         "rare_mult": 1.12, "xp_mult": 1.10,
-        "blurb": "Lights in the sky and animals acting strange beneath them.",
+        "blurb": "Lights in the sky and animals acting strange beneath them. Perfect Catches +12% more often and +10% hunt XP.",
     },
 }
 
@@ -1892,6 +1892,16 @@ TRACKING_ACTIONS = {
     "flank":   {"label": "Circle around",    "emoji": "🌲", "risk": 22, "progress": 3},
     "push":    {"label": "Push hard",        "emoji": EMOJI["high_voltage_sign"], "risk": 40, "progress": 4},
 }
+
+# A trail is only "found" once you have this share of the goal; Watch-and-wait alone (+1 a step) cannot
+# get there on a long trail before the track goes cold TRACK_EXTRA_STEPS steps past the planned length.
+TRACK_MIN_PROGRESS_FRAC = 0.6
+TRACK_EXTRA_STEPS = 3
+
+# A trail is only "found" once you have this share of the goal; Watch-and-wait alone (+1 a step) cannot
+# get there on a long trail before the track goes cold TRACK_EXTRA_STEPS steps past the planned length.
+TRACK_MIN_PROGRESS_FRAC = 0.6
+TRACK_EXTRA_STEPS = 3
 
 TRACKING_SCENES = [
     {"key": "prints",   "title": "🐾 Deep Prints",
