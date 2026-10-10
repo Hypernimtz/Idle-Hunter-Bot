@@ -143,5 +143,10 @@
     "key": "2026-10-10-world-exploration",
     "title": "World & exploration",
     "message": "- **Travel** can't be started while you're in a fight or tracking a Mythical, and a trophy's instant-travel chance is rolled once per trip (re-routing no longer re-rolls it)\n- **Tracking needs real progress** — you must build the trail up (about 60% of the goal) before you can find the creature; just watching and waiting will let it go cold\n- **Global sightings are more team-based** — one hunter can only supply half the clues, and everyone who helped uncover the creature gets a Scent Lure\n- After you've met a sighted creature once, further encounters in that sighting are much rarer (4%)\n- Sightings now favour regions active hunters can actually reach\n- A hidden sighting no longer stops other Mythicals from appearing in that region\n- **World condition descriptions** now say exactly what they do (Perfect Catch chance, hunt XP, hunting value — not species rarity)"
+  },
+  {
+    "key": "2026-10-10-events-screen",
+    "title": "Clearer Events screen",
+    "message": "- The **Events** screen now has proper sections: what events are, **Today's Daily Theme**, how to take part, the season story and the whole week's themes\n- It now says clearly that a **Daily Theme** changes every day (it's not your `/daily` reward or quests)\n- The \"Today\" button is now called **Daily Theme**"
   }
 ]

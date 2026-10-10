@@ -1153,17 +1153,47 @@ def _guide_bar(have: int, total: int, width: int = 14) -> str:
     fill = 0 if total <= 0 else max(0, min(width, round(width * have / total)))
     return _pill_bar(fill, width)
 
+def _events_idle_panel(user_id: str) -> list:
+    """The Events screen when no limited-time event is running: what events are, what TODAY means
+    (the daily theme, which is separate from the /daily reward and quests) and how to join in."""
+    t = current_theme()
+    today_wd = datetime.now(timezone.utc).weekday()
+    week = "\n".join(
+        (f"**{ev_icon(d)} {d['name']}** ← today" if i == today_wd else f"{ev_icon(d)} {d['name']}")
+        for i, d in ED.DAILY_THEMES.items())
+    how = "\n".join(f"- {x}" for x in _THEME_HOWTO.get(t["key"], []))
+    head = (
+        f"# {emoji('earth')} Events\n"
+        f"**Events** are limited-time story challenges that run for a few days. **None is running right now** — "
+        f"but there's always something on:\n\n"
+        f"## {ev_icon(t)} Today's Daily Theme\n"
+        f"### {t['name']}\n"
+        f"{t['blurb']}\n"
+        f"-# {emoji('clock')} A **Daily Theme** is a free bonus or mini-activity that **changes every day of the week** "
+        f"(next one <t:{next_midnight_ts()}:R>). It is *not* your `/daily` reward or your quests — press "
+        f"**Daily Theme** below to take part.\n\n"
+        f"### How to take part today\n{how}\n"
+        f"-# {t['limit']}"
+    )
+    season = (
+        f"## {emoji('book')} Season: {ED.SEASON['title']}\n"
+        f"*{ED.SEASON['tagline']}*\n"
+        f"-# Each event is one chapter of this story. Read what you've unlocked so far in the **Chronicle**.\n\n"
+        f"### This week's Daily Themes\n{week}"
+    )
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
+        {"type": 10, "content": head[:3900]},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": season[:3900]},
+        {"type": 14, "divider": True, "spacing": 1},
+        _ev3_nav_row(user_id),
+    ]}]
+
+
 def build_events_components(user_id: str) -> list:
     ev = get_active_event()
     if not ev:
-        return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-            {"type": 10, "content": (f"### {emoji('earth')} Global Events\n\n"
-                                     "-# No event is running right now — but the Wilds are never quiet.\n"
-                                     f"-# **{ED.SEASON['title']}** · {ED.SEASON['tagline']}\n"
-                                     f"{daily_theme_line()}")},
-            {"type": 14, "divider": True, "spacing": 1},
-            _ev3_nav_row(user_id),
-        ]}]
+        return _events_idle_panel(user_id)
     key = ev.get("key", "")
     if key in ED.EVENT_SPECS:
         return _build_ev3_panel(user_id, ev, ED.EVENT_SPECS[key])
@@ -2285,7 +2315,7 @@ def _ev3_nav_row(uid: str, spec: dict | None = None, extra: list | None = None) 
                      "custom_id": f"ev3:shop:{uid}"})
     btns += [{"type": 2, "style": 2, "label": "Chronicle", "emoji": emoji_partial("book"),
               "custom_id": f"ev3:chron:open:{uid}"},
-             {"type": 2, "style": 2, "label": "Today", "emoji": emoji_partial("calendar"),
+             {"type": 2, "style": 2, "label": "Daily Theme", "emoji": emoji_partial("calendar"),
               "custom_id": f"ev3:theme:{uid}"},
              {"type": 2, "style": 2, "label": "◀ Back", "custom_id": f"nav:menu:{uid}"}]
     return {"type": 1, "components": btns[:5]}
@@ -3011,7 +3041,10 @@ def build_theme_panel(uid: str, note: str = "") -> list:
     t = current_theme()
     k = t["key"]
     td = _theme_day(uid)
-    lines = [f"# {ev_icon(t)} {t['name']}", t["blurb"],
+    lines = [f"# {ev_icon(t)} {t['name']}",
+             f"-# {emoji('calendar')} **Daily Theme** · changes every day at midnight UTC (next <t:{next_midnight_ts()}:R>) · "
+             f"separate from your `/daily` reward and quests",
+             t["blurb"],
              "### How to take part", *[f"- {x}" for x in _THEME_HOWTO.get(k, [])],
              f"-# {t['limit']}", f"-# *{t['lore']}*"]
     rows: list = []

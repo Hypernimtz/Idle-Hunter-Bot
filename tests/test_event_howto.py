@@ -99,6 +99,23 @@ def test_every_daily_theme_has_take_part_instructions():
         app.current_theme = real
 
 
+def test_idle_events_screen_explains_what_today_means():
+    real = app.current_theme
+    try:
+        for i in range(7):
+            t3._reset()
+            app.stop_active_event()
+            app.current_theme = lambda i=i: ED.DAILY_THEMES[i]
+            comps = app.build_events_components(U)
+            txt = json.dumps(comps, ensure_ascii=False)
+            assert "None is running right now" in txt and "Today's Daily Theme" in txt
+            assert "changes every day" in txt and "/daily" in txt and "How to take part today" in txt
+            assert "This week" in txt and "← today" in txt and "Daily Theme" in txt
+            assert _text_len(comps) <= 4000
+    finally:
+        app.current_theme = real
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 
