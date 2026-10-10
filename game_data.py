@@ -1579,6 +1579,20 @@ USER_EMOJIS = {
 # TOOLS
 # ─────────────────────────────────────────────
 
+# Level needed to BUY a tool (owning one already, and admin grants, are unaffected). Spaced so each weapon is a
+# milestone of its own instead of a pure money race; the Slingshot stays at 1 because onboarding buys it.
+TOOL_MIN_LEVEL = {
+    "Slingshot": 1, "Hunting Knife": 5, "Spear": 10, "Shortbow": 20, "Longbow": 30, "Crossbow": 45,
+    "Musket": 65, "Hunting Rifle": 95, "Shotgun": 130, "Sniper Rifle": 180, "Tranq Gun": 240,
+    "Plasma Caster": 310, "Gravity Trap": 400, "Soul Snare": 500, "Void Bow": 600, "Celestial Lance": 700,
+    "Mythic Net": 780, "Dragon Cannon": 850, "Cosmic RPG": 900,    # nothing is gated above Celestial Peaks (L900)
+}
+
+
+def tool_min_level(name: str) -> int:
+    return int(TOOL_MIN_LEVEL.get(name, 1))
+
+
 TOOLS = {
     "Bare Hands": {
         "description": "No tool. Everyone starts here.",

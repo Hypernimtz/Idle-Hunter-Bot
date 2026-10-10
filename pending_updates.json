@@ -178,5 +178,10 @@
     "key": "2026-10-10-new-player-start",
     "title": "A faster start for new players",
     "message": "- **The tutorial is now about one minute and four clicks**: hunt a real animal, sell it, buy your first tool (the Slingshot) in the real shop, and pick a starter specialty — then you're in the game with one clear goal\n- No more loaner Shortbow, and the Western Coyote fight is no longer forced on new hunters; it's an **optional Coyote Challenge** on the Beginner Track (◈ 500, a First Aid Kit and the *Rookie Hunter* title)\n- **Rookie Goals and Hunter's Path are now one Beginner Track.** The menu shows just your next objective; press **Beginner Track** for the full list. Payouts were rebalanced together: finishing it pays 80 gems, a Rare Crate and both titles (150 gems in total across the track)\n- **Starter specialties** are now equal but different: **Scout** +25% Luck and a Smoke Bomb, **Hunter** +25% XP and a Bandage, **Trader** +25% Sell Value and ◈ 100 (30 minutes)\n- The old feature tour moved to `/tutorial` → **Quick Tour**"
+  },
+  {
+    "key": "2026-10-10-tool-levels",
+    "title": "Tools now unlock by level",
+    "message": "- Buying a tool now needs a **minimum level** — the shop shows it on each locked tool (e.g. *Unlocks at level 130*) and the button turns into a locked **Lv N** button\n- The Slingshot is level 1, so new hunters can still buy their first tool right away; a few examples: Spear **10**, Longbow **30**, Musket **65**, Shotgun **130**, Plasma Caster **310**, Soul Snare **500**, Cosmic RPG **900**\n- Tools you already own are not affected"
   }
 ]

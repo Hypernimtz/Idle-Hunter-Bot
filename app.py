@@ -35,7 +35,7 @@ from game_data import (
     HEALING_ITEMS, MIN_ENCOUNTER_HUNTS_GAP,
     ANIMAL_ENCOUNTER_REWARD_MULT, ANIMAL_ENCOUNTER_XP_MULT, ANIMAL_ENCOUNTER_HEALTHY_BONUS,
     POWER_ATTACK_ACCURACY, POWER_ATTACK_DAMAGE_MULT,
-    ONBOARDING_FIRST_ANIMAL, ONBOARDING_TOOL,
+    ONBOARDING_FIRST_ANIMAL, ONBOARDING_TOOL, tool_min_level,
     HUNTERS_PATH_STEPS, HUNTERS_PATH_REWARD_GEMS, HUNTERS_PATH_REWARD_TITLE,
     HUNTERS_PATH_REWARD_CRATE, BEGINNER_TRACK_EXTRA_TITLE,
     BEGINNER_CHALLENGE_ANIMAL, BEGINNER_CHALLENGE_STEP, BEGINNER_CHALLENGE_REWARD,
@@ -11524,7 +11524,12 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                 can_afford = balance >= _pr
                 cur_icon   = emoji('gem') if is_gems else "◈"
                 status_line = f"{cur_icon} {_shop_price_str(_pr)}"
-                if can_afford:
+                _need_lv = tool_min_level(name)
+                if d.get("level", 1) < _need_lv:
+                    detail_line = f"Unlocks at **level {_need_lv:,}** (you're level {d.get('level', 1):,})."
+                    acc_label, acc_style, acc_dis = f"Lv {_need_lv:,}", 2, True
+                    acc_emoji = emoji_partial("lock")
+                elif can_afford:
                     detail_line = f"+{t['boost_luck']}% Luck · +{t['boost_xp']}% XP"
                     acc_label, acc_style, acc_dis = "Buy", 1, False
                 else:
@@ -18074,6 +18079,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 # Re-check ownership under the lock (double-click guard).
                 if tool_name in data[owner_id].get("owned_tools", []):
                     ok, err = False, "Already owned."
+                elif data[owner_id].get("level", 1) < tool_min_level(tool_name):
+                    ok, err = False, (f"{emoji('lock')} **{tool_name}** needs **level {tool_min_level(tool_name):,}** "
+                                      f"— you're level {data[owner_id].get('level', 1):,}.")
                 else:
                     ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool", tool_name)
                 if ok:
@@ -18105,6 +18113,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 # Re-check ownership under the lock (double-click guard).
                 if tool_name in data[owner_id].get("owned_tools", []):
                     ok, err = False, "Already owned."
+                elif data[owner_id].get("level", 1) < tool_min_level(tool_name):
+                    ok, err = False, (f"{emoji('lock')} **{tool_name}** needs **level {tool_min_level(tool_name):,}** "
+                                      f"— you're level {data[owner_id].get('level', 1):,}.")
                 else:
                     ok, err = _shop_purchase(owner_id, t["currency"], t["price"], "shop tool", tool_name)
                 if ok:
