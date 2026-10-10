@@ -13931,8 +13931,10 @@ def build_gift_confirm_components(sender_id: str, recipient: discord.User,
     amt_str = f"◈ {parsed:,}" if format == "money" else f"{emoji('gem')} {parsed:,}"
     gift_cache[gift_id] = {
         "sender_id": sender_id, "recipient_id": recipient.id,
-        "format": format, "parsed": parsed, "message": message,
+        "format": format, "parsed": parsed, "message": message, "ts": time.time(),
     }
+    for _gid in [g for g, v in gift_cache.items() if time.time() - v.get("ts", 0) > GIFT_CONFIRM_TTL_S]:
+        gift_cache.pop(_gid, None)       # prune stale confirmations
     content = (
         f"### {emoji('gift')} Confirm Gift\n"
         f"Send **{amt_str}** to {recipient.mention}?\n\n"
@@ -18050,6 +18052,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             if player_in_combat(owner_id):
                 _busy = True
             elif data[owner_id]["level"] >= PRESTIGE_MIN_LEVEL and data[owner_id]["money"] >= PRESTIGE_MIN_MONEY:
+                await market_purge_for_reset(owner_id)
                 new_p = apply_account_reset(owner_id, prestige=True)
                 _ok = True
         if _busy:
@@ -18158,6 +18161,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         gift_id = parts[2]
         gdata   = gift_cache.get(gift_id)
 
+        if gdata and time.time() - gdata.get("ts", 0) > GIFT_CONFIRM_TTL_S:
+            gift_cache.pop(gift_id, None)
+            gdata = None
         if not gdata:
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} This gift confirmation expired.", 0xE74C3C)
             return
@@ -18200,7 +18206,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     already = True
                 elif data[owner_id][fmt] < parsed:
                     bal_str = None
-                elif fmt == "gems" and (_block := _gem_gift_block(owner_id, parsed)):
+                elif (_block := _gift_block(owner_id, recipient_id, fmt, parsed)):
                     bal_str = None
                     blocked = _block
                 else:
@@ -18208,6 +18214,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                         spend_money(owner_id, parsed, "gift send", f"to {recipient_id}")
                         add_money(recipient_id, parsed, "gift receive", f"from {owner_id}")
                         bal_str = f"◈ {data[owner_id]['money']:,}"
+                        mg = _gift_day(data[owner_id], "money_gift_day", {"sent": 0})
+                        mg["sent"] = mg.get("sent", 0) + parsed
+                        data[owner_id]["money_gift_day"] = mg
                     else:
                         spend_gems(owner_id, parsed, "gift send", f"to {recipient_id}")
                         add_gems(recipient_id, parsed, "gift receive", f"from {owner_id}")
@@ -18217,6 +18226,10 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                         gd["sent"] += parsed
                         data[owner_id]["gem_gift_day"] = gd
                         bal_str = f"{emoji('gem')} {data[owner_id]['gems']:,}"
+
+                    rg = _gift_day(data[recipient_id], "gift_recv_day", {"money": 0, "gems": 0})
+                    rg[fmt] = rg.get(fmt, 0) + parsed
+                    data[recipient_id]["gift_recv_day"] = rg
 
                     gift_entry = {
                         "sender_id": owner_id,
@@ -21025,7 +21038,7 @@ def _market_icon(item: str, kind: str) -> str:
 def _market_live(kind: str = "all") -> list[dict]:
     now = time.time()
     return sorted((l for l in _market.values()
-                   if l["expires_ts"] > now and kind in ("all", l["kind"])),
+                   if l["expires_ts"] > now and not l.get("pending") and kind in ("all", l["kind"])),
                   key=lambda l: (l["price"], l["created_ts"]))
 
 def _market_account_block(user_id: str, selling: bool) -> str | None:
@@ -21079,18 +21092,26 @@ async def market_create_listing(user_id: str, item: str, qty: int, price: int) -
         now = time.time()
         listing = {"id": secrets.token_hex(5), "seller": user_id, "kind": kind, "item": name,
                    "qty": int(qty), "price": int(price), "created_ts": now,
-                   "expires_ts": now + MARKET_LISTING_HOURS * 3600}
+                   "expires_ts": now + MARKET_LISTING_HOURS * 3600,
+                   "pending": True}      # not buyable / cancellable / shown until it is saved (below)
         _market[listing["id"]] = listing
     # Written only after the seller's inventory change is flushed: a crash in
-    # between loses the escrowed items instead of duplicating them.
-    await backend.market_save(listing)
+    # between loses the escrowed items instead of duplicating them. While the save is
+    # in flight the listing is "pending", so a buyer can't sell it (and delete its row)
+    # before this INSERT lands and resurrects it after the next restart.
+    try:
+        await backend.market_save({k: v for k, v in listing.items() if k != "pending"})
+    except Exception:
+        _market.pop(listing["id"], None)
+        raise
+    listing.pop("pending", None)
     analytics(user_id, "market_list", item=name, qty=qty, price=price)
     return True, listing["id"]
 
 async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[bool, str]:
     """Buy `qty` (None = all remaining) from a listing. Returns (ok, message)."""
     lst = _market.get(listing_id)
-    if not lst or lst["expires_ts"] <= time.time():
+    if not lst or lst["expires_ts"] <= time.time() or lst.get("pending"):
         return False, "That listing is gone — someone beat you to it, or it expired."
     seller = lst["seller"]
     if seller == buyer_id:
@@ -21104,7 +21125,7 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         return False, "That listing is gone."
     async with multi_user_transaction(buyer_id, seller):
         lst = _market.get(listing_id)
-        if not lst or lst["expires_ts"] <= time.time():
+        if not lst or lst["expires_ts"] <= time.time() or lst.get("pending"):
             return False, "That listing is gone — someone beat you to it, or it expired."
         n     = lst["qty"] if qty is None else max(1, min(int(qty), lst["qty"]))
         if lst["kind"] == "item":
@@ -21124,7 +21145,7 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
             await backend.market_delete(listing_id)
         if not spend_money(buyer_id, total, "market buy", f"{n}× {lst['item']} from {seller}"):
             raise RuntimeError("market buy: balance changed under the buyer lock")
-        tax = int(total * MARKET_TAX)
+        tax = max(1, int(total * MARKET_TAX)) if total > 1 else 0     # small sales still burn at least 1
         add_money(seller, total - tax, "market sale", f"{n}× {lst['item']} to {buyer_id}")
         inv = _market_inv(buyer_id, lst["kind"])
         inv[lst["item"]] = int(inv.get(lst["item"], 0)) + n
@@ -21149,7 +21170,7 @@ async def market_return(listing_id: str, *, requester: str | None = None) -> tup
     """Cancel (requester = the seller) or expire (requester None) a listing and
     hand the escrowed items back to the seller."""
     lst = _market.get(listing_id)
-    if not lst:
+    if not lst or lst.get("pending"):
         return False, "That listing is already gone."
     seller = lst["seller"]
     if requester is not None and requester != seller:
@@ -21171,6 +21192,17 @@ async def market_return(listing_id: str, *, requester: str | None = None) -> tup
             inv = _market_inv(seller, lst["kind"])
             inv[lst["item"]] = int(inv.get(lst["item"], 0)) + lst["qty"]
     return True, f"{emoji('check_mark')} **{lst['qty']}× {lst['item']}** returned to your inventory."
+
+async def market_purge_for_reset(user_id: str) -> None:
+    """Remove a player's crate / item listings from memory AND the database, awaited. Call it
+    inside the reset's user_transaction *before* apply_account_reset: a crash after this loses
+    the escrowed copies (about to be wiped anyway); the old order (fire-and-forget delete after
+    the wipe) could leave rows that revived after a restart and handed the crates back."""
+    for lid in [lid for lid, l in list(_market.items())
+                if l["seller"] == user_id and l["kind"] in ("crate", "item")]:
+        _market.pop(lid, None)
+        await backend.market_delete(lid)
+
 
 def _market_drop_crate_listings(user_id: str) -> None:
     """Account resets wipe crates and items — listings for either go with them
@@ -21439,17 +21471,61 @@ async def log_cmd(interaction: discord.Interaction):
 GIFT_GEMS_MIN_LEVEL    = 10
 GIFT_GEMS_MIN_AGE_DAYS = 3
 GIFT_GEMS_DAILY_CAP    = 500
+# Money gifts: same account-maturity gate, and a per-day cap in "catches" of the account's own
+# level (crate_value_scale) — roomy for real friends, but a fresh account can't funnel a fortune,
+# and a freshly prestiged level-1 account can't take back a billion from an alt in one go: the
+# RECEIVER's cap is sized by the receiver's level too.
+GIFT_MONEY_DAILY_X     = 2000
+GIFT_CONFIRM_TTL_S     = 600      # an unconfirmed /gift expires after 10 minutes
+
+
+def _gift_money_cap(user_id: str) -> int:
+    return GIFT_MONEY_DAILY_X * crate_value_scale(int(data[user_id].get("level", 1)))
+
+
+def _gift_day(d: dict, key: str, default: dict) -> dict:
+    g = d.get(key) or {}
+    return g if g.get("tag") == today_utc() else {"tag": today_utc(), **default}
+
+
+def _gift_block(sender_id: str, recipient_id: str, fmt: str, amount: int) -> str | None:
+    """Reason a gift of ``fmt`` ("money"/"gems") can't go out right now, or None."""
+    if fmt == "gems":
+        reason = _gem_gift_block(sender_id, amount)
+        if reason:
+            return reason
+    else:
+        d = data[sender_id]
+        if d.get("level", 1) < GIFT_GEMS_MIN_LEVEL:
+            return f"You need to be **level {GIFT_GEMS_MIN_LEVEL}** to gift money."
+        if _account_age_days(d) < GIFT_GEMS_MIN_AGE_DAYS:
+            return f"Your account must be **{GIFT_GEMS_MIN_AGE_DAYS} days old** to gift money."
+        cap  = _gift_money_cap(sender_id)
+        sent = _gift_day(d, "money_gift_day", {"sent": 0}).get("sent", 0)
+        if sent + amount > cap:
+            return f"You can gift at most **◈ {cap:,}** per day (◈ {max(0, cap - sent):,} left today)."
+    r = data.get(recipient_id) or {}
+    rec = _gift_day(r, "gift_recv_day", {"money": 0, "gems": 0})
+    rcap = _gift_money_cap(recipient_id) if fmt == "money" else GIFT_GEMS_DAILY_CAP
+    if rec.get(fmt, 0) + amount > rcap:
+        unit = "◈ " if fmt == "money" else "gems "
+        return f"They can only receive about **{unit}{rcap:,}** a day from gifts (their level sets the limit)."
+    return None
+
+def _account_age_days(d: dict) -> int:
+    try:
+        joined = datetime.strptime(d.get("joined_date", ""), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - joined).days
+    except (ValueError, TypeError):
+        return 10 ** 6    # unknown join date = legacy account
+
 
 def _gem_gift_block(sender_id: str, amount: int) -> str | None:
     """Reason a gem gift can't go out right now, or None if it's allowed."""
     d = data[sender_id]
     if d.get("level", 1) < GIFT_GEMS_MIN_LEVEL:
         return f"You need to be **level {GIFT_GEMS_MIN_LEVEL}** to gift gems."
-    try:
-        joined = datetime.strptime(d.get("joined_date", ""), "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - joined).days
-    except (ValueError, TypeError):
-        age_days = GIFT_GEMS_MIN_AGE_DAYS   # unknown join date = legacy account
+    age_days = _account_age_days(d)
     if age_days < GIFT_GEMS_MIN_AGE_DAYS:
         return f"Your account must be **{GIFT_GEMS_MIN_AGE_DAYS} days old** to gift gems."
     gd = d.get("gem_gift_day") or {}
@@ -21495,11 +21571,10 @@ async def gift_cmd(interaction: discord.Interaction,
     if data[sender_id][format] < parsed:
         await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Not enough {icon}!", 0xE74C3C)
         return
-    if format == "gems":
-        _block = _gem_gift_block(sender_id, parsed)
-        if _block:
-            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {_block}", 0xE74C3C)
-            return
+    _block = _gift_block(sender_id, receiver_id, format, parsed)
+    if _block:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} {_block}", 0xE74C3C)
+        return
     await send_v2_followup(interaction,
         build_gift_confirm_components(sender_id, user, format, parsed, sent_message))
 
@@ -25644,6 +25719,7 @@ async def _admin_apply(op: str, params: dict, admin_id: str) -> tuple[str, str]:
     if op == "reset_account":
         init_user(target)
         async with user_transaction(target):
+            await market_purge_for_reset(target)
             apply_account_reset(target, prestige=False)
             gems = data[target]["gems"]
         admin_audit(admin_id, "reset_account", target)
