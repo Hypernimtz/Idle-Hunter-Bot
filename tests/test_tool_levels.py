@@ -1,6 +1,5 @@
 """
-Tools have a level requirement to BUY: the shop shows it, both buy handlers refuse under the lock,
-owned tools / the level-1 Slingshot / the Nuke Launcher are unaffected.
+Tool level requirements were removed 2026-10-11: any tool can be bought at any level for its price.
 
 Runs without pytest:  python tests/test_tool_levels.py
 """
@@ -41,51 +40,28 @@ def _buy(name, via="tool_buy_acc"):
     return h
 
 
-def test_every_buyable_tool_has_a_sane_level():
-    prev = 0
-    for name, t in sorted(gd.TOOLS.items(), key=lambda kv: kv[1]["tier"]):
-        if name in ("Bare Hands", "Nuke Launcher"):
-            continue
-        lv = gd.tool_min_level(name)
-        assert lv >= prev and lv >= 1, (name, lv, prev)
-        prev = lv
-    assert gd.tool_min_level("Slingshot") == 1
-    assert max(gd.TOOL_MIN_LEVEL.values()) < 900            # even the top weapon opens before Celestial Peaks
-    # every tool a biome recommends is buyable BEFORE that biome unlocks, so it gets used in the biomes before it
-    for biome, tier in gd.BIOME_TOOL_TIER.items():
-        need = dict(gd.BIOME_LEVELS).get(biome)
-        for name, tool in gd.TOOLS.items():
-            if tool["tier"] <= tier and name in gd.TOOL_MIN_LEVEL:
-                assert gd.tool_min_level(name) < need, (name, biome)
+def test_no_tool_has_a_level_requirement():
+    for name in gd.TOOLS:
+        assert gd.tool_min_level(name) == 1, name
 
 
-def test_a_low_level_player_cannot_buy_a_high_tool_by_either_button():
+def test_a_low_level_player_can_buy_any_tool_they_can_afford():
     tt._reset()
     d = tt._mk_user(U, level=10, money=10 ** 9, gems=10 ** 6)
-    for via in ("tool_buy_acc", "tool_buy"):
-        h = _buy("Shotgun", via)
-        assert "Shotgun" not in d["owned_tools"] and d["money"] == 10 ** 9
-        assert "level 300" in " ".join(h.ephemerals), h.ephemerals
-    _buy("Cosmic RPG")
-    assert "Cosmic RPG" not in d["owned_tools"] and d["gems"] == 10 ** 6
-
-
-def test_buying_works_at_the_required_level_and_slingshot_at_level_one():
-    tt._reset()
-    d = tt._mk_user(U, level=300, money=10 ** 9)
     _buy("Shotgun")
-    assert "Shotgun" in d["owned_tools"]
-    d2 = tt._mk_user(U, level=1, money=10_000)
-    _buy("Slingshot")
-    assert "Slingshot" in d2["owned_tools"]
+    assert "Shotgun" in d["owned_tools"] and d["money"] == 10 ** 9 - gd.TOOLS["Shotgun"]["price"]
+    _buy("Hunting Rifle", "tool_buy")
+    assert "Hunting Rifle" in d["owned_tools"]
+    _buy("Cosmic RPG")
+    assert "Cosmic RPG" in d["owned_tools"]
 
 
-def test_the_shop_list_shows_the_level_instead_of_a_buy_button():
+def test_the_shop_list_shows_buy_buttons_not_level_locks():
     tt._reset()
-    d = tt._mk_user(U, level=10, money=10 ** 9)
-    app._tool_shop_page[U] = 1                       # Shortbow..Crossbow-ish page
+    tt._mk_user(U, level=10, money=10 ** 9)
+    app._tool_shop_page[U] = 1
     txt = json.dumps(app.build_shop_components(U, "tools"), ensure_ascii=False)
-    assert "Unlocks at **level" in txt and "Lv " in txt
+    assert "Unlocks at **level" not in txt and '"Buy"' in txt
 
 
 def _all_tests():

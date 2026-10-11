@@ -1579,16 +1579,9 @@ USER_EMOJIS = {
 # TOOLS
 # ─────────────────────────────────────────────
 
-# Level needed to BUY a tool (owning one already, and admin grants, are unaffected). Spaced so each weapon is a
-# milestone of its own instead of a pure money race; the Slingshot stays at 1 because onboarding buys it.
-TOOL_MIN_LEVEL = {
-    "Slingshot": 1, "Hunting Knife": 5, "Spear": 10, "Shortbow": 40, "Longbow": 110, "Crossbow": 170,
-    "Musket": 235, "Hunting Rifle": 270, "Shotgun": 300, "Sniper Rifle": 330, "Tranq Gun": 360,
-    "Plasma Caster": 385, "Gravity Trap": 460, "Soul Snare": 510, "Void Bow": 580, "Celestial Lance": 680,
-    "Mythic Net": 740, "Dragon Cannon": 770, "Cosmic RPG": 830,
-    # Each tool opens a little BEFORE the biome that recommends it (BIOME_TOOL_TIER), so it gets some use in the
-    # biome(s) before — the top weapon opens 70 levels before Celestial Peaks (L900).
-}
+# Level needed to BUY a tool. Empty since 2026-10-11: players asked to spend their money as they earn it, so
+# tools are gated by price alone again (biomes still need their level). Add entries to bring a gate back.
+TOOL_MIN_LEVEL: dict[str, int] = {}
 
 
 def tool_min_level(name: str) -> int:
