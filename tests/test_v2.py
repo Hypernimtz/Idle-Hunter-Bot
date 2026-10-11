@@ -648,11 +648,11 @@ def test_hp_regen_lazy_and_capped():
     _reset()
     u = "regen1"
     _mk_user(u)   # onboarding.completed=True here -> baseline regen rate, not the resting rate
-    app.data[u]["health"]["hp"] = 50
+    app.data[u]["health"]["hp"] = 10    # low enough that Recovery Sunday's doubled regen stays under max HP
     app.data[u]["health"]["last_regen_ts"] = time.time() - 600   # 10 min ago
     healed = app.refresh_health(u)
     assert healed == int(10 * app.HP_REGEN_PER_MIN * app.theme_regen_mult())   # 4/min baseline (more on Recovery Sunday)
-    assert app.data[u]["health"]["hp"] == 50 + healed
+    assert app.data[u]["health"]["hp"] == 10 + healed
     # never exceeds max_hp
     app.data[u]["health"]["hp"] = app.PLAYER_BASE_HP
     app.data[u]["health"]["last_regen_ts"] = time.time() - 6000
