@@ -651,7 +651,7 @@ def test_hp_regen_lazy_and_capped():
     app.data[u]["health"]["hp"] = 50
     app.data[u]["health"]["last_regen_ts"] = time.time() - 600   # 10 min ago
     healed = app.refresh_health(u)
-    assert healed == 10 * app.HP_REGEN_PER_MIN   # 4/min baseline
+    assert healed == int(10 * app.HP_REGEN_PER_MIN * app.theme_regen_mult())   # 4/min baseline (more on Recovery Sunday)
     assert app.data[u]["health"]["hp"] == 50 + healed
     # never exceeds max_hp
     app.data[u]["health"]["hp"] = app.PLAYER_BASE_HP
