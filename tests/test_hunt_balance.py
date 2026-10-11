@@ -92,6 +92,43 @@ def test_every_biome_roster_animal_can_still_be_picked():
         assert seen == set(roster), (biome, set(roster) - seen)
 
 
+def test_level_ups_pay_cash_sized_to_the_unlocked_biome():
+    tt._reset()
+    tt._mk_user("lv1")
+    d = app.data["lv1"]
+    d["level"], d["money"] = 9, 0
+    d["xp"] = gd.xp_for_level(9) + gd.xp_for_level(10) + 5        # two levels: 9 -> 11
+    assert app.apply_level_ups("lv1") == 2 and d["level"] == 11 and d["xp"] == 5
+    want = gd.LEVEL_UP_CASH_X * (gd.crate_value_scale(10) + gd.crate_value_scale(11))
+    assert d["money"] == want == gd.level_up_cash(9, 11)
+    assert app.level_cash_note(11, 2) == f" · +◈ {want:,}" and app.level_cash_note(11, 0) == ""
+    assert app.apply_level_ups("lv1") == 0 and d["money"] == want   # nothing owed twice
+
+
+def test_active_hunts_out_earn_the_same_catch_from_camp():
+    assert gd.ACTIVE_HUNT_SELL_MULT > 1 and gd.ACTIVE_HUNT_XP_MULT > 1
+    tt._reset()
+    tt._mk_user("ac1")
+    d = app.data["ac1"]
+    d["hunt_cd"] = 0
+    orig = random.random
+    random.random = lambda: 0.99                                   # no perfect catch, encounter or drop
+    try:
+        res = app.run_hunt("ac1")
+    finally:
+        random.random = orig
+    assert res["ok"] and res["catches"], res
+    c = res["catches"][0]
+    base = gd.ANIMAL_DATA[c["animal"]]
+    assert c["sell_value"] >= int(base["value"] * gd.ACTIVE_HUNT_SELL_MULT)
+    assert c["xp_earned"] >= int(base["xp"] * gd.ACTIVE_HUNT_XP_MULT)
+
+
+def test_each_new_biome_pays_more_per_catch_than_the_last():
+    scales = [gd.crate_value_scale(lvl) for _b, lvl in gd.BIOME_LEVELS]
+    assert scales == sorted(scales) and len(set(scales)) == len(scales), scales
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

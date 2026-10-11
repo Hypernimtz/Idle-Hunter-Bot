@@ -88,6 +88,7 @@ from game_data import (
     RULES,
     # Hunting Crates + crafting economy
     CRATE_TIERS, CRATE_REWARDS, open_crate, crate_value_scale, roll_catch_drops,
+    ACTIVE_HUNT_SELL_MULT, ACTIVE_HUNT_XP_MULT, level_up_cash,
     hunt_crate_chance, pick_biome_animal,
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
@@ -1003,6 +1004,24 @@ def hunt_cooldown_s(user_id: str) -> float:
     any event, never under 1s. The outer rate limiter and run_hunt both use this one number."""
     cd = get_total_boosts(user_id).get("cd", 0)
     return max(1.0, (HUNT_COOLDOWN - cd) * ev_hunt_cd_mult())
+
+def apply_level_ups(user_id: str) -> int:
+    """Roll surplus XP into levels and pay the level-up cash bonus. Returns levels gained."""
+    d = data[user_id]
+    before = d["level"]
+    while d["xp"] >= xp_for_level(d["level"]):
+        d["xp"]    -= xp_for_level(d["level"])
+        d["level"] += 1
+    ups = d["level"] - before
+    if ups:
+        cash = level_up_cash(before, d["level"])
+        add_money(user_id, cash, "level up", f"{before}->{d['level']}")
+        d["total_money_earned"] = d.get("total_money_earned", 0) + cash
+    return ups
+
+def level_cash_note(level: int, ups: int) -> str:
+    """' · +◈ N' for a level-up line: the bonus apply_level_ups just paid."""
+    return f" · +◈ {level_up_cash(level - ups, level):,}" if ups else ""
 
 def refresh_health(user_id: str) -> int:
     """Apply HP regen since the last check. Returns HP actually healed. Safe to
@@ -6154,11 +6173,7 @@ def collect_idle_haul(user_id: str) -> dict:
     data[user_id]["total_money_earned"]       = data[user_id].get("total_money_earned", 0) + total_val
     data[user_id]["_pending_sell"]            = (data[user_id].get("_pending_sell") or 0) + total_val
 
-    level_ups = 0
-    while data[user_id]["xp"] >= xp_for_level(data[user_id]["level"]):
-        data[user_id]["xp"]    -= xp_for_level(data[user_id]["level"])
-        data[user_id]["level"] += 1
-        level_ups += 1
+    level_ups = apply_level_ups(user_id)
 
     count = len(haul)
     idle["haul"] = []
@@ -7470,8 +7485,9 @@ def run_hunt(user_id: str, guided: bool = False) -> dict:
     total_xp  = 0
     total_val = 0
 
-    _sell_ev = ev_sell_mult() * world_mods["sell_mult"]
-    _xp_ev   = ev_xp_mult()   * world_mods["xp_mult"] * theme_xp_mult(user_id)   # Training Tuesday
+    # Hunting in person out-earns the same animal from the idle camp (ACTIVE_HUNT_*).
+    _sell_ev = ev_sell_mult() * world_mods["sell_mult"] * ACTIVE_HUNT_SELL_MULT
+    _xp_ev   = ev_xp_mult()   * world_mods["xp_mult"] * theme_xp_mult(user_id) * ACTIVE_HUNT_XP_MULT   # Training Tuesday
     _rare_p  = min(RARE_CATCH_MAX_WORLD if world_mods["rare_mult"] > 1 else 1.0,
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
                    + trophy_effect_value(user_id, "perfect_catch_pp") / 100)   # Grindylow: Webbed Claw
@@ -7570,11 +7586,7 @@ def run_hunt(user_id: str, guided: bool = False) -> dict:
     data[user_id]["_pending_sell"]      = (data[user_id].get("_pending_sell") or 0) + total_val
     session_track_hunt(user_id, catches, total_val)
 
-    level_ups = 0
-    while data[user_id]["xp"] >= xp_for_level(data[user_id]["level"]):
-        data[user_id]["xp"]    -= xp_for_level(data[user_id]["level"])
-        data[user_id]["level"] += 1
-        level_ups += 1
+    level_ups = apply_level_ups(user_id)
 
     # ── Materials: per-catch shard / direct-crate rolls ─────────────
     crate_luck_boost = boosts.get("crate_luck", 0)
@@ -8302,9 +8314,7 @@ def _animal_fight_win(user_id: str, name: str, biome: str, *, bonus_mult: float 
     d["xp"] = d.get("xp", 0) + xp_earned
     d["total_money_earned"] = d.get("total_money_earned", 0) + sell_value
     record_catch(user_id, name, d.get("tool", "Bare Hands"), sell_value)
-    level_ups = 0
-    while d["xp"] >= xp_for_level(d["level"]):
-        d["xp"] -= xp_for_level(d["level"]); d["level"] += 1; level_ups += 1
+    level_ups = apply_level_ups(user_id)
     st = d.setdefault("stats", {})
     st["animal_fights_won"] = st.get("animal_fights_won", 0) + 1
 
@@ -8470,9 +8480,9 @@ def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
     if kind == "win":
         lvl = ""
         if outcome.get("level_ups") == 1:
-            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{outcome['level']}**"
+            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{outcome['level']}**{level_cash_note(outcome['level'], 1)}"
         elif outcome.get("level_ups", 0) > 1:
-            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up ×{outcome['level_ups']}! Now level **{outcome['level']}**"
+            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up ×{outcome['level_ups']}! Now level **{outcome['level']}**{level_cash_note(outcome['level'], outcome['level_ups'])}"
         drop_line = ""
         if outcome.get("dropped_items"):
             names = ", ".join(f"{ITEMS.get(n, {}).get('emoji', '')} {n}" for n in outcome["dropped_items"])
@@ -8926,11 +8936,7 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
     data[user_id]["total_money_earned"] = data[user_id].get("total_money_earned", 0) + bounty
     data[user_id]["xp"] += xp_gain
     stats["total_xp_earned"] = stats.get("total_xp_earned", 0) + xp_gain
-    level_ups = 0
-    while data[user_id]["xp"] >= xp_for_level(data[user_id]["level"]):
-        data[user_id]["xp"] -= xp_for_level(data[user_id]["level"])
-        data[user_id]["level"] += 1
-        level_ups += 1
+    level_ups = apply_level_ups(user_id)
     drop = c.get("drop", "")
     trophy_count = 0
     if drop:
@@ -10292,7 +10298,8 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
     if result.get("level_ups"):
         ups = result["level_ups"]
         progress_block += (f"\n-# {USER_EMOJIS['level_up']} "
-                            f"Level up{'×' + str(ups) if ups > 1 else ''}! Now level **{result['level']}**")
+                            f"Level up{'×' + str(ups) if ups > 1 else ''}! Now level **{result['level']}**"
+                            f"{level_cash_note(result['level'], ups)}")
 
     extra_bits = []
     drop_bits  = []   # shard / crate drops — their own block, apart from the animal catches
@@ -10471,9 +10478,9 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
     if kind == "kill":
         lvl = ""
         if outcome.get("level_ups", 0) == 1:
-            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{outcome['level']}**"
+            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{outcome['level']}**{level_cash_note(outcome['level'], 1)}"
         elif outcome.get("level_ups", 0) > 1:
-            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up ×{outcome['level_ups']}! Now level **{outcome['level']}**"
+            lvl = f"\n-# {USER_EMOJIS['level_up']} Level up ×{outcome['level_ups']}! Now level **{outcome['level']}**{level_cash_note(outcome['level'], outcome['level_ups'])}"
         shard_line = (f"\n-# {SHARD_ICONS['mythic']} Mythic Shard recovered — fuse it in `/craft`."
                       if outcome.get("myth_shard") else "")
         hp_left = outcome.get("php", 0)
@@ -12488,9 +12495,9 @@ def build_idle_haul_result_components(user_id: str, result: dict) -> list:
 
     lvl_line = ""
     if result["level_ups"] == 1:
-        lvl_line = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{d['level']}**"
+        lvl_line = f"\n-# {USER_EMOJIS['level_up']} Level up! Now level **{d['level']}**{level_cash_note(d['level'], 1)}"
     elif result["level_ups"] > 1:
-        lvl_line = f"\n-# {USER_EMOJIS['level_up']} Level up ×{result['level_ups']}! Now level **{d['level']}**"
+        lvl_line = f"\n-# {USER_EMOJIS['level_up']} Level up ×{result['level_ups']}! Now level **{d['level']}**{level_cash_note(d['level'], result['level_ups'])}"
 
     inv_count = len(d.get("inv", []))
     sell_val  = inv_sell_value(user_id)
@@ -13338,11 +13345,7 @@ def quest_claim(user_id: str, quest_id: str, *, list_key: str = "quests") -> dic
                 milestone_gems = DAILY_QUEST_WEEKLY_GEMS
                 milestone_hit  = DAILY_QUEST_WEEKLY_TARGET
 
-        level_ups = 0
-        while d["xp"] >= xp_for_level(d["level"]):
-            d["xp"]    -= xp_for_level(d["level"])
-            d["level"] += 1
-            level_ups   += 1
+        level_ups = apply_level_ups(user_id)
 
         return {"ok": True, "xp": xp, "money": money, "gems": gems, "crate": crate, "item": item,
                 "level_ups": level_ups,
@@ -16966,9 +16969,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             if result.get("item"):
                 xp_msg += f" · 1× {result['item']}"
             if result["level_ups"] == 1:
-                xp_msg += f" · Level up! Now level **{result['level']}**"
+                xp_msg += f" · Level up! Now level **{result['level']}**{level_cash_note(result['level'], 1)}"
             elif result["level_ups"] > 1:
-                xp_msg += f" · Level up ×{result['level_ups']}! Now level **{result['level']}**"
+                xp_msg += f" · Level up ×{result['level_ups']}! Now level **{result['level']}**{level_cash_note(result['level'], result['level_ups'])}"
 
             await send_ephemeral_v2(interaction, f"{emoji('check_mark')} Quest complete! {xp_msg}", 0x2ECC71)
             if result.get("milestone_hit"):
@@ -17018,9 +17021,9 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         if result.get("item"):
             xp_msg += f" · 1× {result['item']}"
         if result["level_ups"] == 1:
-            xp_msg += f" · Level up! Now level **{result['level']}**"
+            xp_msg += f" · Level up! Now level **{result['level']}**{level_cash_note(result['level'], 1)}"
         elif result["level_ups"] > 1:
-            xp_msg += f" · Level up ×{result['level_ups']}! Now level **{result['level']}**"
+            xp_msg += f" · Level up ×{result['level_ups']}! Now level **{result['level']}**{level_cash_note(result['level'], result['level_ups'])}"
 
         await send_ephemeral_v2(interaction, f"{emoji('check_mark')} Weekly quest complete! {xp_msg}", 0x2ECC71)
         await _hunters_path_notify(interaction, owner_id, result.get("hunters_path_result"))

@@ -1413,16 +1413,16 @@ ANIMAL_DATA = {
     "British Grey Wolf":    {"value":    610, "xp": 102, "rarity": "rare",      "emoji": "🐺"},
     "Eurasian Lynx":        {"value":    720, "xp": 120, "rarity": "rare",      "emoji": "🐆"},
     # Scandinavia · woods
-    "Capercaillie":         {"value":    210, "xp": 63,  "rarity": "common",    "emoji": "🐓"},
-    "Willow Ptarmigan":     {"value":    240, "xp": 72,  "rarity": "common",    "emoji": "🐦"},
-    "Nordic Red Squirrel":  {"value":    220, "xp": 66,  "rarity": "common",    "emoji": "🐿️"},
-    "Mountain Reindeer":    {"value":    300, "xp": 90,  "rarity": "common",    "emoji": "🦌"},
-    "Pine Marten":          {"value":    400, "xp": 120, "rarity": "uncommon",  "emoji": "🦦"},
-    "Eurasian Elk":         {"value":    520, "xp": 156, "rarity": "uncommon",  "emoji": "🫎"},
-    "Scandinavian Wolf":    {"value":    380, "xp": 114, "rarity": "uncommon",  "emoji": "🐺"},
-    "Nordic Wolverine":     {"value":    460, "xp": 138, "rarity": "uncommon",  "emoji": "🦡"},
-    "Boreal Lynx":          {"value":    430, "xp": 129, "rarity": "rare",      "emoji": "🐆"},
-    "Nordic Brown Bear":    {"value":    600, "xp": 180, "rarity": "rare",      "emoji": "🐻"},
+    "Capercaillie":         {"value":    275, "xp": 63,  "rarity": "common",    "emoji": "🐓"},
+    "Willow Ptarmigan":     {"value":    310, "xp": 72,  "rarity": "common",    "emoji": "🐦"},
+    "Nordic Red Squirrel":  {"value":    285, "xp": 66,  "rarity": "common",    "emoji": "🐿️"},
+    "Mountain Reindeer":    {"value":    390, "xp": 90,  "rarity": "common",    "emoji": "🦌"},
+    "Pine Marten":          {"value":    520, "xp": 120, "rarity": "uncommon",  "emoji": "🦦"},
+    "Eurasian Elk":         {"value":    675, "xp": 156, "rarity": "uncommon",  "emoji": "🫎"},
+    "Scandinavian Wolf":    {"value":    495, "xp": 114, "rarity": "uncommon",  "emoji": "🐺"},
+    "Nordic Wolverine":     {"value":    600, "xp": 138, "rarity": "uncommon",  "emoji": "🦡"},
+    "Boreal Lynx":          {"value":    560, "xp": 129, "rarity": "rare",      "emoji": "🐆"},
+    "Nordic Brown Bear":    {"value":    780, "xp": 180, "rarity": "rare",      "emoji": "🐻"},
     # Egypt & the Sahara · small_desert
     "Desert Jerboa":        {"value":    400, "xp": 120, "rarity": "common",    "emoji": "🐭"},
     "Rüppell's Fox":        {"value":    460, "xp": 138, "rarity": "common",    "emoji": "🦊"},
@@ -3115,6 +3115,20 @@ def crate_value_scale(level: int) -> int:
             best = biome
     vals = [ANIMAL_DATA[a]["value"] for a in BIOME_ANIMALS.get(best, []) if a in ANIMAL_DATA]
     return max(1, round(sum(vals) / len(vals))) if vals else 1
+
+
+# ── Active-play rewards (2026-10-10) ──────────────────────────────────────
+# Hunting in person pays more than the same animal brought in by the idle camp, and every
+# level gained pays a cash bonus sized to the biome that level has unlocked. Neither touches
+# crate_value_scale, so crates, quests and bet caps keep their old size.
+ACTIVE_HUNT_SELL_MULT = 1.5
+ACTIVE_HUNT_XP_MULT   = 1.5
+LEVEL_UP_CASH_X       = 8      # catches' worth of ◈ per level gained
+
+
+def level_up_cash(level_before: int, level_after: int) -> int:
+    """◈ paid for going from ``level_before`` to ``level_after``."""
+    return sum(LEVEL_UP_CASH_X * crate_value_scale(lvl) for lvl in range(level_before + 1, level_after + 1))
 
 
 def open_crate(crate_name: str, value_scale: int = 1) -> dict:

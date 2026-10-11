@@ -183,5 +183,10 @@
     "key": "2026-10-10-tool-levels",
     "title": "Tools now unlock by level",
     "message": "- Buying a tool now needs a **minimum level** — the shop shows it on each locked tool (e.g. *Unlocks at level 300*) and the button turns into a locked **Lv N** button\n- The Slingshot is level 1, so new hunters can still buy their first tool right away; a few examples: Spear **10**, Longbow **110**, Musket **235**, Shotgun **300**, Plasma Caster **385**, Soul Snare **510**, Cosmic RPG **830**\n- Tools you already own are not affected"
+  },
+  {
+    "key": "2026-10-10-active-hunting-pays",
+    "title": "Hunting pays more — and every level pays out",
+    "message": "You told us the grind felt slow and the camp was out-earning you. Fixed:\n- **Hunting in person now pays +50% coins and +50% XP** on every catch. The Hunting Camp is unchanged, so going out yourself is clearly the faster way to earn and level\n- **Every level-up pays a cash bonus** — about 8 catches' worth of ◈ from the best biome you've unlocked, paid straight to your balance and shown on the level-up line. It counts for levels from hunts, camp hauls, fights and quests\n- **The Woods pay about 30% more per animal** — it used to pay slightly less than the Forest before it, so reaching level 25 is now a real step up\n-# Crates, quests and bet limits are the same size as before."
   }
 ]
