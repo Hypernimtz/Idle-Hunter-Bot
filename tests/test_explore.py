@@ -179,6 +179,90 @@ def test_a_fully_walled_in_start_is_rerolled():
         app._ex_tile = real
 
 
+# ── the camera: the whole field on screen, the hunter walks toward the border ──
+
+def test_the_picture_always_shows_a_full_window_of_land_and_the_hunter_walks_to_the_edge():
+    _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        snap = app._ex_snapshot(U)
+        assert (snap["cx"], snap["cy"]) == (0, 0) and (snap["hx"], snap["hy"]) == (2, 0)       # starts top-middle of the 5x5 field
+        assert all(k != "void" for row in snap["cells"] for k in row) and snap["edges"] == {"l": True, "t": True, "r": True, "b": True}
+        st["steps"] = 20                                                                         # a 17x17 field
+        st["x"], st["y"] = 5, 5
+        snap = app._ex_snapshot(U)
+        assert (snap["hx"], snap["hy"]) == (2, 2) and not any(snap["edges"].values())            # mid-field: centred, no border
+        st["x"], st["y"] = -6, -6                                                                # the north-west corner
+        snap = app._ex_snapshot(U)
+        assert (snap["hx"], snap["hy"]) == (0, 0) and snap["edges"]["l"] and snap["edges"]["t"] and not snap["edges"]["r"]
+        st["x"], st["y"] = 10, 3                                                                 # the east wall
+        snap = app._ex_snapshot(U)
+        assert snap["hx"] == 4 and snap["hy"] == 2 and snap["edges"]["r"]
+        for row in snap["cells"]:
+            assert "void" not in row
+
+
+def test_the_border_is_drawn_only_where_the_world_ends():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    app._ex_art.clear()
+    try:
+        _fresh()
+        with terrain():
+            st = app._ex_state(U)
+            st["animals"] = []
+            amber = lambda px: px[0] > 200 and 150 < px[1] < 230 and px[2] < 130
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)), (480, 480))                            # the start: walls on all four sides
+            W = im.size[0]
+            assert amber(im.getpixel((W // 2, 2))) and amber(im.getpixel((W // 2, W - 3)))
+            assert amber(im.getpixel((2, W // 2))) and amber(im.getpixel((W - 3, W // 2)))
+            st["steps"] = 20
+            st["x"], st["y"] = 5, 5                                                              # mid-field: no border in the picture
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)), (480, 480))
+            assert not any(amber(im.getpixel(p)) for p in ((W // 2, 2), (W // 2, W - 3), (2, W // 2), (W - 3, W // 2)))
+    finally:
+        app._ex_art.update(saved)
+
+
+# ── a blocked move is answered privately ──
+
+def test_a_blocked_move_is_an_ephemeral_message_and_leaves_the_panel_alone():
+    _fresh()
+    with terrain({(2, 1): "tree"}), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        st["msg"] = "an old line"
+        with tr.Harness() as h:
+            run(app._dispatch_component(tr.FakeInteraction(U, f"explore:s:{U}")))               # into a tree
+            assert any("tree blocks" in m for m in h.ephemerals) and not h.panels
+            run(app._dispatch_component(tr.FakeInteraction(U, f"explore:n:{U}")))               # off the north edge
+            assert any("edge of the known land" in m for m in h.ephemerals) and not h.panels
+        assert (st["x"], st["y"], st["steps"]) == (2, 0, 0) and st["msg"] == ""
+        run_ = app.explore_enabled(U)
+        assert run_
+
+
+def test_cooldowns_and_empty_shots_are_private_too_and_a_real_move_still_updates_the_panel():
+    _fresh()
+
+    async def no_image(uid):
+        return None
+    real = app.explore_image
+    app.explore_image = no_image
+    try:
+        with terrain(), still_world():
+            st = app._ex_state(U)
+            st["animals"] = []
+            with tr.Harness() as h:
+                run(app._dispatch_component(tr.FakeInteraction(U, f"explore:fire:{U}")))        # nothing in view
+                assert any("Nothing in view" in m for m in h.ephemerals) and not h.panels
+                run(app._dispatch_component(tr.FakeInteraction(U, f"explore:s:{U}")))           # a real step
+                assert h.panels and st["steps"] == 1
+    finally:
+        app.explore_image = real
+
+
 # ── bushes hide animals ─────────────────────────────────────
 
 def test_a_bush_hides_an_animal_until_you_are_next_to_it():
@@ -393,7 +477,8 @@ def test_a_hit_is_a_real_single_animal_hunt_and_lands_in_the_catch_list():
         assert st["bag"][0]["name"] == COMMON
         assert all(a["name"] != COMMON or (a["x"], a["y"]) != (st["x"] + 1, st["y"]) for a in st["animals"])   # the one you shot is gone
         panel = json.dumps(app.build_explore_components(U), ensure_ascii=False)
-        assert "Caught this trip (1)" in panel and COMMON in panel and "You caught" in panel
+        assert "You caught" in panel and COMMON in panel and "Explore bonus" in panel
+        assert "Caught this trip" not in panel and "🎒" not in panel                # no running inventory in the panel
         # the cooldown is the real hunt cooldown
         _calm(st, name=COMMON, dx=1)
         assert app.explore_fire(U)["kind"] == "cooldown"
@@ -450,7 +535,7 @@ def test_the_expedition_ends_after_its_step_budget_and_a_new_one_resets_everythi
         assert app.explore_move(U, "s")["kind"] == "over" and (st["x"], st["y"]) == (x, y)
         assert app.explore_fire(U)["kind"] == "over"
         blob = json.dumps(app.build_explore_components(U), ensure_ascii=False)
-        assert blob.count('"disabled": true') >= 5 and "Caught this trip (1)" in blob
+        assert blob.count('"disabled": true') >= 5 and "Expedition over" in blob and COMMON in blob
         app.explore_new(U)
         st2 = app.data[U]["explore"]
         assert st2["steps"] == 0 and st2["bag"] == [] and (st2["x"], st2["y"]) == (2, 0) and not app._ex_over(st2)

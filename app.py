@@ -7619,13 +7619,15 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
         if is_first_rare:
             data[user_id]["stats"]["first_rare_ts"] = int(now)
 
-        catches.append({"animal": animal, "sell_value": sell_value,
-                        "xp_earned": xp_earned, "is_rare": is_rare,
+        _pm = EXPLORE_REWARD_MULT if forced_animal else 1       # Explore shots pay much more (see EXPLORE_REWARD_MULT)
+        pay_val, pay_xp = int(sell_value * _pm), int(xp_earned * _pm)
+        catches.append({"animal": animal, "sell_value": pay_val,
+                        "xp_earned": pay_xp, "is_rare": is_rare,
                         "is_new_species": is_new_species,
                         "is_personal_best": is_personal_best,
                         "is_first_rare": is_first_rare})
-        total_xp  += xp_earned
-        total_val += sell_value
+        total_xp  += pay_xp
+        total_val += pay_val
         data[user_id]["inv"].append(animal)
         record_catch(user_id, animal, tool_name, sell_value)
         _rs = data[user_id].setdefault("stats", {})
@@ -7636,7 +7638,7 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
             data[user_id]["stats"]["ammo_used"] = data[user_id]["stats"].get("ammo_used", 0) + 1
             _note_ammo_type(user_id, ammo_name)
         data[user_id]["stats"]["total_xp_earned"] = \
-            data[user_id]["stats"].get("total_xp_earned", 0) + xp_earned
+            data[user_id]["stats"].get("total_xp_earned", 0) + pay_xp
 
     if catches:
         trophy_heal(user_id, "hunt_hp_restore")   # Vampires: Coffin Nail (rate-limited)
@@ -8346,6 +8348,8 @@ EXPLORE_TREE_PCT      = 18
 EXPLORE_STONE_PCT     = 8
 EXPLORE_BUSH_PCT      = 10
 EXPLORE_CHEST_PCT     = 3
+EXPLORE_REWARD_MULT   = 10    # money AND XP multiplier on an animal caught in Explore: you catch far fewer per minute
+                              # than with the Hunt button (one shot, one animal, plus the walking), so each one pays a lot more
 EXPLORE_CHESTS_PER_DAY = 10   # chests that pay out per player per day; later ones are empty
 EXPLORE_CHEST_TIERS   = ("common", "uncommon", "rare", "epic")        # drawn with the matching crate art
 EXPLORE_CHEST_WEIGHTS = (62, 26, 10, 2)
@@ -8354,6 +8358,7 @@ EXPLORE_ATTACK_COOLDOWN = 2   # a predator that has just struck backs off for th
 EXPLORE_SHOT_FALLOFF  = 0.12  # hit chance lost per tile of distance beyond the first
 
 _EX_DIRS   = {"n": (0, -1), "s": (0, 1), "w": (-1, 0), "e": (1, 0)}
+_EX_QUIET  = ("bump", "blocked", "none", "cooldown", "over")     # outcomes that change nothing: answered privately
 _EX_ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"]          # 45-degree sectors, y grows downward
 _EX_NEIGHBOURS = [(0, -1), (-1, 0), (1, 0), (0, 1)]     # animals walk 4-way like you, so none can slip through a diagonal gap you can't
 _EX_WALKABLE = ("grass", "bush", "chest")
@@ -8442,10 +8447,25 @@ def _ex_sector(dx: int, dy: int) -> int:
     return round(_math.atan2(dy, dx) / (_math.pi / 4)) % 8
 
 
+def _ex_cam(st: dict) -> tuple:
+    """Top-left tile of the picture. The window is centred on the hunter until it would show past the border;
+    there it stops, so the whole field stays on screen and the hunter walks toward the edge of the picture."""
+    x0, y0, x1, y1 = _ex_bounds(st)
+    n = EXPLORE_VIEW * 2 + 1
+    return (max(x0, min(st["x"] - EXPLORE_VIEW, x1 - n + 1)),
+            max(y0, min(st["y"] - EXPLORE_VIEW, y1 - n + 1)))
+
+
+def _ex_in_view(st: dict, a: dict) -> bool:
+    cx, cy = _ex_cam(st)
+    n = EXPLORE_VIEW * 2 + 1
+    return cx <= a["x"] < cx + n and cy <= a["y"] < cy + n
+
+
 def _ex_seen(st: dict, a: dict) -> bool:
-    """In the 5x5 window — and not hidden: a bush covers an animal until you're right next to it."""
+    """On screen — and not hidden: a bush covers an animal until you're right next to it."""
     d = _ex_dist(a["x"], a["y"], st["x"], st["y"])
-    return d <= EXPLORE_VIEW and (_ex_kind(st, a["x"], a["y"]) != "bush" or d <= 1)
+    return _ex_in_view(st, a) and (_ex_kind(st, a["x"], a["y"]) != "bush" or d <= 1)
 
 
 def _ex_visible(st: dict) -> list[dict]:
@@ -8547,7 +8567,7 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
         if _ex_seen(st, a):
             a["clue"], a["pd"] = 0, d
             continue
-        if d <= EXPLORE_VIEW:                       # right there, but hidden in a bush
+        if _ex_in_view(st, a):                      # on screen, but hidden in a bush
             if a["clue"] == 0:
                 lines.append("🌿 A bush nearby is rustling — something is hiding in it.")
             a["clue"], a["pd"] = EXPLORE_CLUE_TTL, d
@@ -8718,7 +8738,8 @@ def explore_fire(user_id: str) -> dict:
     for c in res.get("catches", []):
         st.setdefault("bag", []).append({"name": c["animal"], "value": c["sell_value"], "perfect": bool(c.get("is_rare"))})
         lines.append(f"{emoji('target')} **You caught {animal_emoji(c['animal'])} {c['animal']}!** "
-                     f"◈ {c['sell_value']:,} · +{c['xp_earned']:,} XP" + (" · ✨ Perfect Catch" if c.get("is_rare") else ""))
+                     f"◈ {c['sell_value']:,} · +{c['xp_earned']:,} XP · ×{EXPLORE_REWARD_MULT} Explore bonus"
+                     + (" · ✨ Perfect Catch" if c.get("is_rare") else ""))
     if res.get("level_ups"):
         lines.append(f"{USER_EMOJIS['level_up']} **Level up!** Now level **{res['level']}**.")
     if res.get("crate_drops"):
@@ -8732,25 +8753,32 @@ def explore_fire(user_id: str) -> dict:
 
 
 def _ex_snapshot(user_id: str) -> dict:
-    """Everything the renderer needs, as plain data (it runs in a worker thread)."""
+    """Everything the renderer needs, as plain data (it runs in a worker thread). Positions are window tiles."""
     st = _ex_state(user_id)
     px, py = st["x"], st["y"]
+    cx, cy = _ex_cam(st)
+    n = EXPLORE_VIEW * 2 + 1
     seen = _ex_visible(st)
     animals, clues = [], []
     for a in st["animals"]:
         stats = animal_combat_stats(a["name"], st["biome"])
-        dx, dy = a["x"] - px, a["y"] - py
         if a in seen:
-            animals.append({"dx": dx, "dy": dy, "name": a["name"], "beh": stats["behavior"],
+            animals.append({"tx": a["x"] - cx, "ty": a["y"] - cy, "name": a["name"], "beh": stats["behavior"],
                             "mood": a.get("mood", "calm"), "hp": stats["hp"]})
         elif a["clue"] > 0:
-            clues.append({"dx": dx, "dy": dy, "d": max(2, 2 * round(_ex_dist(a["x"], a["y"], px, py) / 2))})
-    V = EXPLORE_VIEW
-    cells = [[_ex_kind(st, px + dx, py + dy) for dx in range(-V, V + 1)] for dy in range(-V, V + 1)]
-    chests = {(dx + V, dy + V): _ex_chest_tier(st["seed"], px + dx, py + dy)
-              for dy in range(-V, V + 1) for dx in range(-V, V + 1) if cells[dy + V][dx + V] == "chest"}
-    return {"seed": st["seed"], "biome": st["biome"], "x": px, "y": py, "animals": animals, "clues": clues,
-            "cells": cells, "chests": chests}
+            clues.append({"dx": a["x"] - px, "dy": a["y"] - py,
+                          "d": max(2, 2 * round(_ex_dist(a["x"], a["y"], px, py) / 2))})
+    reach = _ex_reach(st)
+    def _shown(x, y):
+        k = _ex_kind(st, x, y)
+        return "grass" if k == "chest" and (x, y) not in reach else k          # a walled-in chest is not offered
+    cells = [[_shown(cx + tx, cy + ty) for tx in range(n)] for ty in range(n)]
+    chests = {(tx, ty): _ex_chest_tier(st["seed"], cx + tx, cy + ty)
+              for ty in range(n) for tx in range(n) if cells[ty][tx] == "chest"}
+    x0, y0, x1, y1 = _ex_bounds(st)
+    edges = {"l": cx == x0, "t": cy == y0, "r": cx + n - 1 == x1, "b": cy + n - 1 == y1}      # where the world ends
+    return {"seed": st["seed"], "biome": st["biome"], "cx": cx, "cy": cy, "hx": px - cx, "hy": py - cy,
+            "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges}
 
 
 # biome look: ground (two greens/sands…), tree canopy, trunk, stone; pine=True draws conifers.
@@ -8869,14 +8897,14 @@ def _ex_sprite_fallback(name: str, S: int):
     return im
 
 
-def _ex_vignette(size: int):
-    v = _ex_vignette_cache.get(size)
+def _ex_vignette(w: int, h: int):
+    v = _ex_vignette_cache.get((w, h))
     if v is None:
-        g = _PILImage.radial_gradient("L").resize((size, size), _PILImage.BICUBIC)       # black centre -> white edge
+        g = _PILImage.radial_gradient("L").resize((w, h), _PILImage.BICUBIC)       # black centre -> white edge
         a = g.point(lambda p: max(0, p - 110) * 0.85)
-        v = _PILImage.new("RGBA", (size, size), (0, 0, 0, 0))
+        v = _PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
         v.putalpha(a)
-        _ex_vignette_cache[size] = v
+        _ex_vignette_cache[(w, h)] = v
     return v
 
 
@@ -8891,42 +8919,36 @@ def _ex_pasted(canvas, im, tx: int, ty: int, T: int, size: float, feet: float = 
 
 
 def _ex_render(snap: dict) -> bytes:
-    """Draw the 5x5 window as a PNG. Layers, bottom to top: grass tile, trees / rocks / bushes / chests, animals,
-    the hunter, edge fade, trail footprints, clue arrows. Uses the uploaded emoji art (EXPLORE_ART); anything that
-    failed to download is drawn procedurally instead. Pure function of `snap` + the art caches (thread-safe)."""
+    """Draw the map window as a 5x5 PNG: grass tile at the bottom, then trees / rocks / bushes / chests, animals,
+    the hunter, edge fade, trail footprints and clue arrows. The window never shows past the edge of the world: near
+    it the picture stops moving and the hunter walks toward the border, which is drawn as an amber line. Uses the
+    uploaded emoji art (EXPLORE_ART); anything that failed to download is drawn procedurally instead. Pure function
+    of `snap` + the art caches (thread-safe)."""
     T = EXPLORE_TILE_PX
     N = EXPLORE_VIEW * 2 + 1
     SS = 2
     pal = _EX_PAL.get(snap["biome"], _EX_PAL["village"])
-    canvas = _PILImage.new("RGBA", (T * N, T * N), (12, 15, 20, 255))
+    canvas = _PILImage.new("RGBA", (T * N, T * N), pal["g1"] + (255,))
     grass_art = _ex_art.get("grass")
     tint = None if snap["biome"] in ("village", "forest", "jungle") else pal["g1"]
     cells = snap["cells"]
-    # 1 — the grass tile is the last (bottom) layer under everything; past the border there is only dark fog
+    # 1 — the grass tile is the last (bottom) layer under everything
     for ty in range(N):
         for tx in range(N):
-            wx, wy = snap["x"] + tx - EXPLORE_VIEW, snap["y"] + ty - EXPLORE_VIEW
-            if cells[ty][tx] == "void":
-                fog = _PILImage.new("RGBA", (T, T), (12, 15, 20, 255))
-                fd = _PILDraw.Draw(fog, "RGBA")
-                for k in range(-T, T, 14):
-                    fd.line([(k, T), (k + T, 0)], fill=(255, 255, 255, 10), width=2)
-                canvas.alpha_composite(fog, (tx * T, ty * T))
-                continue
             if grass_art is not None:
                 tile = _ex_fit(grass_art, T)
                 if tint:                                            # a gentle biome tint so deserts and snow still read
                     tile = _PILImage.blend(tile, _PILImage.new("RGBA", (T, T), tint + (255,)), 0.32)
             else:
-                tile = _ex_ground(pal, snap["seed"], wx, wy, T * SS).resize((T, T), _PILImage.LANCZOS)
+                tile = _ex_ground(pal, snap["seed"], snap["cx"] + tx, snap["cy"] + ty, T * SS).resize((T, T), _PILImage.LANCZOS)
             canvas.alpha_composite(tile, (tx * T, ty * T))
     # 2 — trees, rocks, bushes (a bush covers whatever stands in it), chests
     for ty in range(N):
         for tx in range(N):
             kind = cells[ty][tx]
-            if kind in ("grass", "void"):
+            if kind == "grass":
                 continue
-            wx, wy = snap["x"] + tx - EXPLORE_VIEW, snap["y"] + ty - EXPLORE_VIEW
+            wx, wy = snap["cx"] + tx, snap["cy"] + ty
             art_key = {"tree": "tree", "stone": "rock", "bush": "bush"}.get(kind) \
                 or (f"chest{snap['chests'].get((tx, ty), 0)}" if kind == "chest" else "")
             art = _ex_art.get(art_key)
@@ -8943,19 +8965,10 @@ def _ex_render(snap: dict) -> bytes:
             else:
                 _ex_tree(t2, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
             canvas.alpha_composite(t2.resize((T, T), _PILImage.LANCZOS), (tx * T, ty * T))
-    # 3 — the border: a bright edge on every tile side that faces the fog
     d = _PILDraw.Draw(canvas, "RGBA")
-    for ty in range(N):
-        for tx in range(N):
-            if cells[ty][tx] == "void":
-                continue
-            for ddx, ddy, box in ((-1, 0, (0, 0, 3, T)), (1, 0, (T - 4, 0, T, T)), (0, -1, (0, 0, T, 3)), (0, 1, (0, T - 4, T, T))):
-                nx, ny = tx + ddx, ty + ddy
-                if 0 <= nx < N and 0 <= ny < N and cells[ny][nx] == "void":
-                    d.rectangle([tx * T + box[0], ty * T + box[1], tx * T + box[2], ty * T + box[3]], fill=(255, 196, 80, 230))
-    # 4 — animals (small, feet on the tile's baseline; bigger animals a little larger)
+    # 3 — animals (small, feet on the tile's baseline; bigger animals a little larger)
     for a in snap["animals"]:
-        tx, ty = EXPLORE_VIEW + a["dx"], EXPLORE_VIEW + a["dy"]
+        tx, ty = a["tx"], a["ty"]
         size = .42 + .26 * min(1.0, a["hp"] / 100)
         cx, cy = tx * T, ty * T
         d.ellipse([cx + T * .22, cy + T * .78, cx + T * .78, cy + T * .96], fill=(0, 0, 0, 55))
@@ -8967,30 +8980,45 @@ def _ex_render(snap: dict) -> bytes:
         if a["mood"] == "flee":
             d.text((cx + T - 16, cy + T * .30), "!", font=_ex_font(26), fill=(255, 240, 120, 255), anchor="mm",
                    stroke_width=3, stroke_fill=(0, 0, 0, 255))
-    # 5 — the hunter in the middle (a "huntress" key will slot in here once that art exists)
-    hx = hy = EXPLORE_VIEW
+    # 4 — the hunter (a "huntress" key will slot in here once that art exists)
+    hx, hy = snap["hx"], snap["hy"]
     d.ellipse([hx * T + T * .22, hy * T + T * .82, hx * T + T * .78, hy * T + T * .99], fill=(0, 0, 0, 55))
     hero = _ex_art.get(snap.get("hero", "hunter")) or _ex_art.get("hunter")
     if hero is None:
         hero = _PILImage.new("RGBA", (T * SS, T * SS), (0, 0, 0, 0))
         _ex_player(hero)
     _ex_pasted(canvas, hero, hx, hy, T, 1.0, feet=.98)
-    canvas.alpha_composite(_ex_vignette(T * N))
-    # 6 — trail footprints on the edge tile that lies toward each clue (above the fade so they stay visible)
+    W = H = T * N
+    canvas.alpha_composite(_ex_vignette(W, H))
+    d = _PILDraw.Draw(canvas, "RGBA")
+    # 5 — trail footprints on the edge tile that lies toward each clue (above the fade so they stay visible)
     trail = _ex_art.get("trail")
     for c in snap["clues"]:
         m = max(abs(c["dx"]), abs(c["dy"])) or 1
         k = EXPLORE_VIEW / m
-        tx, ty = EXPLORE_VIEW + round(c["dx"] * k), EXPLORE_VIEW + round(c["dy"] * k)
-        if trail is not None and cells[ty][tx] != "void":
+        tx = max(0, min(N - 1, hx + round(c["dx"] * k)))
+        ty = max(0, min(N - 1, hy + round(c["dy"] * k)))
+        if trail is not None and (tx, ty) != (hx, hy):
             _ex_pasted(canvas, trail, tx, ty, T, .8, feet=.9)
-    # 7 — clue arrows: a badge on the edge of the window, pointing the way, with a rough distance
-    W = T * N
+    d.rectangle([0, 0, W - 1, H - 1], outline=(18, 18, 24, 255), width=4)
+    # 6 — the edge of the world: an amber line on every side where the land stops
+    amber = (255, 196, 80, 235)
+    e = snap["edges"]
+    if e["t"]:
+        d.rectangle([0, 0, W, 5], fill=amber)
+    if e["b"]:
+        d.rectangle([0, H - 6, W, H], fill=amber)
+    if e["l"]:
+        d.rectangle([0, 0, 5, H], fill=amber)
+    if e["r"]:
+        d.rectangle([W - 6, 0, W, H], fill=amber)
+    # 7 — clue arrows: a badge toward each clue, with a rough distance
+    hcx, hcy = (hx + .5) * T, (hy + .5) * T
     for c in snap["clues"]:
         ang = _math.atan2(c["dy"], c["dx"])
-        R = W / 2 - 38
-        bx = max(40, min(W - 40, W / 2 + _math.cos(ang) * R))
-        by = max(26, min(W - 26, W / 2 + _math.sin(ang) * R))
+        R = W / 2
+        bx = max(44, min(W - 44, hcx + _math.cos(ang) * R))
+        by = max(26, min(H - 26, hcy + _math.sin(ang) * R))
         d.rounded_rectangle([bx - 38, by - 20, bx + 38, by + 20], radius=18, fill=(16, 16, 22, 215),
                             outline=(255, 255, 255, 235), width=2)
         ux, uy = _math.cos(ang), _math.sin(ang)
@@ -9002,7 +9030,6 @@ def _ex_render(snap: dict) -> bytes:
         d.polygon([tip, (neck[0] - uy * 8, neck[1] + ux * 8), (neck[0] + uy * 8, neck[1] - ux * 8)],
                   fill=(255, 226, 110, 255))
         d.text((bx + 14, by), f"~{c['d']}", font=_ex_font(20), fill=(255, 255, 255, 255), anchor="mm")
-    d.rectangle([0, 0, W - 1, W - 1], outline=(18, 18, 24, 255), width=4)
     buf = _io.BytesIO()
     canvas.convert("RGB").save(buf, "PNG")
     return buf.getvalue()
@@ -9116,16 +9143,16 @@ async def explore_show(interaction, user_id: str, *, new: bool = False) -> None:
             await smart_update_v2(interaction, plain)
 
 
-def _ex_bag_line(st: dict) -> str:
-    """'Caught so far' — grouped by species, newest expedition only."""
+def _ex_summary(st: dict) -> str:
+    """The wrap-up shown once an expedition is over (the panel never keeps a running inventory)."""
     bag = st.get("bag", [])
     if not bag:
-        return "🎒 **Caught this trip:** nothing yet"
+        return "🧭 **Expedition over** — you came back empty-handed."
     counts: dict = {}
     for b in bag:
         counts[b["name"]] = counts.get(b["name"], 0) + 1
     names = ", ".join(f"{animal_emoji(n)} {n}" + (f" ×{c}" if c > 1 else "") for n, c in counts.items())
-    return f"🎒 **Caught this trip ({len(bag)}):** {names} · ◈ {sum(b['value'] for b in bag):,}"
+    return f"🧭 **Expedition over** — you caught {names} · ◈ {sum(b['value'] for b in bag):,}"
 
 
 def build_explore_components(user_id: str, image: bool = True) -> list:
@@ -9134,31 +9161,40 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     hp, mx = player_hp(user_id)
     seen = _ex_visible(st)
     over = _ex_over(st)
-    lines = []
+    nearby = []
     for a in seen:
         d = _ex_dist(a["x"], a["y"], px, py)
         beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
         arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
         mood = {"flee": "bolting", "stalk": "stalking you"}.get(a.get("mood"), beh if beh != "passive" else "calm")
-        lines.append(f"{arrow} {animal_emoji(a['name'])} **{a['name']}** · {d} tile{'s' if d != 1 else ''} away · {mood}")
+        nearby.append(f"{arrow}  {animal_emoji(a['name'])} **{a['name']}** · {d} tile{'s' if d != 1 else ''} away · {mood}")
     for a in st["animals"]:
         if a["clue"] > 0 and a not in seen:
             d = _ex_dist(a["x"], a["y"], px, py)
             beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
             arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
             label = "Rustling bush" if d <= EXPLORE_VIEW else _EX_CLUE_LABEL.get(beh, "Nearby movement")
-            lines.append(f"{arrow} **{label}** · roughly {max(2, 2 * round(d / 2))} tiles away")
-    legend = "\n".join(f"-# {ln}" for ln in lines) or "-# Nothing nearby. Keep wandering."
+            nearby.append(f"{arrow}  **{label}** · roughly {max(2, 2 * round(d / 2))} tiles away")
     msg = "\n".join(ln for ln in st.get("msg", "").split("\n") if ln.strip())
     x0, y0, x1, y1 = _ex_bounds(st)
     steps_left = max(0, EXPLORE_MAX_STEPS - st.get("steps", 0))
-    head = f"### {BIOME_EMOJIS.get(st['biome'], '')} Explore — {BIOME_NAMES.get(st['biome'], st['biome'])}"
-    body = ((f"{msg}\n\n" if msg else "")
-            + f"{_ex_bag_line(st)}\n"
-            + f"{legend}\n"
-            + f"-# 🗺 **{x1 - x0 + 1}×{y1 - y0 + 1}** area (widens every {EXPLORE_GROW_EVERY} steps) · "
-              f"**{steps_left}** steps left · {emoji('hp') or '❤️'} **{hp}/{mx}** HP"
-            + (f"\n-# {_gear_summary(user_id)}" if FEATURE_GEAR_ROLES else ""))
+    tool = data[user_id].get("tool", "Bare Hands")
+    role = tool_role_info(tool)
+    foot = (f"{emoji('hp') or '❤️'} **{hp}/{mx}**  ·  🧭 **{steps_left}** steps left  ·  🗺 {x1 - x0 + 1}×{y1 - y0 + 1}"
+            + (f"  ·  {role['emoji']} {tool}" if FEATURE_GEAR_ROLES else ""))
+    gap = {"type": 14, "divider": False, "spacing": 2}
+    blocks: list = [{"type": 10, "content": f"### {BIOME_EMOJIS.get(st['biome'], '')} Explore — {BIOME_NAMES.get(st['biome'], st['biome'])}"}]
+    if image:
+        blocks.append({"type": 12, "items": [{"media": {"url": "attachment://explore.png"}, "description": "The map around you"}]})
+    if msg:
+        blocks += [gap, {"type": 10, "content": msg}]
+    if over:
+        blocks += [gap, {"type": 10, "content": _ex_summary(st)}]
+    if nearby:
+        blocks += [gap, {"type": 10, "content": "\n".join(nearby)}]
+    elif not over:
+        blocks += [{"type": 10, "content": "-# Nothing nearby — keep wandering."}]
+    blocks += [{"type": 14, "divider": True, "spacing": 2}, {"type": 10, "content": f"-# {foot}"}]
 
     def _b(label, sub, style=2, emj=None, disabled=False):
         b = {"type": 2, "style": style, "label": label, "disabled": disabled, "custom_id": f"explore:{sub}:{user_id}"}
@@ -9166,11 +9202,8 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
             b["emoji"] = emoji_partial(emj)
         return b
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
-        {"type": 10, "content": head},
-        *([{"type": 12, "items": [{"media": {"url": "attachment://explore.png"}, "description": "The map around you"}]}]
-          if image else []),
-        {"type": 10, "content": body},
-        {"type": 14, "divider": True, "spacing": 1},
+        *blocks,
+        {"type": 14, "divider": False, "spacing": 1},
         {"type": 1, "components": [_b("◀", "w", disabled=over), _b("▲", "n", disabled=over),
                                    _b("▼", "s", disabled=over), _b("▶", "e", disabled=over)]},
         {"type": 1, "components": [_b("Aim & Fire", "fire", 4, "target", disabled=not seen or over),
@@ -18663,6 +18696,13 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 out = explore_move(owner_id, sub)
             else:
                 out = {"kind": "none"}
+        if out.get("kind") in _EX_QUIET:
+            # a wall, the border, a cooldown...: nothing in the world changed, so say it privately and leave the panel be
+            async with user_transaction(owner_id):
+                _st = data[owner_id].get("explore") or {}
+                note, _st["msg"] = _st.get("msg", ""), ""
+            await send_ephemeral_v2(interaction, note or "You can't do that right now.", 0xE67E22)
+            return
         result = out.get("result")
         if result and result.get("ok"):
             await track_activity(owner_id, "hunt", catches=len(result.get("catches", [])),
