@@ -208,5 +208,10 @@
     "key": "2026-10-12-explore-hunt",
     "title": "Explore Mode now replaces Hunt: weapon range, targets and a 7x7 map",
     "message": "**Explore Mode (beta) is now how you hunt while it's on.** The separate `/explore` command is gone: with **Explore Mode (beta)** switched on in `/settings`, `/hunt` and every **Hunt** button open the map instead of an instant hunt. Turn it off and Hunt works the old way.\n\n- **Bigger map:** the picture is now a **7x7 field** (and every expedition starts on a 7x7 arena that widens as you walk). The dark lines between the grass tiles are gone.\n- **Little yellow boxes** show the tiles you can step onto.\n- **Every weapon has an attack range** (1-3 tiles, diagonals count). Fire no longer picks the nearest animal for you: you shoot your **target**, and only if it is inside your range. A **yellow circle** marks the target; the **Target** button switches between animals in reach.\n- The new **Info** button shows your weapon's range as a picture of the 7x7 field, your hit chance per tile, and a list of every tool's reach.\n- Hit chance still drops a little for every tile of distance. Shots are real hunts (ammo, cooldown, quests) and Explore catches still pay 10x."
+  },
+  {
+    "key": "2026-10-12-explore-chests",
+    "title": "Explore chests: no daily limit, but much rarer",
+    "message": "The **10 chests per day** limit on the Explore map is gone. Instead, chests are now **much rarer** on the map (roughly a quarter as common as before), so finding one feels like a crate drop from a hunt. Every chest you open pays out."
   }
 ]

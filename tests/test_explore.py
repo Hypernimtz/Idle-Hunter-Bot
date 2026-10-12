@@ -379,7 +379,7 @@ def test_walking_onto_a_chest_opens_it_once_and_pays_something_small():
         assert "chest" not in st["msg"]
 
 
-def test_chests_can_hold_ammo_bandages_and_items_and_run_dry_at_the_daily_cap():
+def test_chests_can_hold_ammo_bandages_and_items_and_never_run_dry():
     d = _fresh(tool="Shortbow", owned_tools=["Shortbow"])
     ammo = gd.get_ammo_for_tool("Shortbow")[0]
     d["ammo_inv"], d["equipped_ammo"] = {ammo: 5}, ammo
@@ -397,10 +397,16 @@ def test_chests_can_hold_ammo_bandages_and_items_and_run_dry_at_the_daily_cap():
         assert "Bandage" in app._ex_open_chest(U, st, 9, 6)
     finally:
         random.choices = real
-    d["explore_chests"] = {"d": gd.today_utc(), "n": app.EXPLORE_CHESTS_PER_DAY}
-    assert "empty" in app._ex_open_chest(U, st, 9, 5)
-    d["explore_chests"] = {"d": "2000-01-01", "n": 99}                         # a new day resets the count
-    assert "empty" not in app._ex_open_chest(U, st, 9, 4)
+    for i in range(30):                                                        # no daily limit: they never run dry
+        assert "empty" not in app._ex_open_chest(U, st, 9, 100 + i)
+    assert not hasattr(app, "EXPLORE_CHESTS_PER_DAY") and "explore_chests" not in d
+
+
+def test_chests_are_rare_on_the_map():
+    n = sum(1 for seed in range(40) for x in range(19) for y in range(19)
+            if app._ex_tile(seed, x, y) == "chest")
+    share = n / (40 * 19 * 19)
+    assert 0.003 < share < 0.015, share                                          # about 0.8% of tiles, was 3%
 
 
 def test_chests_are_drawn_with_crate_art_and_richer_crates_pay_a_little_more():
@@ -419,7 +425,6 @@ def test_chests_are_drawn_with_crate_art_and_richer_crates_pay_a_little_more():
     try:
         paid = {}
         for tier in (0, 3):
-            d["explore_chests"] = {"d": gd.today_utc(), "n": 0}
             t0 = app._ex_chest_tier
             app._ex_chest_tier = lambda seed, x, y, tier=tier: tier
             m0 = d["money"]

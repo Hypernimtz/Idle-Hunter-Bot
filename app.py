@@ -8316,7 +8316,7 @@ _TRACK_BONUS_BLURB = {
 # start a new one. Trees and boulders block movement. Leafy bushes are walkable and HIDE an animal standing in them
 # until you are next to it. An animal you can't see leaves a CLUE (an arrow badge + footprints on the picture, and a
 # rough distance — never its species) that fades unless you keep closing in. Animals only ever spawn where you can
-# walk to them. Walk onto a chest to open it (loot is small and capped per day). Every tool has an attack RANGE
+# walk to them. Walk onto a chest to open it (they are rare and the loot is small; there is no daily limit). Every tool has an attack RANGE
 # (game_data.TOOL_RANGE, in tiles): you can only shoot an animal inside it. The yellow circle on the picture marks your
 # TARGET, small yellow boxes mark where you can step, and the Info button explains the range with a 7x7 picture. Fire at
 # the target — a shot is a real hunt: `run_hunt(forced_animal=...)` pays out, spends ammo, honours the cooldown and
@@ -8350,10 +8350,9 @@ EXPLORE_MAX_ANIMALS   = 3
 EXPLORE_TREE_PCT      = 18
 EXPLORE_STONE_PCT     = 8
 EXPLORE_BUSH_PCT      = 10
-EXPLORE_CHEST_PCT     = 3
+EXPLORE_CHEST_PERMILLE = 8    # chance a tile holds a chest: 0.8% — rare, like a crate drop from a hunt (no daily limit)
 EXPLORE_REWARD_MULT   = 10    # money AND XP multiplier on an animal caught in Explore: you catch far fewer per minute
                               # than with the Hunt button (one shot, one animal, plus the walking), so each one pays a lot more
-EXPLORE_CHESTS_PER_DAY = 10   # chests that pay out per player per day; later ones are empty
 EXPLORE_CHEST_TIERS   = ("common", "uncommon", "rare", "epic")        # drawn with the matching crate art
 EXPLORE_CHEST_WEIGHTS = (62, 26, 10, 2)
 EXPLORE_CHEST_LOOT_X  = (1.0, 1.25, 1.5, 2.0)                       # loot multiplier per tier (still small, still capped)
@@ -8386,11 +8385,12 @@ def _ex_tile(seed: int, x: int, y: int) -> str:
     if (x, y) == EXPLORE_START:
         return "grass"
     h = _zlib.crc32(f"{seed}:{x}:{y}".encode()) % 100
-    for kind, pct in (("tree", EXPLORE_TREE_PCT), ("stone", EXPLORE_STONE_PCT),
-                      ("bush", EXPLORE_BUSH_PCT), ("chest", EXPLORE_CHEST_PCT)):
+    for kind, pct in (("tree", EXPLORE_TREE_PCT), ("stone", EXPLORE_STONE_PCT), ("bush", EXPLORE_BUSH_PCT)):
         if h < pct:
             return kind
         h -= pct
+    if _zlib.crc32(f"{seed}:{x}:{y}:c".encode()) % 1000 < EXPLORE_CHEST_PERMILLE:
+        return "chest"
     return "grass"
 
 
@@ -8628,19 +8628,12 @@ def _ex_blocked(user_id: str) -> str:
 
 
 def _ex_open_chest(user_id: str, st: dict, x: int, y: int) -> str:
-    """Open the chest you just walked onto. Loot is small, and capped per day so a chest-run can't farm."""
+    """Open the chest you just walked onto. Chests are rare on the map and the loot is small."""
     st.setdefault("opened", []).append(f"{x},{y}")
     d = data[user_id]
-    day = today_utc()
-    ec = d.setdefault("explore_chests", {"d": day, "n": 0})
-    if ec.get("d") != day:
-        ec.update(d=day, n=0)
     tier = _ex_chest_tier(st["seed"], x, y)
     mult = EXPLORE_CHEST_LOOT_X[tier]
     icon = emoji(f"{EXPLORE_CHEST_TIERS[tier]}_crate") or emoji("crate_sample")
-    if ec["n"] >= EXPLORE_CHESTS_PER_DAY:
-        return f"{icon} **You open a chest — it's empty.** (You've looted enough chests today.)"
-    ec["n"] += 1
     tool = d.get("tool", "Bare Hands")
     kind = random.choices(("ammo", "heal", "cash", "item"), weights=(35, 25, 30, 10))[0]
     if kind == "ammo" and not tool_needs_ammo(tool):
