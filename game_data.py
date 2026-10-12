@@ -2173,6 +2173,23 @@ BIOME_RULES = {
 }
 
 
+# Explore Mode map art — application emoji uploaded for the on-foot map (fetched from the CDN and layered by the
+# renderer: grass is the bottom layer). "huntress" will be added alongside "hunter" when that art exists.
+EXPLORE_ART = {
+    "grass":  "<:grass_tile:1559064015844544522>",
+    "tree":   "<:tree:1559064023515926658>",
+    "rock":   "<:rock_cluster:1559064018671374357>",
+    "bush":   "<:leafy_bush:1559064020504281302>",
+    "trail":  "<:animal_trail:1559064013910974534>",
+    "hunter": "<:hunter:1559064022240854016>",
+    # chests reuse the crate art: common / uncommon / rare / epic (the rarer the crate, the better the loot)
+    "chest0": EMOJI.get("common_crate", ""),
+    "chest1": EMOJI.get("uncommon_crate", ""),
+    "chest2": EMOJI.get("rare_crate", ""),
+    "chest3": EMOJI.get("epic_crate", ""),
+}
+
+
 def biome_rule(biome: str) -> dict:
     return BIOME_RULES.get(biome, {})
 
