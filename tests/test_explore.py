@@ -1,6 +1,7 @@
 """
-Explore Mode (beta): a bounded arena that widens as you walk, trees that block, bushes that hide animals,
-clues that fade, chests, shots that are real hunts, and a map drawn with Pillow and attached as a picture.
+Explore Mode (beta): with the setting on, Hunt opens a 7x7 map you walk on: a bounded arena that widens as you
+walk, trees that block, bushes that hide animals, clues that fade, chests, weapon range + a chosen target, shots that
+are real hunts, and a map drawn with Pillow and attached as a picture.
 
 Runs without pytest:  python tests/test_explore.py
 """
@@ -103,20 +104,20 @@ def test_buttons_do_nothing_while_the_mode_is_off():
 
 # ── the arena ───────────────────────────────────────────────
 
-def test_you_start_at_2_0_in_a_5x5_arena_that_widens_every_two_steps_up_to_a_cap():
+def test_you_start_at_3_0_in_a_7x7_arena_that_widens_every_two_steps_up_to_a_cap():
     _fresh()
     st = app._ex_state(U)
-    assert (st["x"], st["y"]) == (2, 0) == app.EXPLORE_START and app._ex_bounds(st) == (0, 0, 4, 4)
+    assert (st["x"], st["y"]) == (3, 0) == app.EXPLORE_START and app._ex_bounds(st) == (0, 0, 6, 6)
     seen = []
     for steps in range(0, 20):
         st["steps"] = steps
         seen.append(app._ex_bounds(st))
-    assert seen[0] == seen[1] == (0, 0, 4, 4) and seen[2] == seen[3] == (-1, -1, 5, 5)
-    assert seen[-1] == (-app.EXPLORE_MAX_GROW, -app.EXPLORE_MAX_GROW, 4 + app.EXPLORE_MAX_GROW, 4 + app.EXPLORE_MAX_GROW)
+    assert seen[0] == seen[1] == (0, 0, 6, 6) and seen[2] == seen[3] == (-1, -1, 7, 7)
+    assert seen[-1] == (-app.EXPLORE_MAX_GROW, -app.EXPLORE_MAX_GROW, 6 + app.EXPLORE_MAX_GROW, 6 + app.EXPLORE_MAX_GROW)
     st["steps"] = 0
-    assert app._ex_kind(st, 2, -1) == "void" and app._ex_kind(st, 5, 2) == "void"
+    assert app._ex_kind(st, 3, -1) == "void" and app._ex_kind(st, 7, 3) == "void"
     st["steps"] = 2
-    assert app._ex_kind(st, 2, -1) != "void"
+    assert app._ex_kind(st, 3, -1) != "void"
 
 
 def test_the_border_stops_you_and_costs_no_step_then_widens_as_you_explore():
@@ -125,10 +126,10 @@ def test_the_border_stops_you_and_costs_no_step_then_widens_as_you_explore():
         st = app._ex_state(U)
         st["animals"] = []
         out = app.explore_move(U, "n")
-        assert out["kind"] == "bump" and (st["x"], st["y"]) == (2, 0) and st["steps"] == 0
+        assert out["kind"] == "bump" and (st["x"], st["y"]) == (3, 0) and st["steps"] == 0
         assert "edge" in st["msg"]
         app.explore_move(U, "s"); app.explore_move(U, "s")                    # two steps -> the arena grows
-        assert app._ex_bounds(st) == (-1, -1, 5, 5)
+        assert app._ex_bounds(st) == (-1, -1, 7, 7)
         for _ in range(2):
             app.explore_move(U, "n")
         assert st["y"] == 0 and app.explore_move(U, "n")["kind"] == "moved" and st["y"] == -1
@@ -136,13 +137,13 @@ def test_the_border_stops_you_and_costs_no_step_then_widens_as_you_explore():
 
 def test_trees_and_boulders_block_you_and_cost_nothing():
     _fresh()
-    with terrain({(2, 1): "tree", (3, 0): "stone", (1, 0): "bush"}), still_world():
+    with terrain({(3, 1): "tree", (4, 0): "stone", (2, 0): "bush"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         for d, word in (("s", "tree"), ("e", "boulder")):
             out = app.explore_move(U, d)
-            assert out["kind"] == "bump" and word in st["msg"] and (st["x"], st["y"]) == (2, 0) and st["steps"] == 0
-        assert app.explore_move(U, "w")["kind"] == "moved" and (st["x"], st["y"]) == (1, 0)      # a bush is walkable
+            assert out["kind"] == "bump" and word in st["msg"] and (st["x"], st["y"]) == (3, 0) and st["steps"] == 0
+        assert app.explore_move(U, "w")["kind"] == "moved" and (st["x"], st["y"]) == (2, 0)      # a bush is walkable
 
 
 def test_there_is_always_a_way_to_every_animal():
@@ -187,18 +188,18 @@ def test_the_picture_always_shows_a_full_window_of_land_and_the_hunter_walks_to_
         st = app._ex_state(U)
         st["animals"] = []
         snap = app._ex_snapshot(U)
-        assert (snap["cx"], snap["cy"]) == (0, 0) and (snap["hx"], snap["hy"]) == (2, 0)       # starts top-middle of the 5x5 field
+        assert (snap["cx"], snap["cy"]) == (0, 0) and (snap["hx"], snap["hy"]) == (3, 0)       # starts top-middle of the 7x7 field
         assert all(k != "void" for row in snap["cells"] for k in row) and snap["edges"] == {"l": True, "t": True, "r": True, "b": True}
-        st["steps"] = 20                                                                         # a 17x17 field
+        st["steps"] = 20                                                                         # a 19x19 field
         st["x"], st["y"] = 5, 5
         snap = app._ex_snapshot(U)
-        assert (snap["hx"], snap["hy"]) == (2, 2) and not any(snap["edges"].values())            # mid-field: centred, no border
+        assert (snap["hx"], snap["hy"]) == (3, 3) and not any(snap["edges"].values())            # mid-field: centred, no border
         st["x"], st["y"] = -6, -6                                                                # the north-west corner
         snap = app._ex_snapshot(U)
         assert (snap["hx"], snap["hy"]) == (0, 0) and snap["edges"]["l"] and snap["edges"]["t"] and not snap["edges"]["r"]
-        st["x"], st["y"] = 10, 3                                                                 # the east wall
+        st["x"], st["y"] = 12, 3                                                                 # the east wall
         snap = app._ex_snapshot(U)
-        assert snap["hx"] == 4 and snap["hy"] == 2 and snap["edges"]["r"]
+        assert snap["hx"] == 6 and snap["hy"] == 3 and snap["edges"]["r"]
         for row in snap["cells"]:
             assert "void" not in row
 
@@ -213,13 +214,13 @@ def test_the_border_is_drawn_only_where_the_world_ends():
             st = app._ex_state(U)
             st["animals"] = []
             amber = lambda px: px[0] > 200 and 150 < px[1] < 230 and px[2] < 130
-            im = _png_ok(app._ex_render(app._ex_snapshot(U)), (480, 480))                            # the start: walls on all four sides
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)))                                        # the start: walls on all four sides
             W = im.size[0]
             assert amber(im.getpixel((W // 2, 2))) and amber(im.getpixel((W // 2, W - 3)))
             assert amber(im.getpixel((2, W // 2))) and amber(im.getpixel((W - 3, W // 2)))
             st["steps"] = 20
             st["x"], st["y"] = 5, 5                                                              # mid-field: no border in the picture
-            im = _png_ok(app._ex_render(app._ex_snapshot(U)), (480, 480))
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)))
             assert not any(amber(im.getpixel(p)) for p in ((W // 2, 2), (W // 2, W - 3), (2, W // 2), (W - 3, W // 2)))
     finally:
         app._ex_art.update(saved)
@@ -229,7 +230,7 @@ def test_the_border_is_drawn_only_where_the_world_ends():
 
 def test_a_blocked_move_is_an_ephemeral_message_and_leaves_the_panel_alone():
     _fresh()
-    with terrain({(2, 1): "tree"}), still_world():
+    with terrain({(3, 1): "tree"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         st["msg"] = "an old line"
@@ -238,7 +239,7 @@ def test_a_blocked_move_is_an_ephemeral_message_and_leaves_the_panel_alone():
             assert any("tree blocks" in m for m in h.ephemerals) and not h.panels
             run(app._dispatch_component(tr.FakeInteraction(U, f"explore:n:{U}")))               # off the north edge
             assert any("edge of the known land" in m for m in h.ephemerals) and not h.panels
-        assert (st["x"], st["y"], st["steps"]) == (2, 0, 0) and st["msg"] == ""
+        assert (st["x"], st["y"], st["steps"]) == (3, 0, 0) and st["msg"] == ""
         run_ = app.explore_enabled(U)
         assert run_
 
@@ -267,7 +268,7 @@ def test_cooldowns_and_empty_shots_are_private_too_and_a_real_move_still_updates
 
 def test_a_bush_hides_an_animal_until_you_are_next_to_it():
     _fresh()
-    with terrain({(4, 0): "bush", (3, 0): "bush"}), still_world():
+    with terrain({(5, 0): "bush", (4, 0): "bush"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         far = _calm(st, dx=2)                                                  # in a bush, two tiles away
@@ -277,7 +278,7 @@ def test_a_bush_hides_an_animal_until_you_are_next_to_it():
         near = _calm(st, name="Red Fox", dx=1)                                 # in a bush, right beside you
         assert app._ex_seen(st, near) is True
         assert [a["name"] for a in app._ex_snapshot(U)["animals"]] == ["Red Fox"]
-        assert app.build_explore_components(U)[0]["components"][-1]["components"][0]["disabled"] is False
+        assert app.build_explore_components(U)[0]["components"][-2]["components"][0]["disabled"] is False      # Fire
         # and you can't shoot what you can't see
         st["animals"].remove(near)
         out = app.explore_fire(U)
@@ -286,7 +287,7 @@ def test_a_bush_hides_an_animal_until_you_are_next_to_it():
 
 def test_a_hidden_animal_gives_a_rustling_clue():
     _fresh()
-    with terrain({(4, 0): "bush"}), still_world():
+    with terrain({(5, 0): "bush"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         a = _calm(st, dx=2)
@@ -360,7 +361,7 @@ def test_a_predator_stalks_you_and_bites_but_never_knocks_you_out():
 
 def test_walking_onto_a_chest_opens_it_once_and_pays_something_small():
     _fresh()
-    with terrain({(2, 1): "chest"}), still_world():
+    with terrain({(3, 1): "chest"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         d = app.data[U]
@@ -372,8 +373,8 @@ def test_walking_onto_a_chest_opens_it_once_and_pays_something_small():
             out = app.explore_move(U, "s")
         finally:
             random.choices = real
-        assert "found a chest" in st["msg"] and d["money"] > money0 and "2,1" in st["opened"]
-        assert app._ex_kind(st, 2, 1) == "grass"                              # opened: just grass now
+        assert "found a chest" in st["msg"] and d["money"] > money0 and "3,1" in st["opened"]
+        assert app._ex_kind(st, 3, 1) == "grass"                              # opened: just grass now
         app.explore_move(U, "n"); app.explore_move(U, "s")
         assert "chest" not in st["msg"]
 
@@ -408,11 +409,11 @@ def test_chests_are_drawn_with_crate_art_and_richer_crates_pay_a_little_more():
     assert set(tiers) == {0, 1, 2, 3} and tiers.count(0) > tiers.count(1) > tiers.count(2) > tiers.count(3)
     assert app._ex_chest_tier(123, 4, 5) == app._ex_chest_tier(123, 4, 5)          # fixed per tile: what you see is what you get
     d = _fresh()
-    with terrain({(2, 1): "chest"}), still_world():
+    with terrain({(3, 1): "chest"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
         snap = app._ex_snapshot(U)
-        assert list(snap["chests"].values()) == [app._ex_chest_tier(st["seed"], 2, 1)] and len(snap["chests"]) == 1
+        assert list(snap["chests"].values()) == [app._ex_chest_tier(st["seed"], 3, 1)] and len(snap["chests"]) == 1
     real = random.choices
     random.choices = lambda pop, weights=None, k=1: ["cash"]
     try:
@@ -445,7 +446,7 @@ def test_the_hunter_is_drawn_big():
             st["steps"] = 20
             im = _png_ok(app._ex_render(app._ex_snapshot(U)))
             T = app.EXPLORE_TILE_PX
-            white = sum(1 for x in range(2 * T, 3 * T) for y in range(2 * T, 3 * T)
+            white = sum(1 for x in range(3 * T, 4 * T) for y in range(3 * T, 4 * T)
                         if im.getpixel((x, y))[0] > 200 and im.getpixel((x, y))[1] > 200)
             assert white > 0.7 * T * T, white
     finally:
@@ -517,7 +518,7 @@ def test_nothing_in_view_means_nothing_to_shoot():
         st["animals"] = []
         assert app.explore_fire(U)["kind"] == "none"
         blob = json.dumps(app.build_explore_components(U))
-        assert '"label": "Aim & Fire"' in blob and '"disabled": true' in blob
+        assert '"label": "Fire"' in blob and '"disabled": true' in blob
 
 
 # ── expedition length ───────────────────────────────────────
@@ -538,7 +539,7 @@ def test_the_expedition_ends_after_its_step_budget_and_a_new_one_resets_everythi
         assert blob.count('"disabled": true') >= 5 and "Expedition over" in blob and COMMON in blob
         app.explore_new(U)
         st2 = app.data[U]["explore"]
-        assert st2["steps"] == 0 and st2["bag"] == [] and (st2["x"], st2["y"]) == (2, 0) and not app._ex_over(st2)
+        assert st2["steps"] == 0 and st2["bag"] == [] and (st2["x"], st2["y"]) == (3, 0) and not app._ex_over(st2)
 
 
 def test_a_new_biome_means_a_new_expedition():
@@ -563,10 +564,11 @@ def test_you_cannot_explore_mid_fight_or_mid_track():
 
 # ── the picture ─────────────────────────────────────────────
 
-def _png_ok(blob: bytes, size=(480, 480)):
+def _png_ok(blob: bytes, size=None):
     from PIL import Image
     assert blob[:8] == b"\x89PNG\r\n\x1a\n"
     im = Image.open(io.BytesIO(blob))
+    size = size or (app.EXPLORE_TILE_PX * 7,) * 2
     assert im.size == size, im.size
     return im
 
@@ -599,7 +601,7 @@ def test_layers_come_out_in_the_right_order_with_uploaded_art():
                        bush=solid((200, 200, 0, 255)), hunter=solid((255, 255, 255, 255)), trail=solid((90, 0, 90, 255)))
     try:
         _fresh()
-        with terrain({(1, 0): "tree", (3, 0): "stone", (2, 1): "bush"}):
+        with terrain({(2, 0): "tree", (4, 0): "stone", (3, 1): "bush"}):
             st = app._ex_state(U)
             st["animals"] = []
             st["steps"] = 20
@@ -607,11 +609,11 @@ def test_layers_come_out_in_the_right_order_with_uploaded_art():
             T = app.EXPLORE_TILE_PX
             px = lambda tx, ty, fx=.5, fy=.5: im.getpixel((int((tx + fx) * T), int((ty + fy) * T)))
             near = lambda a, b, tol=70: all(abs(x - y) <= tol for x, y in zip(a[:3], b))
-            assert near(px(2, 1), (0, 200, 0), 80)                   # bare grass, the bottom layer
-            assert near(px(1, 2), (200, 0, 0), 60)                   # the tree to the west sits on top of grass
-            assert near(px(3, 2), (0, 0, 200), 60)                   # the boulder to the east
-            assert near(px(2, 3), (200, 200, 0), 60)                 # the bush to the south
-            assert near(px(2, 2), (255, 255, 255), 40)               # the hunter is the top layer in the middle
+            assert near(px(3, 2, .12, .12), (0, 200, 0), 80)         # bare grass, the bottom layer (off-centre: the step box sits in the middle)
+            assert near(px(2, 3), (200, 0, 0), 60)                   # the tree to the west sits on top of grass
+            assert near(px(4, 3), (0, 0, 200), 60)                   # the boulder to the east
+            assert near(px(3, 4, .12, .12), (200, 200, 0), 60)       # the bush to the south
+            assert near(px(3, 3), (255, 255, 255), 40)               # the hunter is the top layer in the middle
     finally:
         app._ex_art.clear()
         app._ex_art.update(saved_art)
@@ -719,6 +721,229 @@ def test_the_hunt_button_path_is_unchanged_without_a_forced_animal():
     d["hunt_cd"] = 0
     r = app.run_hunt(U)
     assert r["ok"] and "forced" not in r
+
+
+# ── weapon range, target, markers, info ─────────────────────
+
+def test_every_tool_has_a_range_that_fits_the_7x7_field():
+    assert all(1 <= gd.tool_range(t) <= gd.TOOL_RANGE_MAX for t in gd.TOOLS)
+    assert gd.TOOL_RANGE_MAX == app.EXPLORE_VIEW == 3 and set(gd.TOOL_RANGE) <= set(gd.TOOLS)
+    assert gd.tool_range("Bare Hands") == 1 and gd.tool_range("Shotgun") == 2 and gd.tool_range("Sniper Rifle") == 3
+    assert gd.tool_range("Nuke Launcher") == 3                                   # unlisted tools use the default
+
+
+def test_you_can_only_shoot_inside_your_tools_range():
+    d = _fresh(tool="Bare Hands")
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        a = _calm(st, dx=3)                                                      # in view, but 3 away: out of reach
+        lt0, cd0 = d["stats"].get("lifetime_hunts", 0), d["hunt_cd"]
+        out = app.explore_fire(U)
+        assert out["kind"] == "none" and "Out of range" in st["msg"] and "reaches **1** tile" in st["msg"]
+        assert d["stats"].get("lifetime_hunts", 0) == lt0 and d["hunt_cd"] == cd0          # nothing was spent
+        comps = app.build_explore_components(U)[0]["components"]
+        assert comps[-2]["components"][0]["label"] == "Fire" and comps[-2]["components"][0]["disabled"] is True
+        assert "out of range" in json.dumps(comps)
+        a["x"] -= 2                                                              # now right beside you
+        assert app.explore_fire is not None and app._ex_target(st, 1) is a
+        comps = app.build_explore_components(U)[0]["components"]
+        assert comps[-2]["components"][0]["disabled"] is False and "target" in json.dumps(comps)
+
+
+def test_the_yellow_target_is_the_one_you_pick_and_fire_hits_it():
+    d = _fresh(tool="Shotgun", owned_tools=["Shotgun"])
+    ammo = gd.get_ammo_for_tool("Shotgun")[0]
+    d["ammo_inv"], d["equipped_ammo"] = {ammo: 50}, ammo
+    other = gd.BIOME_ANIMALS["village"][1]
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        near = _calm(st, name=COMMON, dx=1)
+        far = _calm(st, name=other, dx=2)
+        rng = gd.tool_range("Shotgun")
+        assert app._ex_target(st, rng) is near                                   # nearest by default
+        assert [a["target"] for a in sorted(app._ex_snapshot(U)["animals"], key=lambda a: a["tx"])] == [True, False]
+        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, rng) is far
+        assert [a["target"] for a in sorted(app._ex_snapshot(U)["animals"], key=lambda a: a["tx"])] == [False, True]
+        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, rng) is near       # and back again
+        app.explore_target(U)
+        real = random.random
+        random.random = lambda: 0.0
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "caught" and out["result"]["catches"][0]["animal"] == other
+        assert far not in st["animals"] and near in st["animals"]
+
+
+def test_targeting_buttons_and_nothing_to_cycle():
+    _fresh(tool="Shotgun")
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        assert app.explore_target(U)["kind"] == "none"
+        blob = json.dumps(app.build_explore_components(U)[0]["components"][-2]["components"])
+        assert '"label": "Target"' in blob and '"disabled": true' in json.dumps(app.build_explore_components(U)[0]["components"][-2]["components"][1])
+        _calm(st, dx=1)
+        _calm(st, name=gd.BIOME_ANIMALS["village"][1], dx=2)
+        assert app.build_explore_components(U)[0]["components"][-2]["components"][1]["disabled"] is False
+
+
+def test_the_picture_marks_step_tiles_with_yellow_boxes_and_the_target_with_a_circle():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    app._ex_art.update(grass=Image.new("RGBA", (128, 128), (0, 120, 0, 255)), hunter=Image.new("RGBA", (128, 128), (255, 255, 255, 255)))
+    try:
+        _fresh(tool="Bare Hands")
+        with terrain({(3, 1): "tree"}), still_world():
+            st = app._ex_state(U)
+            st["animals"] = []
+            assert app._ex_snapshot(U)["moves"] == [(2, 0), (4, 0)]              # west and east; south is a tree, north the border
+            _calm(st, dx=1)
+            snap = app._ex_snapshot(U)
+            assert snap["moves"] == [(2, 0)] and snap["animals"][0]["target"] and snap["animals"][0]["inrange"]
+            im = _png_ok(app._ex_render(snap))
+            T = app.EXPLORE_TILE_PX
+            yellow = lambda p: p[0] > 200 and p[1] > 170 and p[2] < 140
+            assert yellow(im.getpixel((2 * T + T // 2, T // 2)))                 # the small box in the middle of the tile to step on
+            assert not yellow(im.getpixel((2 * T + 4, T - 6)))                    # ...and only a small one
+            assert yellow(im.getpixel((4 * T + 5, T // 2)))                      # the bold circle round the target
+            st["animals"][0]["x"] += 2                                           # out of reach: just a faint ring
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)))
+            assert not yellow(im.getpixel((6 * T + 7, T // 2)))
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+
+
+def test_the_grass_tiles_join_without_dark_lines():
+    """The uploaded grass tile has a transparent margin and a darker rim; tiled as-is that drew dark grid lines."""
+    from PIL import Image, ImageDraw
+    art = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    ImageDraw.Draw(art).rectangle([5, 6, 122, 122], fill=(97, 141, 63, 255), outline=(43, 79, 42, 255), width=4)
+    saved = dict(app._ex_art)
+    app._ex_art.update(grass=art)
+    try:
+        _fresh()
+        with terrain():
+            st = app._ex_state(U)
+            st["animals"] = []
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)))
+            T = app.EXPLORE_TILE_PX
+            for k in range(1, 7):                                                # every vertical and horizontal seam
+                for t in range(2 * T, 7 * T - 10, 3):
+                    px = [im.getpixel((k * T - 1, t)), im.getpixel((k * T, t))]
+                    if k >= 2:                                                   # (the hunter's tile is the top row)
+                        px += [im.getpixel((t, k * T - 1)), im.getpixel((t, k * T))]
+                    for p in px:
+                        assert abs(p[0] - 97) < 30 and abs(p[1] - 141) < 30 and abs(p[2] - 63) < 30, (k, t, p)
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+
+
+def test_the_info_sheet_explains_the_range_with_a_7x7_picture():
+    _fresh(tool="Shotgun")
+    blob = json.dumps(app.build_explore_info_components(U), ensure_ascii=False)
+    assert "attachment://range.png" in blob and "Range 2 tiles" in blob and "Shotgun" in blob
+    assert "Yellow circle" in blob and "yellow boxes" in blob and "Bare Hands" in blob and "Hit chance" in blob
+    assert "attachment://" not in json.dumps(app.build_explore_info_components(U, image=False))
+    im = _png_ok(app._ex_range_png(2), (448, 448))
+    lit, dim, mid = im.getpixel((5 * 64 + 6, 3 * 64 + 6)), im.getpixel((6 * 64 + 6, 3 * 64 + 6)), im.getpixel((3 * 64 + 6, 3 * 64 + 6))
+    assert lit[0] > dim[0] + 40 and mid[0] > dim[0] + 40                         # the reach is lit, outside it is dimmed
+    assert app.build_explore_components(U)[0]["components"][-2]["components"][3]["custom_id"] == f"explore:info:{U}"
+
+
+def test_the_info_button_sends_a_private_sheet_with_the_picture_attached():
+    _fresh(tool="Longbow")
+    sent = []
+
+    class Http:
+        async def request(self, route, *, files=None, form=None, **kw):
+            sent.append((route.method, route.path, form, files))
+
+    class Resp:
+        def is_done(self): return False
+
+    class It:
+        id, token, application_id, channel_id = 7, "tok", 99, 5
+        def __init__(self): self.response = Resp(); self.client = type("C", (), {"http": Http()})()
+
+    run(app.explore_info_show(It(), U))
+    assert len(sent) == 1
+    m, path, form, files = sent[0]
+    payload = json.loads(next(f["value"] for f in form if f["name"] == "payload_json"))
+    body = payload["data"]
+    assert m == "POST" and "callback" in path and body["flags"] & 64                     # ephemeral
+    assert body["attachments"] == [{"id": 0, "filename": "range.png"}] and files
+    assert "Range 3 tiles" in json.dumps(body["components"], ensure_ascii=False)
+
+
+def test_the_info_button_goes_through_the_dispatcher_without_touching_the_world():
+    _fresh()
+    shown = []
+
+    async def fake_info(interaction, uid):
+        shown.append(uid)
+    real = app.explore_info_show
+    app.explore_info_show = fake_info
+    try:
+        st = app._ex_state(U)
+        steps0 = st["steps"]
+        with tr.Harness() as h:
+            run(app._dispatch_component(tr.FakeInteraction(U, f"explore:info:{U}")))
+        assert shown == [U] and st["steps"] == steps0 and not h.panels
+    finally:
+        app.explore_info_show = real
+
+
+# ── Hunt opens the map; there is no /explore command ──────────
+
+def test_there_is_no_explore_command_any_more():
+    assert app.bot.tree.get_command("explore") is None and app.bot.tree.get_command("hunt") is not None
+    assert not hasattr(app, "explore_cmd")
+
+
+def test_with_explore_on_hunt_opens_the_map_instead_of_an_instant_hunt():
+    import types
+    d = _fresh()
+    shown = []
+
+    async def rec(interaction, uid, **kw):
+        shown.append((uid, kw))
+    real = app.explore_show
+    app.explore_show = rec
+    try:
+        lt0 = d["stats"].get("lifetime_hunts", 0)
+        with tr.Harness():
+            run(app.hunt_cmd.callback(tr.FakeInteraction(U, "x")))                       # /hunt
+            assert shown == [(U, {"new": True})]
+            it = tr.FakeInteraction(U, f"hunt:again:{U}")                                # a Hunt button on a panel
+            it.message = types.SimpleNamespace(flags=types.SimpleNamespace(ephemeral=False))
+            run(app._dispatch_component(it))
+            assert shown[-1] == (U, {})                                                  # the same message becomes the map
+            it = tr.FakeInteraction(U, f"announce:hunt:{U}")                             # the announcement's Hunt button
+            it.message = types.SimpleNamespace(flags=types.SimpleNamespace(ephemeral=False))
+            run(app._dispatch_component(it))
+            assert shown[-1][1].get("new") is True
+        assert len(shown) == 3 and d["stats"].get("lifetime_hunts", 0) == lt0 and d["hunt_cd"] == 0     # no hunt ran
+        # a fight in progress shows the fight, not the map
+        d["_boss"] = {"creature": "Bigfoot", "biome": "village", "ts": int(time.time()), "eid": "z", "mhp": 5, "mhp_max": 5,
+                      "turn": 1, "fallen": False, "guard": False, "enrage": False, "mdebuff": False, "log": []}
+        with tr.Harness() as h:
+            run(app.hunt_cmd.callback(tr.FakeInteraction(U, "x")))
+        assert len(shown) == 3
+        d["_boss"] = None
+        # with the setting off, Hunt is the ordinary instant hunt again
+        d["explore_mode"] = False
+        d["tool"], d["hunt_cd"] = "Bare Hands", 0
+        with tr.Harness():
+            run(app._dispatch_component(tr.FakeInteraction(U, f"hunt:again:{U}")))
+        assert len(shown) == 3 and d["stats"].get("lifetime_hunts", 0) == lt0 + 1
+    finally:
+        app.explore_show = real
 
 
 def _all_tests():

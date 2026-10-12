@@ -5065,6 +5065,21 @@ def tool_combat_accuracy(tool_name: str) -> float:
     return TOOL_COMBAT_OVERRIDES.get(tool_name, {}).get("accuracy", TOOL_COMBAT_BASE_ACCURACY)
 
 
+# ── Explore Mode attack range ─────────────────────────────────
+# How many tiles away a tool can hit on the Explore map: every tile within N steps counts (diagonals too, so range 1 is
+# the 8 tiles around you and range 3 is the whole 7x7 field). The map window is 7x7, so 3 is the longest reach there is.
+TOOL_RANGE = {
+    "Bare Hands": 1, "Hunting Knife": 1,
+    "Slingshot": 2, "Spear": 2, "Shortbow": 2, "Shotgun": 2, "Gravity Trap": 2, "Soul Snare": 2, "Mythic Net": 2,
+}
+TOOL_RANGE_DEFAULT = 3
+TOOL_RANGE_MAX = 3
+
+
+def tool_range(tool_name: str) -> int:
+    return TOOL_RANGE.get(tool_name, TOOL_RANGE_DEFAULT)
+
+
 # ── Healing items ─────────────────────────────────────────────
 # Prices are "price_x": multiples of crate_value_scale(level) (the average
 # animal value of the opener's best unlocked biome), resolved at shop-render/

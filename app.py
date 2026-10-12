@@ -41,7 +41,7 @@ from game_data import (
     BEGINNER_CHALLENGE_ANIMAL, BEGINNER_CHALLENGE_STEP, BEGINNER_CHALLENGE_REWARD,
     HUNTERS_PATH_MYTH_UNLOCK_STEP,
     animal_combat_stats, animal_encounter_chance, encounter_priority,
-    tool_combat_damage, tool_combat_accuracy,
+    tool_combat_damage, tool_combat_accuracy, tool_range, TOOL_RANGE, TOOL_RANGE_DEFAULT,
     # Animals
     ANIMAL_DATA, ANIMAL_EMOJI, animal_emoji,
     # Mythical creatures (mythic tier / boss roster)
@@ -381,7 +381,7 @@ FEATURE_TRACK_CLUES      = _flag("FEATURE_TRACK_CLUES")       # the scene on scr
 FEATURE_BIOME_RULES      = _flag("FEATURE_BIOME_RULES")       # one decision-changing rule per region (tracking + animal fights)
 FEATURE_GEAR_ROLES       = _flag("FEATURE_GEAR_ROLES")        # quiet / power / capture tool roles
 FEATURE_EVENT_CARRY      = _flag("FEATURE_EVENT_CARRY")       # choices in a story-event run carry into later scenes
-FEATURE_EXPLORE          = _flag("FEATURE_EXPLORE")           # /explore on-foot map mode (also needs the per-player setting)
+FEATURE_EXPLORE          = _flag("FEATURE_EXPLORE")           # on-foot map hunting (also needs the per-player setting)
 
 # Feature-gated background loops defined later in the file register themselves
 # here; on_ready starts every entry. Keeps task wiring next to its own code.
@@ -8309,14 +8309,17 @@ _TRACK_BONUS_BLURB = {
 # ═══════════════════════════════════════════════════════════════
 # EXPLORE MODE (beta)  ·  an expedition on foot: roaming animals, fading clues, bushes, chests
 # ═══════════════════════════════════════════════════════════════
-# Opt-in (Settings → Explore Mode, off by default) and played with /explore. An expedition is a small procedural
-# arena you start at the top-middle of (tile 2,0). The border begins 5x5 and WIDENS by one tile every
+# Opt-in (Settings → Explore Mode, off by default). With it on, Hunt (the /hunt command and every Hunt button) opens this
+# map instead of rolling an instant hunt; there is no separate command. An expedition is a small procedural
+# arena you start at the top-middle of (tile 3,0). The border begins 7x7 (the size of the picture) and WIDENS by one tile every
 # EXPLORE_GROW_EVERY steps (up to EXPLORE_MAX_GROW), and the expedition ends after EXPLORE_MAX_STEPS steps — then you
 # start a new one. Trees and boulders block movement. Leafy bushes are walkable and HIDE an animal standing in them
 # until you are next to it. An animal you can't see leaves a CLUE (an arrow badge + footprints on the picture, and a
 # rough distance — never its species) that fades unless you keep closing in. Animals only ever spawn where you can
-# walk to them. Walk onto a chest to open it (loot is small and capped per day). Once an animal is in view you can
-# fire — a shot is a real hunt: `run_hunt(forced_animal=...)` pays out, spends ammo, honours the cooldown and
+# walk to them. Walk onto a chest to open it (loot is small and capped per day). Every tool has an attack RANGE
+# (game_data.TOOL_RANGE, in tiles): you can only shoot an animal inside it. The yellow circle on the picture marks your
+# TARGET, small yellow boxes mark where you can step, and the Info button explains the range with a 7x7 picture. Fire at
+# the target — a shot is a real hunt: `run_hunt(forced_animal=...)` pays out, spends ammo, honours the cooldown and
 # advances quests exactly like the Hunt button, for ONE animal instead of a multi-catch, so exploring never
 # out-earns hunting.
 #
@@ -8332,12 +8335,12 @@ try:
 except Exception:                       # Pillow missing: Explore still works, just without the picture
     _PIL_OK = False
 
-EXPLORE_TILE_PX       = 96    # pixels per tile in the picture (5x5 -> 480x480)
-EXPLORE_VIEW          = 2     # tiles each side of you: a 5x5 window
-EXPLORE_START         = (2, 0)
-EXPLORE_BASE          = 5     # the arena starts as x 0..4, y 0..4
+EXPLORE_TILE_PX       = 72    # pixels per tile in the picture (7x7 -> 504x504)
+EXPLORE_VIEW          = 3     # tiles each side of you: a 7x7 window
+EXPLORE_START         = (3, 0)
+EXPLORE_BASE          = 7     # the arena starts as x 0..6, y 0..6
 EXPLORE_GROW_EVERY    = 2     # steps per tile the border widens
-EXPLORE_MAX_GROW      = 6     # ...up to this many tiles on every side (a 17x17 arena)
+EXPLORE_MAX_GROW      = 6     # ...up to this many tiles on every side (a 19x19 arena)
 EXPLORE_MAX_STEPS     = 80    # steps in one expedition
 EXPLORE_MIN_REACH     = 8     # a start arena must offer at least this many walkable tiles
 EXPLORE_CLUE_RADIUS   = 9     # an animal this close (but unseen) can leave a clue
@@ -8471,6 +8474,27 @@ def _ex_seen(st: dict, a: dict) -> bool:
 def _ex_visible(st: dict) -> list[dict]:
     return sorted((a for a in st["animals"] if _ex_seen(st, a)),
                   key=lambda a: _ex_dist(a["x"], a["y"], st["x"], st["y"]))
+
+
+def _ex_reach_tiles(user_id: str) -> int:
+    return tool_range(data[user_id].get("tool", "Bare Hands"))
+
+
+def _ex_in_range(st: dict, a: dict, rng: int) -> bool:
+    return _ex_dist(a["x"], a["y"], st["x"], st["y"]) <= rng
+
+
+def _ex_targets(st: dict, rng: int) -> list[dict]:
+    """Animals you can see AND reach with your tool, nearest first."""
+    return [a for a in _ex_visible(st) if _ex_in_range(st, a, rng)]
+
+
+def _ex_target(st: dict, rng: int) -> dict | None:
+    """The animal you are aiming at: the one you picked while it is still in reach, otherwise the nearest in reach."""
+    ts = _ex_targets(st, rng)
+    if not ts:
+        return None
+    return next((a for a in ts if a["id"] == st.get("target")), ts[0])
 
 
 def _ex_spawn(st: dict) -> bool:
@@ -8688,8 +8712,27 @@ def explore_new(user_id: str) -> dict:
     return {"kind": "new"}
 
 
+def _ex_hit_chance(tool: str, dist: int) -> float:
+    return max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1)))
+
+
+def explore_target(user_id: str) -> dict:
+    """Aim at the next animal in reach (no time passes). Mutates."""
+    st = _ex_state(user_id)
+    ts = _ex_targets(st, _ex_reach_tiles(user_id))
+    if not ts:
+        st["msg"] = "Nothing in reach to aim at."
+        return {"kind": "none"}
+    cur = _ex_target(st, _ex_reach_tiles(user_id))
+    nxt = ts[(ts.index(cur) + 1) % len(ts)] if cur in ts else ts[0]
+    st["target"] = nxt["id"]
+    st["msg"] = f"{emoji('target')} Aiming at the **{nxt['name']}**."
+    mark_user_dirty(user_id)
+    return {"kind": "target"}
+
+
 def explore_fire(user_id: str) -> dict:
-    """Take a shot at the nearest animal in view. A hit is a real single-animal hunt. Mutates."""
+    """Take a shot at your target (an animal in view AND inside your tool's range). A hit is a real single-animal hunt. Mutates."""
     st = _ex_state(user_id)
     d = data[user_id]
     why = _ex_blocked(user_id)
@@ -8703,14 +8746,20 @@ def explore_fire(user_id: str) -> dict:
     if not seen:
         st["msg"] = "Nothing in view to shoot at."
         return {"kind": "none"}
-    a = seen[0]
+    tool = d.get("tool", "Bare Hands")
+    rng = tool_range(tool)
+    a = _ex_target(st, rng)
+    if a is None:
+        near = _ex_dist(seen[0]["x"], seen[0]["y"], st["x"], st["y"])
+        st["msg"] = (f"Out of range — your **{tool}** reaches **{rng}** tile{'s' if rng != 1 else ''} and the nearest "
+                     f"animal is **{near}** away. Move closer (tap **Info** to see your range).")
+        return {"kind": "none"}
     now = time.time()
     if d.get("hunt_cd", 0) > now:
         st["msg"] = f"{emoji('cooldown')} Reloading — ready <t:{int(d['hunt_cd'])}:R>."
         return {"kind": "cooldown"}
     dist = _ex_dist(a["x"], a["y"], st["x"], st["y"])
-    tool = d.get("tool", "Bare Hands")
-    p = max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1)))
+    p = _ex_hit_chance(tool, dist)
     beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
     if random.random() >= p:
         a["mood"] = "stalk" if beh in ("aggressive", "predator") else "flee"
@@ -8734,6 +8783,7 @@ def explore_fire(user_id: str) -> dict:
         return {"kind": "blocked", "result": res}
     if a in st["animals"]:
         st["animals"].remove(a)
+    st["target"] = None
     lines: list[str] = []
     for c in res.get("catches", []):
         st.setdefault("bag", []).append({"name": c["animal"], "value": c["sell_value"], "perfect": bool(c.get("is_rare"))})
@@ -8759,12 +8809,15 @@ def _ex_snapshot(user_id: str) -> dict:
     cx, cy = _ex_cam(st)
     n = EXPLORE_VIEW * 2 + 1
     seen = _ex_visible(st)
+    rng = _ex_reach_tiles(user_id)
+    tgt = _ex_target(st, rng)
     animals, clues = [], []
     for a in st["animals"]:
         stats = animal_combat_stats(a["name"], st["biome"])
         if a in seen:
             animals.append({"tx": a["x"] - cx, "ty": a["y"] - cy, "name": a["name"], "beh": stats["behavior"],
-                            "mood": a.get("mood", "calm"), "hp": stats["hp"]})
+                            "mood": a.get("mood", "calm"), "hp": stats["hp"],
+                            "inrange": _ex_in_range(st, a, rng), "target": a is tgt})
         elif a["clue"] > 0:
             clues.append({"dx": a["x"] - px, "dy": a["y"] - py,
                           "d": max(2, 2 * round(_ex_dist(a["x"], a["y"], px, py) / 2))})
@@ -8777,8 +8830,11 @@ def _ex_snapshot(user_id: str) -> dict:
               for ty in range(n) for tx in range(n) if cells[ty][tx] == "chest"}
     x0, y0, x1, y1 = _ex_bounds(st)
     edges = {"l": cx == x0, "t": cy == y0, "r": cx + n - 1 == x1, "b": cy + n - 1 == y1}      # where the world ends
+    shown = {(a["tx"], a["ty"]) for a in animals}
+    moves = [(px + dx - cx, py + dy - cy) for dx, dy in _EX_DIRS.values()
+             if _ex_walkable(st, px + dx, py + dy) and (px + dx - cx, py + dy - cy) not in shown]
     return {"seed": st["seed"], "biome": st["biome"], "cx": cx, "cy": cy, "hx": px - cx, "hy": py - cy,
-            "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges}
+            "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges, "moves": moves}
 
 
 # biome look: ground (two greens/sands…), tree canopy, trunk, stone; pine=True draws conifers.
@@ -8802,7 +8858,7 @@ _ex_font_cache: dict = {}
 _ex_sprites: dict = {}          # animal name -> PIL RGBA image, or None when it has no custom art
 _ex_art: dict = {}              # map-art key -> PIL RGBA image (EXPLORE_ART), filled by _ex_fetch_art
 _ex_art_try = 0.0
-_ex_vignette_cache: dict = {}
+_ex_grass_cache: dict = {}
 
 
 def _ex_font(size: int):
@@ -8897,30 +8953,50 @@ def _ex_sprite_fallback(name: str, S: int):
     return im
 
 
-def _ex_vignette(w: int, h: int):
-    v = _ex_vignette_cache.get((w, h))
-    if v is None:
-        g = _PILImage.radial_gradient("L").resize((w, h), _PILImage.BICUBIC)       # black centre -> white edge
-        a = g.point(lambda p: max(0, p - 110) * 0.85)
-        v = _PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
-        v.putalpha(a)
-        _ex_vignette_cache[(w, h)] = v
-    return v
+def _ex_grass_tile(art, T: int, tint, wx: int, wy: int):
+    """One seamless grass tile. The uploaded tile has a transparent margin and a darker rim, which showed up as dark
+    lines between tiles — so only its inner part is used, laid on a solid fill of its own average colour, and it is
+    mirrored on odd columns / rows (a mirrored neighbour always matches along the shared edge)."""
+    key = (id(art), T, tint)
+    base = _ex_grass_cache.get(key)
+    if base is None:
+        alpha = art.getchannel("A").point(lambda v: 255 if v > 200 else 0)
+        l, t, r, b = alpha.getbbox() or (0, 0, art.width, art.height)
+        ins = max(2, int(min(r - l, b - t) * .10))
+        core = art.crop((l + ins, t + ins, r - ins, b - ins))
+        avg = core.convert("RGB").resize((1, 1), _PILImage.BOX).getpixel((0, 0))
+        base = _PILImage.new("RGBA", (T, T), avg + (255,))
+        base.alpha_composite(_ex_fit(core, T))
+        if tint:                                                    # a gentle biome tint so deserts and snow still read
+            base = _PILImage.blend(base, _PILImage.new("RGBA", (T, T), tint + (255,)), 0.32)
+        _ex_grass_cache.clear()
+        _ex_grass_cache[key] = base
+    tile = base
+    if wx % 2:
+        tile = tile.transpose(_PILImage.FLIP_LEFT_RIGHT)
+    if wy % 2:
+        tile = tile.transpose(_PILImage.FLIP_TOP_BOTTOM)
+    return tile
 
 
 def _ex_fit(im, size: int):
     return im.resize((size, size), _PILImage.LANCZOS)
 
 
+def _ex_put(canvas, im, x: int, y: int) -> None:
+    """Lay an RGBA image on the (RGB) canvas, honouring its transparency."""
+    canvas.paste(im, (x, y), im)
+
+
 def _ex_pasted(canvas, im, tx: int, ty: int, T: int, size: float, feet: float = .93) -> None:
     """Paste a sprite `size` tiles wide, centred on the tile with its feet on one shared baseline."""
     sz = max(8, int(T * size))
-    canvas.alpha_composite(_ex_fit(im, sz), (tx * T + (T - sz) // 2, ty * T + int(T * feet) - sz))
+    _ex_put(canvas, _ex_fit(im, sz), tx * T + (T - sz) // 2, ty * T + int(T * feet) - sz)
 
 
 def _ex_render(snap: dict) -> bytes:
-    """Draw the map window as a 5x5 PNG: grass tile at the bottom, then trees / rocks / bushes / chests, animals,
-    the hunter, edge fade, trail footprints and clue arrows. The window never shows past the edge of the world: near
+    """Draw the map window as a 7x7 PNG: grass tile at the bottom, then trees / rocks / bushes / chests, yellow
+    step boxes, animals (with the yellow target circle), the hunter, trail footprints and clue arrows. The window never shows past the edge of the world: near
     it the picture stops moving and the hunter walks toward the border, which is drawn as an amber line. Uses the
     uploaded emoji art (EXPLORE_ART); anything that failed to download is drawn procedurally instead. Pure function
     of `snap` + the art caches (thread-safe)."""
@@ -8928,7 +9004,7 @@ def _ex_render(snap: dict) -> bytes:
     N = EXPLORE_VIEW * 2 + 1
     SS = 2
     pal = _EX_PAL.get(snap["biome"], _EX_PAL["village"])
-    canvas = _PILImage.new("RGBA", (T * N, T * N), pal["g1"] + (255,))
+    canvas = _PILImage.new("RGB", (T * N, T * N), pal["g1"])        # RGB: translucent shapes drawn on it BLEND (on RGBA they replace the pixel)
     grass_art = _ex_art.get("grass")
     tint = None if snap["biome"] in ("village", "forest", "jungle") else pal["g1"]
     cells = snap["cells"]
@@ -8936,12 +9012,10 @@ def _ex_render(snap: dict) -> bytes:
     for ty in range(N):
         for tx in range(N):
             if grass_art is not None:
-                tile = _ex_fit(grass_art, T)
-                if tint:                                            # a gentle biome tint so deserts and snow still read
-                    tile = _PILImage.blend(tile, _PILImage.new("RGBA", (T, T), tint + (255,)), 0.32)
+                tile = _ex_grass_tile(grass_art, T, tint, snap["cx"] + tx, snap["cy"] + ty)
             else:
                 tile = _ex_ground(pal, snap["seed"], snap["cx"] + tx, snap["cy"] + ty, T * SS).resize((T, T), _PILImage.LANCZOS)
-            canvas.alpha_composite(tile, (tx * T, ty * T))
+            _ex_put(canvas, tile, tx * T, ty * T)
     # 2 — trees, rocks, bushes (a bush covers whatever stands in it), chests
     for ty in range(N):
         for tx in range(N):
@@ -8954,7 +9028,7 @@ def _ex_render(snap: dict) -> bytes:
             art = _ex_art.get(art_key)
             if art is not None:
                 sz = {"bush": 0.92, "chest": 0.78}.get(kind, 1.0)
-                canvas.alpha_composite(_ex_fit(art, int(T * sz)), (tx * T + int(T * (1 - sz) / 2), ty * T + int(T * (1 - sz) / 2)))
+                _ex_put(canvas, _ex_fit(art, int(T * sz)), tx * T + int(T * (1 - sz) / 2), ty * T + int(T * (1 - sz) / 2))
                 continue
             t2 = _PILImage.new("RGBA", (T * SS, T * SS), (0, 0, 0, 0))
             r = _ex_rng(snap["seed"], wx, wy, kind)
@@ -8964,8 +9038,14 @@ def _ex_render(snap: dict) -> bytes:
                 _ex_chest(t2)
             else:
                 _ex_tree(t2, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
-            canvas.alpha_composite(t2.resize((T, T), _PILImage.LANCZOS), (tx * T, ty * T))
+            _ex_put(canvas, t2.resize((T, T), _PILImage.LANCZOS), tx * T, ty * T)
     d = _PILDraw.Draw(canvas, "RGBA")
+    # 2b — a small yellow box on every tile you can step onto
+    for mx, my in snap["moves"]:
+        c = T * .34
+        x0, y0 = mx * T + (T - c) / 2, my * T + (T - c) / 2
+        d.rounded_rectangle([x0, y0, x0 + c, y0 + c], radius=c * .22, fill=(255, 214, 40, 225),
+                            outline=(255, 232, 110, 255), width=2)
     # 3 — animals (small, feet on the tile's baseline; bigger animals a little larger)
     for a in snap["animals"]:
         tx, ty = a["tx"], a["ty"]
@@ -8978,8 +9058,15 @@ def _ex_render(snap: dict) -> bytes:
             d.ellipse([cx + T * .16, cy + T * .74, cx + T * .84, cy + T * .98], outline=ring, width=4)
         _ex_pasted(canvas, _ex_sprites.get(a["name"]) or _ex_sprite_fallback(a["name"], 128), tx, ty, T, size)
         if a["mood"] == "flee":
-            d.text((cx + T - 16, cy + T * .30), "!", font=_ex_font(26), fill=(255, 240, 120, 255), anchor="mm",
+            d.text((cx + T - 12, cy + T * .30), "!", font=_ex_font(22), fill=(255, 240, 120, 255), anchor="mm",
                    stroke_width=3, stroke_fill=(0, 0, 0, 255))
+        # the yellow circle: bold on your target, thin on other animals you could reach, faint on ones out of reach
+        if a["target"]:
+            d.ellipse([cx + 3, cy + 3, cx + T - 3, cy + T - 3], outline=(255, 214, 0, 255), width=5)
+        elif a["inrange"]:
+            d.ellipse([cx + 6, cy + 6, cx + T - 6, cy + T - 6], outline=(255, 214, 0, 200), width=2)
+        else:
+            d.ellipse([cx + 6, cy + 6, cx + T - 6, cy + T - 6], outline=(255, 255, 255, 110), width=2)
     # 4 — the hunter (a "huntress" key will slot in here once that art exists)
     hx, hy = snap["hx"], snap["hy"]
     d.ellipse([hx * T + T * .22, hy * T + T * .82, hx * T + T * .78, hy * T + T * .99], fill=(0, 0, 0, 55))
@@ -8989,7 +9076,6 @@ def _ex_render(snap: dict) -> bytes:
         _ex_player(hero)
     _ex_pasted(canvas, hero, hx, hy, T, 1.0, feet=.98)
     W = H = T * N
-    canvas.alpha_composite(_ex_vignette(W, H))
     d = _PILDraw.Draw(canvas, "RGBA")
     # 5 — trail footprints on the edge tile that lies toward each clue (above the fade so they stay visible)
     trail = _ex_art.get("trail")
@@ -9000,7 +9086,6 @@ def _ex_render(snap: dict) -> bytes:
         ty = max(0, min(N - 1, hy + round(c["dy"] * k)))
         if trail is not None and (tx, ty) != (hx, hy):
             _ex_pasted(canvas, trail, tx, ty, T, .8, feet=.9)
-    d.rectangle([0, 0, W - 1, H - 1], outline=(18, 18, 24, 255), width=4)
     # 6 — the edge of the world: an amber line on every side where the land stops
     amber = (255, 196, 80, 235)
     e = snap["edges"]
@@ -9031,7 +9116,7 @@ def _ex_render(snap: dict) -> bytes:
                   fill=(255, 226, 110, 255))
         d.text((bx + 14, by), f"~{c['d']}", font=_ex_font(20), fill=(255, 255, 255, 255), anchor="mm")
     buf = _io.BytesIO()
-    canvas.convert("RGB").save(buf, "PNG")
+    canvas.save(buf, "PNG")
     return buf.getvalue()
 
 
@@ -9097,50 +9182,74 @@ async def explore_image(user_id: str) -> bytes | None:
         return None
 
 
-async def explore_show(interaction, user_id: str, *, new: bool = False) -> None:
+async def _send_png_panel(interaction, comps: list, png: bytes, fname: str, *, new: bool, ephemeral: bool = False) -> None:
+    """Send / edit a V2 panel with one PNG attached (the panel points at attachment://<fname>). Raises discord.HTTPException."""
+    _clean_components(comps)
+    body = {"flags": V2_FLAGS | (64 if ephemeral else 0), "components": comps, "allowed_mentions": {"parse": []},
+            "attachments": [{"id": 0, "filename": fname}]}
+    f = discord.File(_io.BytesIO(png), filename=fname)
+    form = lambda payload: [{"name": "payload_json", "value": json.dumps(payload)},
+                            {"name": "files[0]", "value": f.fp, "filename": fname, "content_type": "image/png"}]
+    if _is_msg(interaction):
+        interaction.response.done = True
+        payload = {**body, "message_reference": {"message_id": str(interaction.id), "fail_if_not_exists": False}}
+        await bot.http.request(Route("POST", "/channels/{channel_id}/messages",
+                                     channel_id=interaction.channel_id), form=form(payload), files=[f])
+    elif new and not interaction.response.is_done():
+        route = Route("POST", "/interactions/{interaction_id}/{interaction_token}/callback",
+                      interaction_id=interaction.id, interaction_token=interaction.token)
+        await interaction.client.http.request(route, form=form({"type": 4, "data": body}), files=[f])
+    elif new:
+        route = Route("POST", "/webhooks/{application_id}/{token}",
+                      application_id=interaction.application_id, token=interaction.token)
+        await interaction.client.http.request(route, form=form(body), files=[f])
+    else:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        route = Route("PATCH", "/webhooks/{application_id}/{token}/messages/@original",
+                      application_id=interaction.application_id, token=interaction.token)
+        await interaction.client.http.request(route, form=form(body), files=[f])
+
+
+async def explore_show(interaction, user_id: str, *, new: bool = False, ephemeral: bool = False) -> None:
     """Send / update the Explore panel with its map image attached (falls back to text-only)."""
     png = await explore_image(user_id)
     comps = build_explore_components(user_id, image=png is not None)
     if png is None:
         if new:
-            await send_v2_followup(interaction, comps)
+            await send_v2_followup(interaction, comps, ephemeral=ephemeral)
         else:
             await smart_update_v2(interaction, comps)
         return
-    _clean_components(comps)
-    body = {"flags": V2_FLAGS, "components": comps, "allowed_mentions": {"parse": []},
-            "attachments": [{"id": 0, "filename": "explore.png"}]}
-    f = discord.File(_io.BytesIO(png), filename="explore.png")
-    form = lambda payload: [{"name": "payload_json", "value": json.dumps(payload)},
-                            {"name": "files[0]", "value": f.fp, "filename": "explore.png",
-                             "content_type": "image/png"}]
     try:
-        if _is_msg(interaction):
-            interaction.response.done = True
-            payload = {**body, "message_reference": {"message_id": str(interaction.id), "fail_if_not_exists": False}}
-            await bot.http.request(Route("POST", "/channels/{channel_id}/messages",
-                                         channel_id=interaction.channel_id), form=form(payload), files=[f])
-        elif new and not interaction.response.is_done():
-            route = Route("POST", "/interactions/{interaction_id}/{interaction_token}/callback",
-                          interaction_id=interaction.id, interaction_token=interaction.token)
-            await interaction.client.http.request(route, form=form({"type": 4, "data": body}), files=[f])
-        elif new:
-            route = Route("POST", "/webhooks/{application_id}/{token}",
-                          application_id=interaction.application_id, token=interaction.token)
-            await interaction.client.http.request(route, form=form(body), files=[f])
-        else:
-            if not interaction.response.is_done():
-                await interaction.response.defer()
-            route = Route("PATCH", "/webhooks/{application_id}/{token}/messages/@original",
-                          application_id=interaction.application_id, token=interaction.token)
-            await interaction.client.http.request(route, form=form(body), files=[f])
+        await _send_png_panel(interaction, comps, png, "explore.png", new=new, ephemeral=ephemeral)
     except discord.HTTPException:
         logger.exception("explore image upload failed; sending the panel without it")
         plain = build_explore_components(user_id, image=False)
         if new:
-            await send_v2_followup(interaction, plain)
+            await send_v2_followup(interaction, plain, ephemeral=ephemeral)
         else:
             await smart_update_v2(interaction, plain)
+
+
+async def explore_info_show(interaction, user_id: str) -> None:
+    """The private 'weapon range' sheet: the numbers plus a 7x7 picture of exactly which tiles you can hit."""
+    tool = data[user_id].get("tool", "Bare Hands")
+    png = None
+    if _PIL_OK:
+        try:
+            png = await asyncio.to_thread(_ex_range_png, tool_range(tool))
+        except Exception:
+            logger.exception("explore range picture failed")
+    comps = build_explore_info_components(user_id, image=png is not None)
+    if png is None:
+        await send_v2_followup(interaction, comps, ephemeral=True)
+        return
+    try:
+        await _send_png_panel(interaction, comps, png, "range.png", new=True, ephemeral=True)
+    except discord.HTTPException:
+        logger.exception("explore range upload failed; sending the sheet without it")
+        await send_v2_followup(interaction, build_explore_info_components(user_id, image=False), ephemeral=True)
 
 
 def _ex_summary(st: dict) -> str:
@@ -9161,13 +9270,18 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     hp, mx = player_hp(user_id)
     seen = _ex_visible(st)
     over = _ex_over(st)
+    tool = data[user_id].get("tool", "Bare Hands")
+    rng = tool_range(tool)
+    tgt = _ex_target(st, rng)
+    in_reach = _ex_targets(st, rng)
     nearby = []
     for a in seen:
         d = _ex_dist(a["x"], a["y"], px, py)
         beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
         arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
         mood = {"flee": "bolting", "stalk": "stalking you"}.get(a.get("mood"), beh if beh != "passive" else "calm")
-        nearby.append(f"{arrow}  {animal_emoji(a['name'])} **{a['name']}** · {d} tile{'s' if d != 1 else ''} away · {mood}")
+        tag = "🎯 **target**" if a is tgt else ("in range" if a in in_reach else "out of range")
+        nearby.append(f"{arrow}  {animal_emoji(a['name'])} **{a['name']}** · {d} tile{'s' if d != 1 else ''} away · {mood} · {tag}")
     for a in st["animals"]:
         if a["clue"] > 0 and a not in seen:
             d = _ex_dist(a["x"], a["y"], px, py)
@@ -9178,12 +9292,12 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     msg = "\n".join(ln for ln in st.get("msg", "").split("\n") if ln.strip())
     x0, y0, x1, y1 = _ex_bounds(st)
     steps_left = max(0, EXPLORE_MAX_STEPS - st.get("steps", 0))
-    tool = data[user_id].get("tool", "Bare Hands")
     role = tool_role_info(tool)
     foot = (f"{emoji('hp') or '❤️'} **{hp}/{mx}**  ·  🧭 **{steps_left}** steps left  ·  🗺 {x1 - x0 + 1}×{y1 - y0 + 1}"
+            f"  ·  🎯 range **{rng}**"
             + (f"  ·  {role['emoji']} {tool}" if FEATURE_GEAR_ROLES else ""))
     gap = {"type": 14, "divider": False, "spacing": 2}
-    blocks: list = [{"type": 10, "content": f"### {BIOME_EMOJIS.get(st['biome'], '')} Explore — {BIOME_NAMES.get(st['biome'], st['biome'])}"}]
+    blocks: list = [{"type": 10, "content": f"### {BIOME_EMOJIS.get(st['biome'], '')} Hunt — {BIOME_NAMES.get(st['biome'], st['biome'])}"}]
     if image:
         blocks.append({"type": 12, "items": [{"media": {"url": "attachment://explore.png"}, "description": "The map around you"}]})
     if msg:
@@ -9206,11 +9320,82 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
         {"type": 14, "divider": False, "spacing": 1},
         {"type": 1, "components": [_b("◀", "w", disabled=over), _b("▲", "n", disabled=over),
                                    _b("▼", "s", disabled=over), _b("▶", "e", disabled=over)]},
-        {"type": 1, "components": [_b("Aim & Fire", "fire", 4, "target", disabled=not seen or over),
+        {"type": 1, "components": [_b("Fire", "fire", 4, "target", disabled=tgt is None or over),
+                                   _b("Target", "target", disabled=len(in_reach) < 2 or over),
                                    _b("Wait", "wait", disabled=over),
-                                   _b("New Expedition", "new", 3 if over else 2),
+                                   _b("ℹ Info", "info")]},
+        {"type": 1, "components": [_b("New Expedition", "new", 3 if over else 2),
                                    {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"}]},
     ]}]
+
+
+def _ex_range_png(rng: int) -> bytes:
+    """A 7x7 field with the hunter in the middle and every tile within `rng` lit up (the numbers are the distance)."""
+    T, N = 64, EXPLORE_VIEW * 2 + 1
+    c = EXPLORE_VIEW
+    canvas = _PILImage.new("RGB", (T * N, T * N), (84, 140, 70))
+    grass = _ex_art.get("grass")
+    for ty in range(N):
+        for tx in range(N):
+            if grass is not None:
+                _ex_put(canvas, _ex_grass_tile(grass, T, None, tx, ty), tx * T, ty * T)
+            elif (tx + ty) % 2:
+                canvas.paste((60, 112, 56), (tx * T, ty * T, tx * T + T, ty * T + T))
+    d = _PILDraw.Draw(canvas, "RGBA")
+    for ty in range(N):
+        for tx in range(N):
+            dist = max(abs(tx - c), abs(ty - c))
+            x0, y0 = tx * T, ty * T
+            if dist <= rng:
+                d.rectangle([x0, y0, x0 + T, y0 + T], fill=(255, 214, 40, 105))
+            else:
+                d.rectangle([x0, y0, x0 + T, y0 + T], fill=(10, 20, 14, 95))
+            d.rectangle([x0, y0, x0 + T, y0 + T], outline=(255, 255, 255, 60), width=1)
+            if 0 < dist <= rng:
+                d.text((x0 + T / 2, y0 + T / 2), str(dist), font=_ex_font(24), fill=(255, 255, 255, 235), anchor="mm",
+                       stroke_width=3, stroke_fill=(70, 50, 0, 255))
+    d.rectangle([(c - rng) * T, (c - rng) * T, (c + rng + 1) * T, (c + rng + 1) * T], outline=(255, 214, 0, 255), width=5)
+    hero = _ex_art.get("hunter")
+    if hero is None:
+        hero = _PILImage.new("RGBA", (T * 2, T * 2), (0, 0, 0, 0))
+        _ex_player(hero)
+    _ex_pasted(canvas, hero, c, c, T, 1.0, feet=.98)
+    buf = _io.BytesIO()
+    canvas.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def build_explore_info_components(user_id: str, image: bool = True) -> list:
+    tool = data[user_id].get("tool", "Bare Hands")
+    rng = tool_range(tool)
+    odds = " · ".join(f"{k} tile{'s' if k != 1 else ''} **{round(_ex_hit_chance(tool, k) * 100)}%**" for k in range(1, rng + 1))
+    by_range: dict = {}
+    for n in TOOLS:
+        by_range.setdefault(tool_range(n), []).append(n)
+    others = "\n".join(f"-# **{r} tile{'s' if r != 1 else ''}:** "
+                       + (", ".join(by_range[r]) if len(by_range[r]) <= 9 else ", ".join(by_range[r][:9]) + " …")
+                       for r in sorted(by_range))
+    blocks: list = [{"type": 10, "content": f"### 🎯 Attack range — {tool}"}]
+    if image:
+        blocks.append({"type": 12, "items": [{"media": {"url": "attachment://range.png"},
+                                              "description": f"The 7x7 field: you in the middle, the lit squares are in reach (range {rng})"}]})
+    blocks += [
+        {"type": 14, "divider": False, "spacing": 2},
+        {"type": 10, "content": f"**Range {rng} tile{'s' if rng != 1 else ''}.** You can only shoot an animal inside the **lit "
+                                f"squares** — any direction, diagonals too. The numbers are the distance.\n"
+                                f"**Hit chance:** {odds} (never below 35%)."},
+        {"type": 14, "divider": True, "spacing": 2},
+        {"type": 10, "content": "**On the map**\n"
+                                "- 🟡 **Yellow circle** — your target. Tap **Target** to switch between animals in reach.\n"
+                                "- 🟨 **Small yellow boxes** — tiles you can step onto.\n"
+                                "- ⚪ A faint circle means an animal is in view but out of reach: walk closer (it may move too).\n"
+                                "- 🌿 Bushes hide an animal until you're right next to it.\n"
+                                "- 🔫 **Fire** is a real hunt: it spends ammo and uses your hunt cooldown, for one animal."},
+        {"type": 14, "divider": False, "spacing": 1},
+        {"type": 10, "content": f"**Every tool's reach**\n{others}"},
+    ]
+    return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": blocks}]
+
 
 # ═══════════════════════════════════════════════════════════════
 # SHARE CARDS  ·  turn a rare moment into a channel post (V2, Phase 19-23)
@@ -13206,8 +13391,8 @@ def build_settings_components(user_id: str) -> list:
                           "Adds an Edit Bio button and a \"what my profile shows\" picker to your own `/profile`. "
                           "Off by default.", profile_editor_on(user_id)),
         _setting_section("explore_mode", emoji('compass'), "Explore Mode (beta)",
-                          "Unlocks `/explore`: wander a map on foot, follow clues to roaming animals and take real shots. "
-                          "Off by default.", explore_enabled(user_id)),
+                          "Hunting becomes a walk on a 7x7 map: follow clues to roaming animals, get in your weapon's range and take "
+                          "real shots. Replaces the instant Hunt while it is on. Off by default.", explore_enabled(user_id)),
     ]
 
     comps = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
@@ -17825,7 +18010,6 @@ _CROSS_USER_PANELS = {
     "lottery":        lambda uid, it: build_lottery_components(uid),
     "biome":          lambda uid, it: build_biome_panel_components(uid),
     "world":          lambda uid, it: build_world_components(uid),
-    "explore":        lambda uid, it: build_explore_components(uid, image=False) if explore_enabled(uid) else None,
     "guide":          lambda uid, it: build_collection_components(uid),
     "collection":     lambda uid, it: build_collection_components(uid),
     "exped":          lambda uid, it: build_expedition_components(uid),
@@ -17931,6 +18115,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 clicker, interaction.guild, "hunter", "global", "Level", 0, "all"), ephemeral=True)
             return
         if sub == "hunt":
+            if await explore_hunt_entry(interaction, clicker, owner=False):
+                return
             can_hunt, remaining = await RateLimiter.can_hunt(clicker, hunt_cooldown_s(clicker))
             if not can_hunt:
                 await send_ephemeral_v2(interaction,
@@ -18687,9 +18873,14 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                                     f"</settings:{COMMAND_ID.get('settings', '0')}>.", 0xE67E22)
             return
         sub = parts[1]
+        if sub == "info":
+            await explore_info_show(interaction, owner_id)
+            return
         async with user_transaction(owner_id):
             if sub == "fire":
                 out = explore_fire(owner_id)
+            elif sub == "target":
+                out = explore_target(owner_id)
             elif sub == "new":
                 out = explore_new(owner_id)
             elif sub in _EX_DIRS or sub == "wait":
@@ -18741,6 +18932,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                     await smart_update_v2(interaction, comps)
                 else:
                     await send_v2_followup(interaction, comps, ephemeral=True)
+                return
+            if await explore_hunt_entry(interaction, actor, owner=is_owner):
                 return
             can_hunt, remaining = await RateLimiter.can_hunt(actor, hunt_cooldown_s(actor))
             if not can_hunt:
@@ -22222,6 +22415,41 @@ async def balance_cmd(interaction: discord.Interaction, user: discord.User = Non
         target_id, target.display_name, viewer_id=None if target_id == viewer_id else viewer_id))
     await check_everything(interaction, viewer_id)
 
+async def explore_hunt_entry(interaction, user_id: str, *, owner: bool = True) -> bool:
+    """Explore Mode swaps Hunt for the map. Returns True when it handled the interaction (the caller stops there).
+    A fight / track / flight in progress shows that panel instead, exactly as a normal hunt would."""
+    if not explore_enabled(user_id):
+        return False
+    init_user(user_id)
+    if onboarding_active(user_id):
+        return False
+    if is_traveling(user_id):
+        await send_ephemeral_v2(interaction, f"{emoji('plane')} You're in transit — you can't hunt until you land.", 0xE67E22)
+        return True
+    comps = None
+    if data[user_id].get("_boss"):
+        comps = build_myth_fight_components(user_id, intro=True)
+    elif tracking_active(user_id):
+        comps = build_tracking_components(user_id)
+    elif animal_fight_active(user_id):
+        comps = build_animal_fight_components(user_id, intro=True)
+    if comps is not None:
+        await hunt_reply(interaction, comps, user_id, owner=owner)
+        return True
+    async with user_transaction(user_id):
+        _ex_state(user_id)
+    msg = getattr(interaction, "message", None)
+    is_comp = msg is not None and not _is_msg(interaction)
+    if not is_comp:                                                    # a slash command: always a new message
+        await explore_show(interaction, user_id, new=True)
+    elif owner and not hunt_new_message(user_id):
+        await explore_show(interaction, user_id)
+    else:
+        private = bool(owner and getattr(getattr(msg, "flags", None), "ephemeral", False))
+        await explore_show(interaction, user_id, new=True, ephemeral=private)
+    return True
+
+
 @bot.tree.command(name="hunt", description="Go hunting in your current biome!")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
@@ -22231,6 +22459,9 @@ async def hunt_cmd(interaction: discord.Interaction):
         return
 
     if await _maybe_onboard(interaction, user_id):
+        return
+
+    if await explore_hunt_entry(interaction, user_id):
         return
 
     # ✅ SIMPLE RATE LIMIT CHECK - Just add this block
@@ -22326,22 +22557,6 @@ async def settings_cmd(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
     await send_v2_followup(interaction, build_settings_components(user_id))
-
-@bot.tree.command(name="explore", description="Wander the map on foot — animals roam and clues point the way (beta)")
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@app_commands.allowed_installs(guilds=True, users=True)
-async def explore_cmd(interaction: discord.Interaction):
-    user_id = await _common_init(interaction)
-    if not user_id: return
-    if await _maybe_onboard(interaction, user_id): return
-    if not explore_enabled(user_id):
-        await send_ephemeral_v2(interaction,
-            f"{emoji('compass')} **Explore Mode** is a beta feature and it's off. Turn it on in "
-            f"</settings:{COMMAND_ID.get('settings', '0')}> and run this again.", 0xE67E22)
-        return
-    async with user_transaction(user_id):
-        _ex_state(user_id)
-    await explore_show(interaction, user_id, new=True)
 
 @bot.tree.command(name="events", description="View ongoing global events")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
