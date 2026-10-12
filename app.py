@@ -93,6 +93,9 @@ from game_data import (
     RARITY_CRATE, CRATE_RARITY, CRATE_TIER_WEIGHTS, roll_crate_rarity,
     MAX_PERSONAL_BOOST, MAX_TRIBE_BOOST, MAX_TEMP_BOOST, HEALING_BUY_CAP,
     TRACK_MIN_PROGRESS_FRAC, TRACK_EXTRA_STEPS,
+    TRACK_FAV_RISK, TRACK_FAV_PROGRESS, TRACK_BAD_RISK, TRACK_BAD_PROGRESS, TRACK_CLUE_RELIABILITY,
+    TRACK_DOUBT_IF_MISLED, TRACK_DOUBT_IF_TRUE, TRACK_DOUBT_LINES, TRACK_SQUALL_RISK,
+    BIOME_RULES, biome_rule, biome_rule_line, ROLE_INFO, tool_role, tool_role_info,
     GAMBLING_BADGES, AMMO_VARIETY_TYPES,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
@@ -374,6 +377,10 @@ FEATURE_SERVER_GOALS     = _flag("FEATURE_SERVER_GOALS")
 FEATURE_REFERRALS        = _flag("FEATURE_REFERRALS")
 FEATURE_ANIMAL_COMBAT    = _flag("FEATURE_ANIMAL_COMBAT")
 FEATURE_HUNTERS_PATH     = _flag("FEATURE_HUNTERS_PATH")
+FEATURE_TRACK_CLUES      = _flag("FEATURE_TRACK_CLUES")       # the scene on screen changes which tracking move is right
+FEATURE_BIOME_RULES      = _flag("FEATURE_BIOME_RULES")       # one decision-changing rule per region (tracking + animal fights)
+FEATURE_GEAR_ROLES       = _flag("FEATURE_GEAR_ROLES")        # quiet / power / capture tool roles
+FEATURE_EVENT_CARRY      = _flag("FEATURE_EVENT_CARRY")       # choices in a story-event run carry into later scenes
 
 # Feature-gated background loops defined later in the file register themselves
 # here; on_ready starts every entry. Keeps task wiring next to its own code.
@@ -429,7 +436,7 @@ def invite_url() -> str:
 #   "community" — shared goal + vote (Duck Takeover)
 
 import event_data as ED
-from event_scenes import SCENES as EV_SCENES
+from event_scenes import SCENES as EV_SCENES, FLAGS as EV_FLAGS
 
 EVENTS = {
     "thieving_fox": {
@@ -1828,7 +1835,7 @@ def _ev3_collect(uid: str, ev: dict, spec: dict, biome: str) -> list[str]:
     lines: list[str] = []
     if mode == "impact":
         if (biome in _ev3_impact_regions(uid, ev, spec) and dd.get("found", 0) < spec["day_cap"]
-                and random.random() < p["chance"]):
+                and random.random() < p["chance"] * _gear(uid)["find_mult"]):
             dd["found"] = dd.get("found", 0) + 1
             lines.append(f"☄️ **You find a Star Fragment** half-buried in a fresh crater!")
             lines += _ev3_award(uid, spec, 1)
@@ -1840,7 +1847,7 @@ def _ev3_collect(uid: str, ev: dict, spec: dict, biome: str) -> list[str]:
             lines += _ev3_award(uid, spec, 1)
     elif mode == "migrate":
         here = [a for a, b in _ev3_migration_today(uid, ev, spec) if b == biome]
-        if here and dd.get("found", 0) < spec["day_cap"] and random.random() < p["chance"]:
+        if here and dd.get("found", 0) < spec["day_cap"] and random.random() < p["chance"] * _gear(uid)["find_mult"]:
             sp = random.choice(here)
             dd["found"] = dd.get("found", 0) + 1
             jr = st.setdefault("journal_sp", [])
@@ -1864,10 +1871,61 @@ def _ev3_scenes_start(uid: str, ev: dict, spec: dict) -> str:
     if dd.get("runs", 0) >= spec["attempts_day"]:
         return f"{emoji('cross_mark')} No attempts left today — come back tomorrow."
     dd["runs"] = dd.get("runs", 0) + 1
-    ids = [s["id"] for s in random.sample(EV_SCENES[spec["scene_pool"]], EV3_SCENES_PER_RUN)]
-    st["run"] = {"ids": ids, "i": 0, "a": 3, "b": 3, "last": ""}
+    base = [s for s in EV_SCENES[spec["scene_pool"]] if not s.get("needs")]      # follow-ups only appear once earned
+    ids = [s["id"] for s in random.sample(base, EV3_SCENES_PER_RUN)]
+    st["run"] = {"ids": ids, "i": 0, "a": 3, "b": 3, "last": "", "flags": [], "strain": False, "trail": []}
     mark_user_dirty(uid)
     return ""
+
+
+def _ev3_flag_label(spec: dict, flag: str) -> str:
+    e, label = EV_FLAGS.get(spec["scene_pool"], {}).get(flag, ("🎒", flag))
+    return f"{e} {label}"
+
+
+def _ev3_carry_apply(run: dict, spec: dict, scene: dict, ci: int) -> str:
+    """Apply what the choice just made carries forward: things gained or dropped, a harder next stretch,
+    a line for the journey. The player is told in the same breath. Returns the note to append."""
+    fx = (scene.get("fx") or {}).get(ci, {})
+    flags = run.setdefault("flags", [])
+    notes: list[str] = []
+    for f in list(scene.get("uses", [])) + list(fx.get("lose", [])):
+        if f in flags:
+            flags.remove(f)
+            if f in fx.get("lose", []):
+                notes.append(f"you drop {_ev3_flag_label(spec, f)}")
+    g = fx.get("gain")
+    if g and g not in flags:
+        flags.append(g)
+        notes.append(f"you now carry {_ev3_flag_label(spec, g)}")
+    if fx.get("strain"):
+        run["strain"] = True
+        notes.append("the next stretch will be harder")
+    tag = fx.get("tag") or (scene.get("title") if scene.get("needs") else "")
+    if tag:
+        run.setdefault("trail", []).append(tag)
+    _ev3_followup_sync(run, spec, g)
+    return ("\n-# " + "; ".join(notes).capitalize() + ".") if notes else ""
+
+
+def _ev3_followup_sync(run: dict, spec: dict, gained: str | None) -> None:
+    """Keep the upcoming scenes honest: a follow-up whose flag has been lost goes back to an ordinary scene,
+    and a freshly gained flag with a follow-up gets one slipped into the next two scenes."""
+    pool = EV_SCENES[spec["scene_pool"]]
+    flags = run.get("flags", [])
+    byid = {s["id"]: s for s in pool}
+    for j in range(run["i"], EV3_SCENES_PER_RUN):
+        sc = byid.get(run["ids"][j])
+        if sc and sc.get("needs") and sc["needs"] not in flags:
+            spare = [s["id"] for s in pool if not s.get("needs") and s["id"] not in run["ids"]]
+            if spare:
+                run["ids"][j] = random.choice(spare)
+    if gained:
+        fu = [s["id"] for s in pool if s.get("needs") == gained and s["id"] not in run["ids"]]
+        slots = [j for j in range(run["i"], min(run["i"] + 2, EV3_SCENES_PER_RUN))
+                 if not byid[run["ids"][j]].get("needs")]
+        if fu and slots:
+            run["ids"][random.choice(slots)] = random.choice(fu)
 
 
 def _ev3_scenes_choose(uid: str, ev: dict, spec: dict, ci: int) -> dict:
@@ -1877,10 +1935,17 @@ def _ev3_scenes_choose(uid: str, ev: dict, spec: dict, ci: int) -> dict:
         return {"text": "", "ended": None, "lines": []}
     scene = _ev3_scene(spec, run["ids"][run["i"]])
     label, outcome, da, db = scene["choices"][ci]
+    carry = FEATURE_EVENT_CARRY
+    if carry and run.get("strain"):                    # the last choice made this stretch harder: gains are one smaller
+        da = da - 1 if da > 0 else da
+        db = db - 1 if db > 0 else db
+    run["strain"] = False
     run["a"] = max(0, min(EV3_METER_MAX, run["a"] + da))
     run["b"] = max(0, min(EV3_METER_MAX, run["b"] + db))
     run["i"] += 1
     run["last"] = f"**{label}** — {outcome}"
+    if carry:
+        run["last"] += _ev3_carry_apply(run, spec, scene, ci)
     mA, mB = spec["meters"]
     ended = None
     if run["a"] <= 0 or run["b"] <= 0:
@@ -1893,7 +1958,7 @@ def _ev3_scenes_choose(uid: str, ev: dict, spec: dict, ci: int) -> dict:
         pts = (spec["win_progress"] + (spec["flawless_bonus"] if flawless else 0)) if ended == "win" else spec["fail_progress"]
         st["runs_done"] = st.get("runs_done", 0) + 1
         out["lines"] = _ev3_award(uid, spec, pts)
-        out.update(pts=pts, flawless=flawless, a=run["a"], b=run["b"])
+        out.update(pts=pts, flawless=flawless, a=run["a"], b=run["b"], journey=list(run.get("trail", [])))
         st["run"] = None
     mark_user_dirty(uid)
     return out
@@ -2370,8 +2435,17 @@ def _ev3_scenes_body(uid: str, ev: dict, spec: dict, st: dict) -> tuple[str, lis
                "custom_id": f"ev3:scn:start:{uid}", "disabled": left <= 0}
         return txt, [{"type": 1, "components": [btn]}]
     scene = _ev3_scene(spec, run["ids"][run["i"]])
-    txt = (f"**Scene {run['i'] + 1}/{EV3_SCENES_PER_RUN}**\n{scene['text']}\n\n"
+    title = f" — {scene['title']}" if scene.get("title") else ""
+    because = f"-# {scene['because']}\n" if scene.get("because") else ""
+    txt = (f"**Scene {run['i'] + 1}/{EV3_SCENES_PER_RUN}**{title}\n{because}{scene['text']}\n\n"
            f"{mA}: {_ev3_meter_bar(run['a'])} **{run['a']}** · {mB}: {_ev3_meter_bar(run['b'])} **{run['b']}**")
+    if FEATURE_EVENT_CARRY:
+        if run.get("strain"):
+            txt += f"\n-# {emoji('warning')} Your last choice made this stretch harder — every gain here is one smaller."
+        if run.get("flags"):
+            txt += "\n-# Carrying: " + " · ".join(_ev3_flag_label(spec, f) for f in run["flags"])
+        if run.get("trail"):
+            txt += "\n-# Journey: " + " → ".join(run["trail"][-4:])
     if run.get("last"):
         txt = f"-# {run['last']}\n\n" + txt
     btns = [{"type": 2, "style": 1, "label": c[0][:80], "custom_id": f"ev3:scn:c{i}:{uid}"}
@@ -2694,7 +2768,8 @@ async def _handle_ev3(interaction: discord.Interaction, parts: list, values: lis
                     st = _ev3_st(owner_id)
                     st["lastres"] = (f"{head} {out['text']}\n{mA}: **{out['a']}** · {mB}: **{out['b']}** → "
                                      f"**+{out['pts']} {spec['token'][1]}{'s' if out['pts'] != 1 else ''}**"
-                                     + (" ✨ *flawless*" if out["flawless"] else ""))
+                                     + (" ✨ *flawless*" if out["flawless"] else "")
+                                     + (f"\n-# Your run: " + " → ".join(out["journey"]) if out.get("journey") else ""))
                 res["lines"] = out.get("lines", [])
         elif sub == "clue":
             slot = int(parts[3])
@@ -2916,7 +2991,7 @@ def _sat_engage(uid: str) -> str:
     if hp <= 15:
         return f"{emoji('warning')} You're too wounded to fight (**{hp}/{mx} HP**). Heal up first."
     tool = data[uid].get("tool", "Bare Hands")
-    lo, hi = tool_combat_damage(tool)
+    lo, hi = tool_combat_damage(tool, FEATURE_GEAR_ROLES)
     acc = tool_combat_accuracy(tool)
     scale = _sat_scale(ss["biome"])
     h = data[uid]["health"]
@@ -7428,7 +7503,8 @@ def run_hunt(user_id: str, guided: bool = False) -> dict:
             _enc  = min(_enc_cap,
                         (MYTH_ENCOUNTER_BASE + MYTH_ENCOUNTER_LUCK * _lk / (_lk + 200))
                         * ev_myth_encounter_mult()
-                        * world_mods["myth_mult"])
+                        * world_mods["myth_mult"]
+                        * _gear(user_id)["myth_enc"])                  # slayer gear meets mythicals more often
         if myth_pool and random.random() < _enc:
             creature = _forced_creature or random.choice(myth_pool)
             if _forced_creature:
@@ -7490,10 +7566,11 @@ def run_hunt(user_id: str, guided: bool = False) -> dict:
     _xp_ev   = ev_xp_mult()   * world_mods["xp_mult"] * theme_xp_mult(user_id) * ACTIVE_HUNT_XP_MULT   # Training Tuesday
     _rare_p  = min(RARE_CATCH_MAX_WORLD if world_mods["rare_mult"] > 1 else 1.0,
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
-                   + trophy_effect_value(user_id, "perfect_catch_pp") / 100)   # Grindylow: Webbed Claw
+                   + trophy_effect_value(user_id, "perfect_catch_pp") / 100   # Grindylow: Webbed Claw
+                   + _capture_pp(user_id))                                     # capture gear: helps a Perfect Catch quest
 
     rolled = ([ONBOARDING_FIRST_ANIMAL] * multi if guided
-              else [pick_biome_animal(biome) for _ in range(multi)])
+              else _capture_lure(user_id, biome, [pick_biome_animal(biome) for _ in range(multi)]))
 
     # ── One dangerous animal, at most, becomes an interactive encounter ──
     # Every OTHER rolled animal (including any not selected) resolves as an
@@ -7599,6 +7676,7 @@ def run_hunt(user_id: str, guided: bool = False) -> dict:
     # used to roll it six times. Spread it evenly over the catches instead.
     _hunt_crate_p = hunt_crate_chance(TOOLS.get(tool_name, {}).get("tier", 1), _ev_cr,
                                       trophy_effect_value(user_id, "crate_drop_pp") / 100)   # Loch Ness
+    _hunt_crate_p = min(1.0, _hunt_crate_p * _gear(user_id)["crate"])                    # hauler gear: more crate drops
     _per_catch_crate_p = _hunt_crate_p / max(1, len(catches))
     for c in catches:
         c_rarity = ANIMAL_DATA.get(c["animal"], {}).get("rarity", "common")
@@ -7734,6 +7812,78 @@ def sell_all_inv(user_id: str) -> dict:
 
 TRACK_BONUS_HP_MULT = {"ambush": 0.82, "careful": 1.0, "": 1.0, "shaken": 1.0}
 
+# ── tracking: region + gear tuning (the scene's own numbers live in game_data) ──
+TRACK_INVESTIGATE_MAX    = 2                # ruins: markings you can pick over per trail
+TRACK_INVESTIGATE_ODDS   = (0.40, 0.30)     # shortcut, nothing — the remainder is a trap
+TRACK_INVESTIGATE_BONUS  = 3                # trail points a hidden shortcut is worth
+TRACK_INVESTIGATE_TRAP_HP = (10, 16)
+TRACK_NOISE_GAIN         = {"follow": 1, "flank": 1, "push": 2, "observe": -1}   # swamp
+TRACK_NOISE_BITE_HP      = (9, 15)          # + biome tier // 2
+
+# What a tool with no role (or the roles feature switched off) does: nothing.
+_NEUTRAL_ROLE = {"track_risk": 0, "noise": 0, "ambush": 0.0, "dmg": 1.0, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.0,
+                 "capture_pp": 0.0, "lure": 0.0, "find_mult": 1.0,
+                 "label": "", "emoji": "", "blurb": ""}
+
+
+def _gear(user_id: str) -> dict:
+    """The role profile of the tool in hand (all-zero when gear roles are switched off)."""
+    if not FEATURE_GEAR_ROLES:
+        return _NEUTRAL_ROLE
+    return tool_role_info(data.get(user_id, {}).get("tool", "Bare Hands"))
+
+
+def _collection_objectives(user_id: str) -> dict:
+    """What a capture tool can help with right now: whether a Perfect Catch quest is open, and which
+    species open Catch-a-specific-animal quests are waiting on."""
+    out = {"perfect": False, "animals": set()}
+    d = data.get(user_id, {})
+    for q in (d.get("quests") or []) + (d.get("weekly_quests") or []):
+        if q.get("claimed") or q.get("completed"):
+            continue
+        if q.get("stat") == "perfect_catches":
+            out["perfect"] = True
+        elif q.get("stat") == "animal_caught_specific":
+            a = (q.get("requires") or {}).get("animal")
+            if a:
+                out["animals"].add(a)
+    return out
+
+
+def _capture_pp(user_id: str) -> float:
+    """Extra Perfect Catch chance from capture gear — only while a Perfect Catch quest is open, so it
+    finishes an objective instead of out-earning other tools."""
+    pp = _gear(user_id)["capture_pp"]
+    return pp if pp and _collection_objectives(user_id)["perfect"] else 0.0
+
+
+def _capture_lure(user_id: str, biome: str, rolled: list) -> list:
+    """Capture gear draws the animal you NEED: a quest target found in this region, else a common-to-rare
+    species missing from your journal. Never lures epic or legendary animals."""
+    p = _gear(user_id)["lure"]
+    if p <= 0 or not rolled:
+        return rolled
+    roster = BIOME_ANIMALS.get(biome, [])
+    targets = [a for a in _collection_objectives(user_id)["animals"] if a in roster]
+    if targets:
+        pool = targets
+    else:
+        seen = data[user_id].get("record", {})
+        pool = [a for a in roster if a not in seen
+                and ANIMAL_DATA.get(a, {}).get("rarity") in ("common", "uncommon", "rare")]
+    if not pool:
+        return rolled
+    return [random.choice(pool) if random.random() < p else a for a in rolled]
+
+
+def _track_rule(biome: str) -> dict:
+    return biome_rule(biome).get("track", {}) if FEATURE_BIOME_RULES else {}
+
+
+def _fight_rule(biome: str | None) -> dict:
+    return biome_rule(biome or "").get("fight", {}) if FEATURE_BIOME_RULES else {}
+
+
 def tracking_active(user_id: str) -> bool:
     tr = data.get(user_id, {}).get("tracking")
     if not tr:
@@ -7748,15 +7898,82 @@ def _tracking_scene(key: str) -> dict:
             return s
     return TRACKING_SCENES[0]
 
+
+def _track_roll_scene(tr: dict, prev: str | None = None) -> None:
+    """Pick the next scene and decide — privately — whether its clue can be trusted.
+    A trustworthy scene favours its `fav` move and punishes its `bad` ones. A misleading one
+    (TRACK_CLUE_RELIABILITY, or the region's own odds) gives the obvious move nothing extra and
+    quietly favours a different one. A "doubt" line hints at it, but not reliably."""
+    rule = _track_rule(tr.get("biome", ""))
+    tr["scene"] = random.choice([s["key"] for s in TRACKING_SCENES if s["key"] != prev])
+    sc = _tracking_scene(tr["scene"])
+    fav, bad = sc["fav"], list(sc["bad"])
+    steady = tr.pop("steady", False)                                   # desert: an Inspect cleared the haze
+    p_mislead = 0.0 if steady else rule.get("misread", 1 - TRACK_CLUE_RELIABILITY)
+    misled = random.random() < p_mislead
+    if misled:
+        others = [a for a in TRACKING_ACTIONS if a != fav and a not in bad]
+        fav = random.choice(others) if others else None
+    tr["eff_fav"], tr["eff_bad"], tr["misled"] = fav, bad, misled
+    tr["doubt"] = random.random() < (TRACK_DOUBT_IF_MISLED if misled else TRACK_DOUBT_IF_TRUE)
+    tr["squall"] = bool(rule.get("squall")) and random.random() < rule["squall"]
+
+
+def _track_effective(tr: dict) -> tuple:
+    """(favoured action, punished actions) for the scene on screen — what is TRUE, not what it looks like."""
+    sc = _tracking_scene(tr.get("scene", "prints"))
+    fav = tr["eff_fav"] if "eff_fav" in tr else sc["fav"]
+    bad = tr["eff_bad"] if "eff_bad" in tr else sc["bad"]
+    return fav, list(bad)
+
+
+def _track_extra_steps(tr: dict) -> int:
+    return max(0, TRACK_EXTRA_STEPS + int(_track_rule(tr.get("biome", "")).get("extra_steps", 0)))
+
+
+def _track_action_stats(user_id: str, tr: dict, action: str) -> dict:
+    """The spook risk (%) and trail progress of one move RIGHT NOW: the move's base numbers, moved by
+    the scene on screen, the region's rule and the gear in hand."""
+    spec = TRACKING_ACTIONS[action]
+    risk, prog = spec["risk"], spec["progress"]
+    rule = _track_rule(tr.get("biome", ""))
+    if FEATURE_TRACK_CLUES:
+        fav, bad = _track_effective(tr)
+        if action == fav:
+            risk -= TRACK_FAV_RISK
+            prog += TRACK_FAV_PROGRESS
+        elif action in bad:
+            risk += TRACK_BAD_RISK
+            prog -= TRACK_BAD_PROGRESS
+    risk += rule.get("risk", {}).get(action, 0)
+    prog += rule.get("progress", {}).get(action, 0)
+    if rule.get("squall") and tr.get("squall") and action != "observe":
+        risk += TRACK_SQUALL_RISK
+    if action != "observe":                       # sitting still is silent whatever you carry
+        risk += _gear(user_id)["track_risk"]
+    return {"risk": max(0, risk), "progress": max(0, prog)}
+
+
+def _track_hurt(user_id: str, amount: int) -> int:
+    """HP lost on the trail. It never kills — it leaves you at 1 — but it is carried into the fight."""
+    refresh_health(user_id)
+    h = data[user_id]["health"]
+    lost = max(0, min(int(amount), h["hp"] - 1))
+    h["hp"] -= lost
+    return lost
+
+
 def _tracking_start(user_id: str, creature: str, biome: str) -> dict:
     need = random.choice([2, 3, 3, 4])
+    rule = _track_rule(biome)
     tr = {
         "id": secrets.token_hex(4), "creature": creature, "biome": biome,
         "step": 0, "need": need, "progress": 0, "goal": need * 3,
         "mistakes": 0, "perfect": True,
-        "scene": random.choice([s["key"] for s in TRACKING_SCENES]),
+        "noise": 0, "warmth": int(rule.get("warmth", 0)), "forgiven": 0, "probes": 0,
         "expires_ts": time.time() + TRACKING_EXPIRE_MIN * 60,
     }
+    _track_roll_scene(tr)
     data[user_id]["tracking"] = tr
     st = data[user_id].setdefault("stats", {})
     st["tracks_started"] = st.get("tracks_started", 0) + 1
@@ -7815,6 +8032,77 @@ def _track_min_progress(tr: dict) -> int:
     return -(-int(tr["goal"] * TRACK_MIN_PROGRESS_FRAC * 100) // 100)
 
 
+def _tracking_after_step(user_id: str, tr: dict, line: str) -> dict:
+    """The shared end-of-step checks: too many missteps, found it, or the trail went cold."""
+    mistake_cap = 2 + int(trophy_effect_value(user_id, "tracking_extra_mistake"))        # Minotaur: Bronze Nose-Ring
+    if tr["mistakes"] >= mistake_cap:
+        out = _tracking_lose(user_id, tr); out["line"] = line; return out
+    need_progress = _track_min_progress(tr)
+    if tr["progress"] >= tr["goal"] + 3 or (tr["step"] >= tr["need"] and tr["progress"] >= need_progress):
+        out = _tracking_locate(user_id, tr); out["line"] = line; return out
+    if tr["step"] >= tr["need"] + _track_extra_steps(tr):    # waited it out without ever closing the gap
+        out = _tracking_lose(user_id, tr)
+        out["line"] = "You played it too safe — the trail went cold before you got close."
+        return out
+    return {"kind": "ongoing", "line": line}
+
+
+def _track_region_costs(user_id: str, tr: dict, rule: dict, action: str) -> list[str]:
+    """What the region takes out of you for this step (noise, cold, heat, thin air). Returns log bits."""
+    bits: list[str] = []
+    tier = BIOME_TOOL_TIER.get(tr.get("biome", ""), 1)
+    if rule.get("noise"):                                       # swamp: noise draws predators
+        gain = TRACK_NOISE_GAIN.get(action, 0)
+        if action != "observe":
+            gain += _gear(user_id)["noise"]
+        tr["noise"] = max(0, tr.get("noise", 0) + gain)
+        if tr["noise"] >= rule["noise"]:
+            lost = _track_hurt(user_id, random.randint(*TRACK_NOISE_BITE_HP) + tier // 2)
+            tr["noise"] = 1
+            bits.append(f"{emoji('warning')} The splashing draws something out of the water — it takes a bite out of you (**-{lost} HP**).")
+        elif tr["noise"] == rule["noise"] - 1:
+            bits.append("The water is loud. One more splash and something will notice.")
+    if rule.get("warmth"):                                      # tundra: long routes burn warmth
+        had = tr.get("warmth", 0)
+        tr["warmth"] = max(0, had - rule.get("warmth_cost", {}).get(action, 1))
+        if had <= 0:
+            lost = _track_hurt(user_id, rule.get("frost_hp", 6))
+            bits.append(f"Frostbite gnaws at you (**-{lost} HP**).")
+        elif tr["warmth"] <= 0:
+            bits.append("Your fingers have gone numb — the cold will cost you from here.")
+    sh = rule.get("step_hp")
+    if sh:
+        cost = sh.get(action, sh.get("*", 0))
+        if cost:
+            lost = _track_hurt(user_id, cost)
+            if lost:
+                bits.append(f"The land takes **{lost} HP**.")
+    return bits
+
+
+def _tracking_investigate(user_id: str, tr: dict, rule: dict) -> dict:
+    """Ruins: pick over the strange markings — a shortcut, nothing, or a trap."""
+    if not rule.get("investigate"):
+        return {"kind": "none"}
+    if tr.get("probes", 0) >= TRACK_INVESTIGATE_MAX:
+        return {"kind": "ongoing", "line": "You've picked over every marking within reach."}
+    tr["probes"] = tr.get("probes", 0) + 1
+    r = random.random()
+    if r < TRACK_INVESTIGATE_ODDS[0]:
+        tr["progress"] += TRACK_INVESTIGATE_BONUS
+        line = "A worn glyph, a hidden stair — a shortcut the creature used too. You cut the trail down."
+    elif r < TRACK_INVESTIGATE_ODDS[0] + TRACK_INVESTIGATE_ODDS[1]:
+        line = "Dust and old carvings. Nothing — and the trail doesn't wait for you."
+    else:
+        lost = _track_hurt(user_id, random.randint(*TRACK_INVESTIGATE_TRAP_HP))
+        tr["progress"] = max(0, tr["progress"] - 1)
+        line = f"The carving was a trigger — the floor gives and the dart-slits fire (**-{lost} HP**, you lose ground)."
+    tr["step"] += 1
+    _track_roll_scene(tr, prev=tr.get("scene"))
+    mark_user_dirty(user_id)
+    return _tracking_after_step(user_id, tr, line)
+
+
 def tracking_choice(user_id: str, action: str) -> dict:
     """Resolve one tracking decision. Mutates — call inside a user_transaction.
     Returns {kind: 'ongoing'|'located'|'lost'|'none', line}."""
@@ -7827,41 +8115,98 @@ def tracking_choice(user_id: str, action: str) -> dict:
         if tr["progress"] >= tr["goal"]:
             return _tracking_locate(user_id, tr)
         return {"kind": "ongoing", "line": "Not close enough yet — keep on the trail."}
+    rule = _track_rule(tr.get("biome", ""))
+    if action == "investigate":
+        return _tracking_investigate(user_id, tr, rule)
     if not spec:
         return {"kind": "none"}
 
-    risk = max(1, spec["risk"] - trophy_effect_value(user_id, "tracking_success_pct"))   # Bigfoot: Matted Fur Tuft
+    stats = _track_action_stats(user_id, tr, action)
+    risk = max(1, stats["risk"] - trophy_effect_value(user_id, "tracking_success_pct"))   # Bigfoot: Matted Fur Tuft
     spooked = random.randint(1, 100) <= risk
+    bits: list[str] = []
     if spooked:
-        if trophy_proc(user_id, "tracking_mistake_ignore_pct"):                          # Bogeyman: Jar of Closet Shadow
-            line = "A twig cracks under your boot — but it doesn't seem to notice."
+        if tr.get("forgiven", 0) < int(rule.get("forgive", 0)):                          # village: the first slip is forgiven
+            tr["forgiven"] = tr.get("forgiven", 0) + 1
+            bits.append("A twig cracks under your boot — the village noise covers it. It doesn't notice (this once).")
+        elif trophy_proc(user_id, "tracking_mistake_ignore_pct"):                        # Bogeyman: Jar of Closet Shadow
+            bits.append("A twig cracks under your boot — but it doesn't seem to notice.")
         else:
             tr["mistakes"] += 1
             tr["perfect"]   = False
             tr["progress"]  = max(0, tr["progress"] - 1)
-            line = "A twig cracks under your boot. It freezes — then bolts. You lose ground."
+            bits.append("A twig cracks under your boot. It freezes — then bolts. You lose ground.")
+            if rule.get("mistake_hp"):
+                lost = _track_hurt(user_id, rule["mistake_hp"])
+                bits.append(f"The pressure punishes the mistake (**-{lost} HP**).")
     else:
-        tr["progress"] += spec["progress"]
-        line = random.choice(_TRACK_GAIN_LINES)
-    tr["step"] += 1
-    tr["scene"] = random.choice([s["key"] for s in TRACKING_SCENES if s["key"] != tr["scene"]])
-    mark_user_dirty(user_id)
+        tr["progress"] += stats["progress"]
+        bits.append(random.choice(_TRACK_GAIN_LINES))
 
-    mistake_cap = 2 + int(trophy_effect_value(user_id, "tracking_extra_mistake"))        # Minotaur: Bronze Nose-Ring
-    if tr["mistakes"] >= mistake_cap:
-        out = _tracking_lose(user_id, tr); out["line"] = line; return out
-    need_progress = _track_min_progress(tr)
-    if tr["progress"] >= tr["goal"] + 3 or (tr["step"] >= tr["need"] and tr["progress"] >= need_progress):
-        out = _tracking_locate(user_id, tr); out["line"] = line; return out
-    if tr["step"] >= tr["need"] + TRACK_EXTRA_STEPS:         # waited it out without ever closing the gap
-        out = _tracking_lose(user_id, tr)
-        out["line"] = "You played it too safe — the trail went cold before you got close."
-        return out
-    return {"kind": "ongoing", "line": line}
+    if FEATURE_TRACK_CLUES:                                     # tell them how the read went, so they can learn the ground
+        sc = _tracking_scene(tr.get("scene", "prints"))
+        fav, bad = _track_effective(tr)
+        if action == fav:
+            bits.append("You read the ground right.")
+        elif action == sc["fav"] and tr.get("misled"):
+            bits.append("The sign was misleading — it wasn't what it looked like.")
+        elif action in bad:
+            bits.append("That was the wrong move for this ground.")
+
+    bits += _track_region_costs(user_id, tr, rule, action)
+    if rule.get("observe_steadies") and action == "observe":
+        tr["steady"] = True                                     # the haze settles: the next clue is certain
+    tr["step"] += 1
+    _track_roll_scene(tr, prev=tr.get("scene"))
+    mark_user_dirty(user_id)
+    return _tracking_after_step(user_id, tr, "\n-# ".join(bits))
 
 def _track_bar(cur: int, goal: int, width: int = 12) -> str:
     fill = max(0, min(width, round(width * cur / goal))) if goal else 0
     return "▰" * fill + "▱" * (width - fill)
+
+
+def _gear_summary(user_id: str) -> str:
+    """One line about the tool in hand and what its role means right now."""
+    tool = data[user_id].get("tool", "Bare Hands")
+    role = tool_role_info(tool)
+    return f"{role['emoji']} **{tool}** · {role['label']} — {role['blurb']}"
+
+
+def _gear_select_row(user_id: str, ctx: str, ref: str) -> dict | None:
+    """A select menu to swap tool without leaving the panel. ctx = track | afight | myth, ref = the
+    tracking id / encounter id it belongs to (a stale menu is rejected)."""
+    if not FEATURE_GEAR_ROLES:
+        return None
+    owned = [n for n in data[user_id].get("owned_tools", ["Bare Hands"]) if n in TOOLS]
+    if len(owned) < 2:
+        return None
+    equipped = data[user_id].get("tool", "Bare Hands")
+    owned.sort(key=lambda n: TOOLS[n]["tier"])
+    opts = []
+    for n in owned[:25]:
+        r = tool_role_info(n)
+        opts.append({"label": f"{n} · {r['label']}"[:100], "emoji": emoji_partial(tool_emoji(n)), "value": n,
+                     "description": r["blurb"][:100], "default": n == equipped})
+    return {"type": 1, "components": [{"type": 3, "custom_id": f"hunt:gear:{ctx}:{ref}:{user_id}",
+            "placeholder": "Swap gear...", "min_values": 1, "max_values": 1, "flows": {}, "options": opts}]}
+
+
+def _track_meter_lines(tr: dict, rule: dict) -> str:
+    out = []
+    if rule.get("noise"):
+        n, thr = min(tr.get("noise", 0), rule["noise"]), rule["noise"]
+        out.append(f"Noise: {'▰' * n}{'▱' * (thr - n)}  ·  at {thr} something bites")
+    if rule.get("warmth"):
+        w = max(0, tr.get("warmth", 0))
+        out.append(f"Warmth: {'▰' * w}{'▱' * max(0, rule['warmth'] - w)}" + ("  ·  **frostbite**" if w <= 0 else ""))
+    if rule.get("investigate"):
+        left = max(0, TRACK_INVESTIGATE_MAX - tr.get("probes", 0))
+        out.append(f"Odd markings glow on the stones — you could **Investigate** ({left} left).")
+    if rule.get("squall") and tr.get("squall"):
+        out.append(f"{emoji('warning')} **A squall is rolling in** — everything but Inspecting is riskier until it passes.")
+    return "".join(f"-# {ln}\n" for ln in out)
+
 
 def build_tracking_components(user_id: str, line: str = "") -> list:
     tr = data[user_id].get("tracking")
@@ -7872,24 +8217,35 @@ def build_tracking_components(user_id: str, line: str = "") -> list:
     scene = _tracking_scene(tr.get("scene", "prints"))
     trid = tr["id"]
     near = tr["progress"] >= tr["goal"]
+    rule = _track_rule(tr.get("biome", ""))
 
     gorgon_hint = ""
     if trophy_has_effect(user_id, "tracking_reveal_risk"):                        # Gorgon: Stone-Gaze Lens
-        riskiest = max(TRACKING_ACTIONS, key=lambda a: TRACKING_ACTIONS[a]["risk"])
+        riskiest = max(TRACKING_ACTIONS, key=lambda a: _track_action_stats(user_id, tr, a)["risk"])
         gorgon_hint = f"\n-# {emoji('trophy')} Stone-Gaze Lens: **{TRACKING_ACTIONS[riskiest]['label']}** looks riskiest right now."
 
     mistake_cap = 2 + int(trophy_effect_value(user_id, "tracking_extra_mistake"))
+    clue = f"{scene['text']}\n-# {scene['hint']}" if FEATURE_TRACK_CLUES else scene["text"]
+    if FEATURE_TRACK_CLUES and tr.get("doubt"):
+        clue += "\n-# " + TRACK_DOUBT_LINES[(sum(map(ord, tr["id"])) + tr["step"]) % len(TRACK_DOUBT_LINES)]
+    region = ""
+    if FEATURE_BIOME_RULES and biome_rule(tr.get("biome", "")):
+        r = biome_rule(tr["biome"])
+        region = f"-# {BIOME_EMOJIS.get(tr['biome'], '')} **{r['name']}** — {r['blurb']}\n"
     body = (
         f"### {ico} On the Trail — {scene['title']}\n"
         f"-# Tracking something big through {BIOME_NAMES.get(tr['biome'], tr['biome'])}. "
         f"{mistake_cap} mistake{'s' if mistake_cap != 1 else ''} and it's gone.\n\n"
-        f"{scene['text']}\n\n"
+        f"{clue}\n\n"
         + (f"-# {line}\n" if line else "")
+        + region
+        + _track_meter_lines(tr, rule)
+        + (f"-# {_gear_summary(user_id)}\n" if FEATURE_GEAR_ROLES else "")
         + f"Trail: {_track_bar(tr['progress'], tr['goal'])}  ·  "
-          f"Missteps: {'●' * tr['mistakes']}{'○' * (mistake_cap - tr['mistakes'])}\n"
+          f"Missteps: {'●' * tr['mistakes']}{'○' * max(0, mistake_cap - tr['mistakes'])}\n"
           f"-# Get the trail to **{_track_min_progress(tr)}+/{tr['goal']}** to find it "
-          f"({max(0, tr['need'] + TRACK_EXTRA_STEPS - tr['step'])} step(s) before it goes cold). "
-          f"Careful moves are safe but slow; bold ones gain more but can spook it."
+          f"({max(0, tr['need'] + _track_extra_steps(tr) - tr['step'])} step(s) before it goes cold). "
+          f"The right move depends on what is in front of you — read the ground."
         + gorgon_hint
     )
 
@@ -7898,12 +8254,21 @@ def build_tracking_components(user_id: str, line: str = "") -> list:
         return {"type": 2, "style": style, "label": s["label"], "emoji": emoji_partial(s["emoji"]),
                 "custom_id": f"hunt:track:{act}:{trid}:{user_id}"}
 
+    second = [_tb("push", 4)]
+    if rule.get("investigate"):
+        second.append({"type": 2, "style": 1, "label": "Investigate", "emoji": emoji_partial("search_alt"),
+                       "disabled": tr.get("probes", 0) >= TRACK_INVESTIGATE_MAX,
+                       "custom_id": f"hunt:track:investigate:{trid}:{user_id}"})
+    if near:
+        second.append({"type": 2, "style": 1, "label": "Close In", "emoji": emoji_partial('target'),
+                       "custom_id": f"hunt:track:closein:{trid}:{user_id}"})
     rows = [
         {"type": 1, "components": [_tb("follow", 3), _tb("observe", 2), _tb("flank", 2)]},
-        {"type": 1, "components": [_tb("push", 4)] + (
-            [{"type": 2, "style": 1, "label": "Close In", "emoji": emoji_partial('target'),
-              "custom_id": f"hunt:track:closein:{trid}:{user_id}"}] if near else [])},
+        {"type": 1, "components": second},
     ]
+    gear_row = _gear_select_row(user_id, "track", trid)
+    if gear_row:
+        rows.append(gear_row)
     return [{"type": 17, "accent_color": 0x8E44AD, "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
@@ -8243,7 +8608,7 @@ def animal_fight_active(user_id: str) -> bool:
     f = data.get(user_id, {}).get("fight")
     return bool(f and f.get("kind") == "animal")
 
-def _animal_encounter_roll(user_id: str, stats: dict) -> str:
+def _animal_encounter_roll(user_id: str, stats: dict, biome: str | None = None) -> str:
     """One-shot ambush determination for a normal danger encounter. Returns
     'ambush' (you got the drop), 'normal', or 'shaken' (it got you first)."""
     if data[user_id].pop("_danger_whistle_active", False):   # Danger Whistle: guaranteed ambush, once
@@ -8253,7 +8618,8 @@ def _animal_encounter_roll(user_id: str, stats: dict) -> str:
     tier = get_tool_tier(data[user_id].get("tool", "Bare Hands"))
     skill = luck / 4 + tier * 3
     atk = stats["attack_chance"]
-    p_ambush = min(0.55, 0.15 + skill / 300)
+    # Region cover (forest, woods, jungle) and quiet gear make it easier to get the drop.
+    p_ambush = min(0.65, 0.15 + skill / 300 + _fight_rule(biome).get("ambush", 0.0) + _gear(user_id)["ambush"])
     p_shaken = max(0.05, atk - skill / 400)
     p_shaken = max(0.0, min(p_shaken, 1 - p_ambush - 0.05))
     r = random.random()
@@ -8278,7 +8644,7 @@ def start_animal_encounter(user_id: str, animal: str, biome: str) -> dict:
         return {"kind": "fled", "animal": animal}
     refresh_health(user_id)
     h = data[user_id]["health"]
-    bonus = _animal_encounter_roll(user_id, stats)
+    bonus = _animal_encounter_roll(user_id, stats, biome)
     mhp = max(1, int(stats["hp"] * 0.75)) if bonus == "ambush" else stats["hp"]
     pre_dmg = 0
     if bonus == "shaken" and stats["damage"][1] > 0:
@@ -8352,20 +8718,22 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
     f["ts"] = time.time()
     h     = data[user_id]["health"]
     tool  = data[user_id].get("tool", "Bare Hands")
-    dmin, dmax = tool_combat_damage(tool)
+    dmin, dmax = tool_combat_damage(tool, FEATURE_GEAR_ROLES)
     acc   = tool_combat_accuracy(tool)
+    frule = _fight_rule(biome)                       # the region's rule for fights here
     log: list[str] = []
     R = random.randint
 
     if action == "flee":
         # You can always leave and keep the rest of the hunt — but turning your back on
         # something that bites isn't free: sometimes it gets a parting strike in
-        # (never enough to knock you out).
+        # (never enough to knock you out). Open ground makes it safer, thick growth riskier.
         data[user_id]["fight"] = None
         st = data[user_id].setdefault("stats", {})
         st["animal_fights_fled"] = st.get("animal_fights_fled", 0) + 1
         hurt = 0
-        if stats["damage"][1] > 0 and random.random() < ANIMAL_FLEE_FAIL_CHANCE:
+        flee_fail = max(0.0, min(0.9, ANIMAL_FLEE_FAIL_CHANCE + frule.get("flee_strike", 0.0)))
+        if stats["damage"][1] > 0 and random.random() < flee_fail:
             hurt = max(1, int(R(*stats["damage"]) * ANIMAL_FLEE_STRIKE_MULT))
             hurt = min(hurt, max(0, h["hp"] - 1))
             h["hp"] -= hurt
@@ -8386,6 +8754,10 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
             log.append(f"{emoji('impact')} Power attack connects for **{dealt}**!")
         else:
             log.append(f"{emoji('impact')} You overcommit and miss completely.")
+        # Swamp: the noise of a power attack can draw a second hunter (louder gear, likelier; quiet gear, less so).
+        loud = frule.get("loud_hit", 0.0) * (1 + 0.5 * _gear(user_id)["noise"])
+        if loud > 0 and stats["damage"][1] > 0 and random.random() < loud:
+            f["_loud"] = True
     elif action == "defend":
         f["guard"] = True
         log.append(f"{emoji('shield')} You brace for its counterattack.")
@@ -8414,7 +8786,16 @@ def animal_fight_turn(user_id: str, action: str) -> dict:
     else:
         log.append(f"The {name} hesitates.")
 
+    if f.pop("_loud", False):                         # swamp: a second hunter answers the noise
+        extra = max(1, int(R(*stats["damage"]) * 0.7))
+        h["hp"] = max(0, h["hp"] - extra)
+        log.append(f"{emoji('warning')} The noise draws a second hunter out of the water — it rakes you for **{extra}**!")
+
     f["turn"] = f.get("turn", 1) + 1
+    th = frule.get("turn_hp")                         # desert heat / tundra cold / volcanic ash wear you down in long fights
+    if th and f["turn"] - 1 >= th[0] and h["hp"] > 0:
+        h["hp"] = max(0, h["hp"] - th[1])
+        log.append(f"The land wears at you (**-{th[1]} HP**).")
     f["log"] = (f.get("log", []) + log)[-4:]
     if h["hp"] <= 0:
         return _animal_fight_ko(user_id, name, biome)
@@ -8428,6 +8809,7 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
         return build_menu_components(user_id, data[user_id].get("_display_name", "Hunter"))
     name = f["animal"]
     ico = animal_emoji(name)
+    biome = f.get("biome", data[user_id].get("biome", "village"))
     mhp, mmax = f.get("mhp", 1), f.get("mhp_max", 1)
     hp, mx = player_hp(user_id)
     hp_ico = emoji("hp") or "❤️"
@@ -8457,6 +8839,11 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
         f"{hp_ico} **YOU**\n{hp}/{mx}\n{_hp_bar(hp, mx)}\n\n"
         f"{log_txt}"
     )
+    _fr = biome_rule(biome).get("fight_blurb") if FEATURE_BIOME_RULES else ""
+    if _fr:
+        body += f"\n-# {BIOME_EMOJIS.get(biome, '')} **{biome_rule(biome)['name']}** — {_fr}"
+    if FEATURE_GEAR_ROLES:
+        body += f"\n-# {_gear_summary(user_id)}"
     heal_avail = any(n > 0 for n in data[user_id].get("healing_inv", {}).values())
     eid = f["eid"]
     def _abtn(action, label, style, emj, disabled=False):
@@ -8471,6 +8858,7 @@ def build_animal_fight_components(user_id: str, intro: bool = False,
         {"type": 1, "components": [_abtn("defend", "Defend", 2, "shield"),
                                     _abtn("heal", "Heal", 2, "adhesive_bandage", disabled=not heal_avail),
                                     _abtn("flee", "Flee", 4, "runner")]},
+        *([_ar] if (_ar := _gear_select_row(user_id, "afight", eid)) else []),
     ]}]
 
 def build_animal_fight_outcome_components(user_id: str, outcome: dict) -> list:
@@ -9013,6 +9401,7 @@ def myth_fight_turn(user_id: str, action: str) -> dict:
     pk_acc_b = trophy_effect_value(user_id, "punch_kick_accuracy_pct")                # Manticore: Barbed Tail-Spine
     dmg_mult = 1 + trophy_effect_value(user_id, "myth_dmg_pct") / 100                 # Werewolf: Silver-Burned Fang
     dmg_mult *= 1 + item_buff_value(user_id, "hunters_stim") / 100                    # Hunter's Stim
+    dmg_mult *= _gear(user_id)["dmg"] * _gear(user_id)["myth_dmg"]                     # role: power hits harder, slayers far harder vs mythicals
     R     = random.randint
     log: list[str] = []
     b["ts"] = time.time()
@@ -10462,6 +10851,7 @@ def build_myth_fight_components(user_id: str, intro: bool = False) -> list:
             _btn("heal", 3, disabled=not any(data[user_id].get("healing_inv", {}).get(n, 0) > 0
                                              for n in HEALING_ITEMS)),
             _btn("flee", 2)]},
+        *([_ar] if (_ar := _gear_select_row(user_id, "myth", eid)) else []),
     ]}]
 
 # Back-compat: older callers pass a creature name.
@@ -11358,6 +11748,9 @@ def build_equip_components(user_id: str) -> list:
         f"{USER_EMOJIS['luck_boost']} +{t_info['boost_luck']}% Luck · "
         f"{USER_EMOJIS['xp_boost']} +{t_info['boost_xp']}% XP",
     ]
+    if FEATURE_GEAR_ROLES:
+        _ri = tool_role_info(equipped)
+        loadout.append(f"-# {_ri['emoji']} **{_ri['label']}** — {_ri['blurb']}")
     if ammo_type:
         if equipped_ammo and ammo_compatible_with_tool(equipped_ammo, equipped):
             loadout += [
@@ -11381,8 +11774,10 @@ def build_equip_components(user_id: str) -> list:
               {"type": 14, "divider": True, "spacing": 1}]
 
     equip_opts = [
-        {"label": f"{n} (T{TOOLS[n]['tier']})", "emoji": emoji_partial(tool_emoji(n)),
-         "value": n, "description": TOOLS[n]["description"], "default": n == equipped}
+        {"label": f"{n} (T{TOOLS[n]['tier']})" + (f" · {tool_role_info(n)['label']}" if FEATURE_GEAR_ROLES else ""),
+         "emoji": emoji_partial(tool_emoji(n)), "value": n,
+         "description": (tool_role_info(n)["blurb"] if FEATURE_GEAR_ROLES else TOOLS[n]["description"])[:100],
+         "default": n == equipped}
         for n in owned
     ]
     comps += [
@@ -11543,9 +11938,12 @@ def build_shop_components(user_id: str, tab: str = "boosts") -> list:
                     detail_line = f"You need {cur_icon} {_shop_price_str(_pr - balance)} more."
                     acc_label, acc_style, acc_dis = "Locked", 2, True
                     acc_emoji = emoji_partial("lock")
+            _role_tag = (f" · {tool_role_info(name)['emoji']} {tool_role_info(name)['label']}"
+                         if FEATURE_GEAR_ROLES else "")
             content = (f"### {t['emoji']} {name}\n"
-                       f"Tier {t['tier']} · {status_line}\n"
-                       f"-# {detail_line}")
+                       f"Tier {t['tier']}{_role_tag} · {status_line}\n"
+                       f"-# {detail_line}"
+                       + (f"\n-# {tool_role_info(name)['blurb']}" if FEATURE_GEAR_ROLES else ""))
             accessory = {"type": 2, "style": acc_style,
                 "label": acc_label,
                 "custom_id": f"shop:tool_buy_acc:{name}:{user_id}",
@@ -17476,6 +17874,34 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await check_everything(interaction, owner_id)
             return
 
+        if parts[1] == "gear":
+            # custom_id: hunt:gear:<ctx>:<ref>:<uid> — swap tool from inside a tracking / fight panel.
+            # `ref` is the live tracking id / encounter id, so a stale menu is rejected.
+            init_user(owner_id)
+            ctx = parts[2] if len(parts) >= 5 else ""
+            ref = parts[3] if len(parts) >= 5 else None
+            tool_name = values[0] if values else None
+            _d = data[owner_id]
+            live = {"track": (_d.get("tracking") or {}).get("id"),
+                    "afight": (_d.get("fight") or {}).get("eid"),
+                    "myth": (_d.get("_boss") or {}).get("eid")}.get(ctx)
+            if not live or live != ref:
+                await smart_update_v2(interaction,
+                    build_menu_components(owner_id, interaction.user.display_name))
+                return
+            async with user_transaction(owner_id):
+                if tool_name and tool_name in data[owner_id].get("owned_tools", []):
+                    old_tool = data[owner_id].get("tool", "Bare Hands")
+                    data[owner_id]["tool"] = tool_name
+                    if get_tool_ammo_type(tool_name) != get_tool_ammo_type(old_tool):
+                        data[owner_id]["equipped_ammo"] = None
+                    mark_user_dirty(owner_id)
+            comps = (build_tracking_components(owner_id) if ctx == "track"
+                     else build_animal_fight_components(owner_id) if ctx == "afight"
+                     else build_myth_fight_components(owner_id))
+            await smart_update_v2(interaction, comps)
+            return
+
         if parts[1] == "track":
             # custom_id: hunt:track:<action>:<trid>:<uid>
             init_user(owner_id)
@@ -22273,6 +22699,8 @@ def _info_render_biome(key: str):
     if myths:
         lines.append(f"-# **{RARITY_ICONS.get('mythic','')} Mythical creatures:** "
                      + ", ".join(myths))
+    if FEATURE_BIOME_RULES and key in BIOME_RULES:
+        lines.append(f"-# **{emoji('compass') or ''} Region rule:** {biome_rule_line(key)}")
     lines += ["", f"### {emoji('animal_fallback')} Animals here"]
     for a in animals:
         ad = ANIMAL_DATA[a]
@@ -22295,6 +22723,8 @@ def _info_render_tool(key: str):
         f"-# **Luck boost:** +{t['boost_luck']}",
         f"-# **XP boost:** +{t['boost_xp']}",
         f"-# **Catches per hunt:** {t['multi_catch']}",
+        *([f"-# **Role:** {tool_role_info(key)['emoji']} {tool_role_info(key)['label']} — {tool_role_info(key)['blurb']}"]
+          if FEATURE_GEAR_ROLES else []),
         f"-# **Ammo:** " + (AMMO_TYPE_LABELS.get(at, at) if at else "None needed"),
         f"-# **Unlocks biomes up to:** " +
             (f"{unlockable[-1]} ({len(unlockable)} total)" if unlockable else "—"),

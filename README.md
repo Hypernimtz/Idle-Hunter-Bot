@@ -11,7 +11,8 @@ Start your hunting journey with any command and a detailed tutorial!
 ## 🌿 Features
 
 - **Hunting** — Hunt animals across 13 unique biomes, from the humble Village to the divine Celestial Peaks
-- **Tools & Ammo** — 20 tools across 20 tiers, each with compatible ammo types that boost your Luck, Sell price, and XP
+- **Tools & Ammo** — 20 tools across 20 tiers, each with compatible ammo types that boost your Luck, Sell price, and XP. Every tool also has a **role** — Quiet (tracking), Power (fights), Capture (collection goals) or All-rounder — so a stronger weapon isn't the right pick for every job, and you can swap gear right from the tracking and fight screens
+- **Tracking & region rules** — mythical creatures are tracked over several choices where the scene on screen (muddy prints, an exposed clearing, a fading trail…) changes the right move, and every biome has its own rule (swamp noise, tundra cold, ruin carvings, desert mirages…)
 - **Idle Income** — Hire workers that earn ◈ passively while you're away; stack them for massive returns
 - **Biomes** — Unlock new biomes as you level up, each with rarer animals and higher payouts
 - **Events & story** — a season-long storyline, *The Hollow Star*, told through 15 quest events (meteor showers, the Great Fog, Admin Error 404, a Tribe Relay, Biome Conquest…). Events change *what you do*, never prices or income: fixed reward budgets, cosmetic rewards (titles, badges, profile keepsakes) and a different **daily theme** every weekday, including Friday's Most Wanted hunt and Saturday's Monster Rampage world boss

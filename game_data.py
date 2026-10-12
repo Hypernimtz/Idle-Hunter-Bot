@@ -1777,6 +1777,96 @@ BIOME_TOOL_TIER = {
 
 
 # ─────────────────────────────────────────────
+# GEAR ROLES  ·  a stronger weapon is not a better one for every job
+# ─────────────────────────────────────────────
+# Tier still sets raw power, luck and XP. A tool's ROLE decides where it is the right pick, and the gaps are
+# deliberately big — each role is clearly best at one job and clearly worse at another:
+#   quiet    — tracking: far fewer spooks, less noise, much likelier to get the drop on an animal. Hits light.
+#   power    — dangerous animal fights: hits half again as hard. Loud and clumsy on a trail.
+#   capture  — collection goals, and ONLY collection goals: it lures the species a quest or your journal is
+#              missing, helps a Perfect Catch quest along and finds more in collection events. None of it pays
+#              when there is nothing to collect, so it never out-earns an ordinary tool. Hits light.
+#   hauler   — loot: many more crate drops. Slow and heavy: weak in a fight, a bit clumsy on a trail.
+#   slayer   — mythicals: meets them far more often and hits them very hard in a mythic fight. Weaker against
+#              ordinary animals, and not subtle on the trail.
+#   balanced — a little of everything, best at nothing.
+TOOL_ROLES = {
+    "Bare Hands":     "balanced",
+    "Slingshot":      "quiet",
+    "Hunting Knife":  "quiet",
+    "Spear":          "slayer",
+    "Shortbow":       "hauler",
+    "Longbow":        "quiet",
+    "Crossbow":       "capture",
+    "Musket":         "power",
+    "Hunting Rifle":  "hauler",
+    "Shotgun":        "power",
+    "Sniper Rifle":   "quiet",
+    "Tranq Gun":      "capture",
+    "Plasma Caster":  "power",
+    "Gravity Trap":   "hauler",
+    "Soul Snare":     "capture",
+    "Void Bow":       "quiet",
+    "Celestial Lance": "power",
+    "Mythic Net":     "slayer",
+    "Dragon Cannon":  "slayer",
+    "Cosmic RPG":     "balanced",
+    "Nuke Launcher":  "power",
+}
+
+# track_risk: % added to every non-Inspect tracking move · noise: swamp noise per step · ambush: + chance to get
+# the drop on an animal · dmg: damage vs animals (and the base for mythics) · myth_dmg: extra on top vs mythicals ·
+# myth_enc: x chance a hunt meets a mythical · crate: x chance a hunt drops a crate · capture_pp / lure /
+# find_mult: the collection perks above.
+ROLE_INFO = {
+    "quiet": {
+        "label": "Quiet", "emoji": "🤫",
+        "track_risk": -15, "noise": -1, "ambush": 0.20, "dmg": 0.75, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.0,
+        "capture_pp": 0.0, "lure": 0.0, "find_mult": 1.0,
+        "blurb": "Tracking -15% spook, quiet, +20% ambush chance. Hits 25% lighter.",
+    },
+    "power": {
+        "label": "Power", "emoji": "💥",
+        "track_risk": 10, "noise": 2, "ambush": 0.0, "dmg": 1.5, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.0,
+        "capture_pp": 0.0, "lure": 0.0, "find_mult": 1.0,
+        "blurb": "Hits 50% harder in fights. Clumsy on a trail: +10% spook, very loud.",
+    },
+    "capture": {
+        "label": "Capture", "emoji": "🕸️",
+        "track_risk": 0, "noise": 0, "ambush": 0.0, "dmg": 0.75, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.0,
+        "capture_pp": 0.12, "lure": 0.35, "find_mult": 1.4,
+        "blurb": "Lures quest targets and new species (35%), +12% Perfect Catch on a Perfect Catch quest, +40% event finds. Hits 25% lighter.",
+    },
+    "hauler": {
+        "label": "Hauler", "emoji": "🎒",
+        "track_risk": 5, "noise": 1, "ambush": 0.0, "dmg": 0.75, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.6,
+        "capture_pp": 0.0, "lure": 0.0, "find_mult": 1.0,
+        "blurb": "+60% crate drops. Heavy: hits 25% lighter, +5% spook on a trail.",
+    },
+    "slayer": {
+        "label": "Slayer", "emoji": "🐉",
+        "track_risk": 4, "noise": 1, "ambush": 0.0, "dmg": 0.9, "myth_dmg": 1.9, "myth_enc": 1.4, "crate": 1.0,
+        "capture_pp": 0.0, "lure": 0.0, "find_mult": 1.0,
+        "blurb": "Mythicals: +40% encounter chance and 90% more damage in their fights. 10% lighter on animals, +4% spook.",
+    },
+    "balanced": {
+        "label": "All-rounder", "emoji": "⚖️",
+        "track_risk": 0, "noise": 0, "ambush": 0.0, "dmg": 1.0, "myth_dmg": 1.0, "myth_enc": 1.0, "crate": 1.0,
+        "capture_pp": 0.03, "lure": 0.0, "find_mult": 1.1,
+        "blurb": "No weakness, no speciality: +3% Perfect Catch on a Perfect Catch quest, +10% event finds.",
+    },
+}
+
+
+def tool_role(tool_name: str) -> str:
+    return TOOL_ROLES.get(tool_name, "balanced")
+
+
+def tool_role_info(tool_name: str) -> dict:
+    return ROLE_INFO[tool_role(tool_name)]
+
+
+# ─────────────────────────────────────────────
 # BIOMES ON EARTH  ·  location + world-map position
 # ─────────────────────────────────────────────
 # Biomes keep their fantasy names; each is also a real place on Earth.
@@ -1892,47 +1982,206 @@ RARE_CATCH_MAX_WORLD     = 0.45
 # TRACKING  ·  Idle Hunter V2, Phase 11-15
 # ─────────────────────────────────────────────
 # A mythic roll no longer drops you straight into the fight — first you TRACK the
-# creature over 2-4 decisions. `risk` is the % chance the creature spooks (a
+# creature over 2-4 decisions. `risk` is the base % chance the creature spooks (a
 # mistake); `progress` is trail points gained on a clean choice. Two mistakes and
 # it's gone. A clean track buys you an edge in the fight that follows.
+#
+# The base numbers are only the starting point. What is in front of you (the scene),
+# the region you are in (BIOME_RULES) and the gear in your hands (TOOL_ROLES) each
+# move them — see app.py's _track_action_stats.
 TRACKING_ACTIONS = {
     "follow":  {"label": "Follow the trail", "emoji": "🐾", "risk": 12, "progress": 2},
-    "observe": {"label": "Watch and wait",   "emoji": EMOJI["telescope"], "risk": 0,  "progress": 1},
-    "flank":   {"label": "Circle around",    "emoji": "🌲", "risk": 22, "progress": 3},
-    "push":    {"label": "Push hard",        "emoji": EMOJI["high_voltage_sign"], "risk": 40, "progress": 4},
+    "observe": {"label": "Inspect the sign", "emoji": EMOJI["telescope"], "risk": 0,  "progress": 1},
+    "flank":   {"label": "Sneak around",     "emoji": "🌲", "risk": 22, "progress": 3},
+    "push":    {"label": "Rush in",          "emoji": EMOJI["high_voltage_sign"], "risk": 40, "progress": 4},
 }
 
-# A trail is only "found" once you have this share of the goal; Watch-and-wait alone (+1 a step) cannot
+# A trail is only "found" once you have this share of the goal; Inspecting alone (+1 a step) cannot
 # get there on a long trail before the track goes cold TRACK_EXTRA_STEPS steps past the planned length.
 TRACK_MIN_PROGRESS_FRAC = 0.6
 TRACK_EXTRA_STEPS = 3
 
-# A trail is only "found" once you have this share of the goal; Watch-and-wait alone (+1 a step) cannot
-# get there on a long trail before the track goes cold TRACK_EXTRA_STEPS steps past the planned length.
-TRACK_MIN_PROGRESS_FRAC = 0.6
-TRACK_EXTRA_STEPS = 3
+# Reading the scene. The favoured move for the scene on screen is safer and gains a point more;
+# a move the scene punishes is riskier and gains a point less. Clues are right TRACK_CLUE_RELIABILITY
+# of the time — otherwise the ground is deceiving you: the obvious move earns nothing extra and
+# a different one was actually best. A scene that misleads often (not always) shows a "doubt" line.
+TRACK_FAV_RISK        = 30
+TRACK_FAV_PROGRESS    = 1
+TRACK_BAD_RISK        = 25
+TRACK_BAD_PROGRESS    = 1
+TRACK_CLUE_RELIABILITY = 0.8
+TRACK_DOUBT_IF_MISLED  = 0.6      # chance the "doubt" line shows when the clue is misleading ...
+TRACK_DOUBT_IF_TRUE    = 0.15     # ... and when it is not (so the tell is useful, never certain)
+TRACK_DOUBT_LINES = [
+    "Something about this sign sits oddly with you.",
+    "It's all a little too tidy.",
+    "You can't shake the feeling you're missing something.",
+    "The sign is clear — but the quiet around it is wrong.",
+]
+TRACK_SQUALL_RISK = 10            # rainbow region: a squall makes every move but waiting this much riskier
 
+# Each scene: what you SEE (`text`), what a good tracker would INFER (`hint`), the move it favours (`fav`)
+# and the move(s) it punishes (`bad`). Every action is favoured by three scenes.
 TRACKING_SCENES = [
-    {"key": "prints",   "title": "🐾 Deep Prints",
-     "text": "The tracks press deep and fresh into the ground, spaced wide. It was moving, and not long ago."},
-    {"key": "branches", "title": f"{EMOJI['herb']} Broken Branches",
-     "text": "Green wood snapped at shoulder height. Whatever came through was tall and in no hurry to go around."},
-    {"key": "river",    "title": "🏞️ A River Crossing",
-     "text": "The trail meets fast water and picks up again on the far bank. It waded straight across."},
-    {"key": "blood",    "title": f"{EMOJI['drop_of_blood']} A Blood Trail",
-     "text": "Dark spots on the leaves — not yours, not fresh prey. Something is hurt, or something ate well."},
-    {"key": "sound",    "title": "🔊 Movement Ahead",
-     "text": "Brush shifts a hundred metres out. No wind. It knows the woods better than you do."},
-    {"key": "camp",     "title": "⛺ A Wrecked Camp",
-     "text": "A tent torn open, a cold fire, gear thrown wide. The tracks lead away from it, unbothered."},
-    {"key": "feathers", "title": "🪶 Scattered Feathers",
-     "text": "A kill site, picked clean and abandoned. The trail continues, heavier now."},
-    {"key": "scratches","title": f"{EMOJI['wood']} Claw Marks",
-     "text": "Gouges in the bark, far higher than they have any right to be. You're close."},
+    {"key": "mud",       "title": "🟤 Muddy Footprints",
+     "text": "The ground is soft and wet. Every print is sharp-edged — heel depth, toe splay, even a drag mark where something heavy shifted its weight.",
+     "hint": "Soft ground keeps a print for hours, and these are readable.",
+     "fav": "observe", "bad": ["push"]},
+    {"key": "camp",      "title": "⛺ A Wrecked Camp",
+     "text": "A tent torn open, a cold fire, gear thrown wide. The tracks lead away from it, unbothered.",
+     "hint": "Whatever happened here left a story on the ground — and nothing suggests it is watching.",
+     "fav": "observe", "bad": ["push"]},
+    {"key": "feathers",  "title": "🪶 Scattered Feathers",
+     "text": "A kill site, picked clean and abandoned. The trail continues, heavier now.",
+     "hint": "A fed predator moves slowly. The sign is fresh and easy to read — there is no hurry.",
+     "fav": "observe", "bad": ["push"]},
+    {"key": "clearing",  "title": "🌾 An Exposed Clearing",
+     "text": "The trees open onto flat, bare ground with no cover for fifty metres. The trail crosses it in a straight line, and the far edge is in shadow.",
+     "hint": "Anything watching from that shadow would see you the whole way across.",
+     "fav": "flank", "bad": ["follow", "push"]},
+    {"key": "river",     "title": "🏞️ A River Crossing",
+     "text": "The trail meets fast water and picks up again on the far bank. It waded straight across.",
+     "hint": "The current is loud and cold; keep low and wide and the water covers you.",
+     "fav": "flank", "bad": ["push"]},
+    {"key": "sound",     "title": "🔊 Movement Ahead",
+     "text": "Brush shifts a hundred metres out. No wind. It knows the woods better than you do.",
+     "hint": "It is close enough to hear you coming straight at it.",
+     "fav": "flank", "bad": ["follow"]},
+    {"key": "fading",    "title": "🍂 A Fading Trail",
+     "text": "Hard, dry ground. The prints thin to scuffs, then to a few pressed blades of grass. A breeze is already lifting the last of the scent.",
+     "hint": "In an hour there will be nothing left to follow.",
+     "fav": "push", "bad": ["observe"]},
+    {"key": "blood",     "title": f"{EMOJI['drop_of_blood']} A Blood Trail",
+     "text": "Dark spots on the leaves — not yours, not fresh prey. Something is hurt, or something ate well.",
+     "hint": "A wounded animal tires fast and does not run far — but it will not stay hurt forever.",
+     "fav": "push", "bad": ["observe"]},
+    {"key": "scratches", "title": f"{EMOJI['wood']} Claw Marks",
+     "text": "Gouges in the bark, far higher than they have any right to be. You're close.",
+     "hint": "A territory marker. It knows this ground, and it will slip away if you hesitate.",
+     "fav": "push", "bad": ["observe"]},
+    {"key": "prints",    "title": "🐾 Deep Prints",
+     "text": "The tracks press deep and fresh into the ground, spaced wide. It was moving, and not long ago.",
+     "hint": "Fresh, steady and unhurried — it has not noticed it is being followed.",
+     "fav": "follow", "bad": ["observe"]},
+    {"key": "branches",  "title": f"{EMOJI['herb']} Broken Branches",
+     "text": "Green wood snapped at shoulder height. Whatever came through was tall and in no hurry to go around.",
+     "hint": "A straight, careless path. It is not hiding where it goes.",
+     "fav": "follow", "bad": ["push"]},
+    {"key": "ridge",     "title": "⛰️ A Game Trail",
+     "text": "A narrow path along a ridge, worn smooth by many animals. The prints keep to it and never wander.",
+     "hint": "A well-used route — easy to keep pace on, awkward to leave.",
+     "fav": "follow", "bad": ["flank"]},
 ]
 
 # minutes a tracking sequence stays open before it's abandoned
 TRACKING_EXPIRE_MIN = 20
+
+
+# ─────────────────────────────────────────────
+# BIOME RULES  ·  every region plays differently
+# ─────────────────────────────────────────────
+# One rule per region, and it changes decisions rather than numbers: where the same move is
+# safe in one place and costly in another. `track` shapes the approach to a mythic creature
+# (the multi-step tracking sequence); `fight` shapes dangerous-animal encounters there.
+# `blurb` / `fight_blurb` are what players read. Keys understood by app.py:
+#   track:  risk{action:±%}  progress{action:±n}  extra_steps  step_hp{action|"*":hp}  mistake_hp
+#           forgive  misread(p)  observe_steadies  noise(threshold)  warmth(start)+warmth_cost+frost_hp
+#           investigate  squall(p)
+#   fight:  ambush(+p)  flee_strike(±p)  turn_hp(after_turn, hp)  loud_hit(p)
+BIOME_RULES = {
+    "village": {
+        "name": "Familiar Ground",
+        "blurb": "Dogs, chimneys and voices mask your mistakes — the first time a creature is spooked on a trail, it is forgiven.",
+        "track": {"forgive": 1},
+    },
+    "forest": {
+        "name": "Thick Cover",
+        "blurb": "Dense undergrowth hides a sneak (-10% spook) but snaps loudly under a rush (+6%).",
+        "fight": {"ambush": 0.10},
+        "fight_blurb": "Cover makes ambushes easier (+10%).",
+        "track": {"risk": {"flank": -10, "push": 6}},
+    },
+    "woods": {
+        "name": "Held Tracks",
+        "blurb": "Snow and needles hold every print: Inspecting the sign gains an extra trail point.",
+        "fight": {"ambush": 0.06},
+        "fight_blurb": "Quiet footing makes ambushes easier (+6%).",
+        "track": {"progress": {"observe": 1}},
+    },
+    "small_desert": {
+        "name": "Mirage",
+        "blurb": "Heat haze makes the ground hard to read — 40% of clues mislead here. Inspecting lets the air settle, so your next read is certain.",
+        "fight": {"turn_hp": (3, 2)},
+        "fight_blurb": "Long fights bake you: from round 3, -2 HP a round.",
+        "track": {"misread": 0.4, "observe_steadies": True},
+    },
+    "sunken_coast": {
+        "name": "Rising Tide",
+        "blurb": "The sea erases sign: one step fewer before a trail goes cold, so waiting is dangerous.",
+        "fight": {"flee_strike": -0.15},
+        "fight_blurb": "Open sand makes fleeing safer (-15% parting strikes).",
+        "track": {"extra_steps": -1},
+    },
+    "tundra": {
+        "name": "Bitter Cold",
+        "blurb": "Warmth drains every step — long routes (Sneak around) and standing still (Inspect) burn double. At zero, frostbite costs 6 HP a step.",
+        "fight": {"turn_hp": (2, 3)},
+        "fight_blurb": "The cold saps you in long fights: from round 2, -3 HP a round.",
+        "track": {"warmth": 4, "warmth_cost": {"follow": 1, "observe": 2, "flank": 2, "push": 1}, "frost_hp": 6},
+    },
+    "jungle": {
+        "name": "Heavy Scent",
+        "blurb": "Wet air carries scent: Following a trail gains an extra point, but rushing through vines is loud (+12% spook).",
+        "fight": {"flee_strike": 0.15, "ambush": 0.04},
+        "fight_blurb": "Dense growth: ambushes +4%, but fleeing is harder (+15% parting strikes).",
+        "track": {"progress": {"follow": 1}, "risk": {"push": 12}},
+    },
+    "swamp": {
+        "name": "Noisy Water",
+        "blurb": "Splashing draws predators. Every step adds Noise (a rush adds 2, Inspecting calms it) and at 3 something bites. Loud gear makes it worse; quiet gear helps.",
+        "fight": {"loud_hit": 0.30},
+        "fight_blurb": "Power Attacks are loud — 30% of the time a second hunter joins in for a free hit.",
+        "track": {"noise": 3},
+    },
+    "volcanic_highlands": {
+        "name": "Ember Heat",
+        "blurb": "Ash and heat sap 3 HP every step — and standing still (Inspecting) costs 7. Move with purpose.",
+        "fight": {"turn_hp": (1, 2)},
+        "fight_blurb": "The heat saps you in a fight: -2 HP every round.",
+        "track": {"step_hp": {"*": 3, "observe": 7}},
+    },
+    "cursed_ruins": {
+        "name": "Strange Markings",
+        "blurb": "Odd carvings can be Investigated (twice a trail): a hidden shortcut (+3 trail), nothing at all, or a trap that costs HP.",
+        "track": {"investigate": True},
+    },
+    "rainbow": {
+        "name": "Fickle Squalls",
+        "blurb": "Sudden storms roll through. When a squall is warned, every move but Inspecting is +10% spooky — wait it out or gamble.",
+        "track": {"squall": 0.3},
+    },
+    "abyssal_depths": {
+        "name": "Crushing Dark",
+        "blurb": "Pressure punishes errors: every spook also costs 10 HP. Choose the careful move.",
+        "track": {"mistake_hp": 10},
+    },
+    "celestial_peaks": {
+        "name": "Thin Air",
+        "blurb": "The air is clear — clues never mislead here — but exertion costs breath: Rushing costs 8 HP, Sneaking around 4.",
+        "track": {"misread": 0.0, "step_hp": {"push": 8, "flank": 4}},
+    },
+}
+
+
+def biome_rule(biome: str) -> dict:
+    return BIOME_RULES.get(biome, {})
+
+
+def biome_rule_line(biome: str) -> str:
+    r = BIOME_RULES.get(biome)
+    if not r:
+        return ""
+    return f"**{r['name']}** — {r['blurb']}" + (f" *In a fight:* {r['fight_blurb']}" if r.get("fight_blurb") else "")
 
 
 # ─────────────────────────────────────────────
@@ -4786,10 +5035,12 @@ TOOL_COMBAT_BASE_ACCURACY  = 0.85
 TOOL_COMBAT_MAX_TIER       = 20   # clamp so an outlier tier (e.g. 100) stays sane
 
 
-def tool_combat_damage(tool_name: str) -> tuple[int, int]:
+def tool_combat_damage(tool_name: str, roles: bool = True) -> tuple[int, int]:
     tier = min(TOOLS.get(tool_name, {}).get("tier", 1), TOOL_COMBAT_MAX_TIER)
     lo, hi = 5 + tier * 4, 10 + tier * 6
     mult = TOOL_COMBAT_OVERRIDES.get(tool_name, {}).get("damage_mult", 1.0)
+    if roles:                                        # quiet / capture tools hit lighter, power tools harder
+        mult *= tool_role_info(tool_name)["dmg"]
     return max(1, int(lo * mult)), max(1, int(hi * mult))
 
 

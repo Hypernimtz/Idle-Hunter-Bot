@@ -40,6 +40,7 @@ def _fresh(**over):
     tt._reset()
     app._active_sighting = None
     app._last_sighting_end = 0.0
+    app.FEATURE_TRACK_CLUES = app.FEATURE_BIOME_RULES = app.FEATURE_GEAR_ROLES = True
     return tt._mk_user(U, level=1000, **over)
 
 
@@ -92,6 +93,7 @@ def test_travel_is_blocked_during_a_fight_or_a_track():
 # ───────── tracking ─────────
 def _track(need):
     d = _fresh(biome="village")
+    app.FEATURE_TRACK_CLUES = False                     # these tests pin the BASE pacing; the scene clues have their own tests
     app._tracking_start(U, "Bigfoot", "village")
     tr_ = d["tracking"]
     tr_["need"], tr_["goal"], tr_["progress"], tr_["step"] = need, need * 3, 0, 0
