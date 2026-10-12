@@ -499,7 +499,12 @@ def test_every_weekday_has_a_theme_and_a_panel():
 
 def test_explorer_monday_halves_travel_and_nothing_else():
     _reset()
-    base = app.travel_time_min("village", "celestial_peaks")
+    real = _theme(2)                       # pin a non-Monday for the baseline: on a real Monday the live theme already halves it
+    try:
+        base = app.travel_time_min("village", "celestial_peaks")
+    finally:
+        app.current_theme = real
+    assert base > 2
     real = _theme(0)
     try:
         assert app.theme_key() == "explorer"
