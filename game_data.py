@@ -2175,24 +2175,211 @@ BIOME_RULES = {
 
 # Explore Mode map art — application emoji uploaded for the on-foot map (fetched from the CDN and layered by the
 # renderer: grass is the bottom layer). "huntress" will be added alongside "hunter" when that art exists.
-# Extra art the map will use as soon as an application emoji for it is added here (each is drawn procedurally until then):
-#   "landmark_<biome>" for small_desert, tundra, sunken_coast, swamp, volcanic_highlands, cursed_ruins, abyssal_depths,
-#                      celestial_peaks, jungle, rainbow, woods  — replaces ~1 in 3 trees/boulders of that region (same rules)
-#   "disc_bag", "disc_berries", "disc_camp", "disc_monument", "disc_clearing" — the walk-over discoveries
-#   "huntress" — an alternative hunter sprite (the renderer already looks it up)
-EXPLORE_ART = {
-    "grass":  "<:grass_tile:1559064015844544522>",
-    "tree":   "<:tree:1559064023515926658>",
-    "rock":   "<:rock_cluster:1559064018671374357>",
-    "bush":   "<:leafy_bush:1559064020504281302>",
-    "trail":  "<:animal_trail:1559064013910974534>",
-    "hunter": "<:hunter:1559064022240854016>",
-    # chests reuse the crate art: common / uncommon / rare / epic (the rarer the crate, the better the loot)
-    "chest0": EMOJI.get("common_crate", ""),
-    "chest1": EMOJI.get("uncommon_crate", ""),
-    "chest2": EMOJI.get("rare_crate", ""),
-    "chest3": EMOJI.get("epic_crate", ""),
+# ── Explore map art + what each prop DOES (from the asset pack; every effect is automatic, no extra buttons) ──
+# id -> application emoji. The id is category__biome__object; the emoji name is the first 32 characters of it.
+# landmark__tundra__frozen_pond has no emoji yet: it is drawn procedurally until one is added here.
+EXPLORE_ASSET_ART = {
+    "discovery__shared__deer_rabbit_squirrel_gathering": "<:discovery__shared__deer_rabbit_s:1559429205148827750>",
+    "discovery__shared__red_berry_patch": "<:discovery__shared__red_berry_pat:1559429210504953936>",
+    "discovery__shared__fox_supply_stash": "<:discovery__shared__fox_supply_st:1559429206738210837>",
+    "discovery__shared__golden_pawprint_trail": "<:discovery__shared__golden_pawpri:1559429207983915038>",
+    "discovery__shared__abandoned_tent_campsite": "<:discovery__shared__abandoned_ten:1559429203139498024>",
+    "discovery__shared__wildflower_clearing": "<:discovery__shared__wildflower_cl:1559429211939405834>",
+    "discovery__shared__purple_rune_monument": "<:discovery__shared__purple_rune_m:1559429209057796218>",
+    "discovery__shared__abandoned_supply_bag": "<:discovery__shared__abandoned_sup:1559429201097134120>",
+    "landmark__abyssal_depths__glowing_anemone_cluster": "<:landmark__abyssal_depths__glowin:1559429010004508773>",
+    "landmark__abyssal_depths__luminous_coral": "<:landmark__abyssal_depths__lumino:1559429011405275168>",
+    "hazard__abyssal_depths__hydrothermal_vent": "<:hazard__abyssal_depths__hydrothe:1559429310748692582>",
+    "landmark__celestial_peaks__cloud_rock_spires": "<:landmark__celestial_peaks__cloud:1559429012856774686>",
+    "landmark__celestial_peaks__floating_crystal_island": "<:landmark__celestial_peaks__float:1559429014316384326>",
+    "landmark__celestial_peaks__star_crystal_cluster": "<:landmark__celestial_peaks__star_:1559429015591460906>",
+    "landmark__cursed_ruins__fallen_column": "<:landmark__cursed_ruins__fallen_c:1559429017298280488>",
+    "landmark__cursed_ruins__stone_rubble": "<:landmark__cursed_ruins__stone_ru:1559429020356050954>",
+    "landmark__cursed_ruins__ruined_stone_arch": "<:landmark__cursed_ruins__ruined_s:1559429018783186964>",
+    "hazard__desert__flowering_cactus": "<:hazard__desert__flowering_cactus:1559429312019566613>",
+    "landmark__desert__sand_dune": "<:landmark__desert__sand_dune:1559428992254091396>",
+    "landmark__desert__sandstone_arch": "<:landmark__desert__sandstone_arch:1559428993290211349>",
+    "obstacle__desert__layered_sandstone_boulder": "<:obstacle__desert__layered_sandst:1559429052585082890>",
+    "obstacle__forest__mossy_boulder": "<:obstacle__forest__mossy_boulder:1559429053860020324>",
+    "obstacle__forest__oak_tree": "<:obstacle__forest__oak_tree:1559429055076499486>",
+    "landmark__jungle__giant_fern": "<:landmark__jungle__giant_fern:1559428994959409253>",
+    "obstacle__jungle__palm_tree": "<:obstacle__jungle__palm_tree:1559429056297046037>",
+    "landmark__rainbow__pastel_crystal_cluster": "<:landmark__rainbow__pastel_crysta:1559428996536606780>",
+    "landmark__rainbow__rainbow_canopy_tree": "<:landmark__rainbow__rainbow_canop:1559428998012870716>",
+    "landmark__sunken_coast__boat_wreck": "<:landmark__sunken_coast__boat_wre:1559428999070097429>",
+    "landmark__sunken_coast__broken_wooden_jetty": "<:landmark__sunken_coast__broken_w:1559429000781234176>",
+    "obstacle__sunken_coast__driftwood_log": "<:obstacle__sunken_coast__driftwoo:1559429057312063539>",
+    "obstacle__sunken_coast__jagged_sea_stack": "<:obstacle__sunken_coast__jagged_s:1559429058675220510>",
+    "landmark__sunken_coast__rocky_tide_pool": "<:landmark__sunken_coast__rocky_ti:1559429001947127929>",
+    "obstacle__swamp__mangrove_roots": "<:obstacle__swamp__mangrove_roots:1559429060075978752>",
+    "hazard__swamp__muddy_pond": "<:hazard__swamp__muddy_pond:1559429313219264612>",
+    "landmark__swamp__cattail_reeds": "<:landmark__swamp__cattail_reeds:1559429003083915334>",
+    "obstacle__swamp__twisted_moss_tree": "<:obstacle__swamp__twisted_moss_tr:1559429061346861056>",
+    "landmark__tundra__frozen_ice_arch": "<:landmark__tundra__frozen_ice_arc:1559429004354789467>",
+    "obstacle__tundra__blue_ice_boulder": "<:obstacle__tundra__blue_ice_bould:1559429062584303656>",
+    "obstacle__tundra__snow_pine": "<:obstacle__tundra__snow_pine:1559429063532220466>",
+    "hazard__tundra__deep_snowdrift": "<:hazard__tundra__deep_snowdrift:1559429314309525604>",
+    "landmark__village__flowering_bush": "<:landmark__village__flowering_bus:1559429007404044438>",
+    "obstacle__village__maple_tree": "<:obstacle__village__maple_tree:1559429064719081522>",
+    "hazard__volcano__glowing_basalt_rock": "<:hazard__volcano__glowing_basalt_:1559429316809597018>",
+    "hazard__volcano__active_volcano": "<:hazard__volcano__active_volcano:1559429315593113600>",
+    "hazard__volcano__steam_vent": "<:hazard__volcano__steam_vent:1559429318105636864>",
+    "obstacle__woods__dark_fir_tree": "<:obstacle__woods__dark_fir_tree:1559429066233352262>",
+    "landmark__woods__mushroom_log": "<:landmark__woods__mushroom_log:1559429008796422246>",
+    "ground__abyssal_depths__dark_seabed": "<:ground__abyssal_depths__dark_sea:1559429260337356851>",
+    "ground__celestial_peaks__starry_stone": "<:ground__celestial_peaks__starry_:1559429262392557691>",
+    "ground__cursed_ruins__mossy_paving": "<:ground__cursed_ruins__mossy_pavi:1559429263919419462>",
+    "ground__desert__golden_sand": "<:ground__desert__golden_sand:1559429265261600902>",
+    "ground__dirt__brown_dirt": "<:ground__dirt__brown_dirt:1559429266469556347>",
+    "ground__forest__leafy_floor": "<:ground__forest__leafy_floor:1559429268012924969>",
+    "ground__jungle__damp_leaf_floor": "<:ground__jungle__damp_leaf_floor:1559429269766152192>",
+    "ground__lava__molten_lava": "<:ground__lava__molten_lava:1559429271158657074>",
+    "ground__rainbow__pastel_grass": "<:ground__rainbow__pastel_grass:1559429272362287125>",
+    "ground__sunken_coast__wet_beach_sand": "<:ground__sunken_coast__wet_beach_:1559429273897533481>",
+    "ground__swamp__muddy_ground": "<:ground__swamp__muddy_ground:1559429275482988574>",
+    "ground__tundra__snow_ice_ground": "<:ground__tundra__snow_ice_ground:1559429276795928606>",
+    "ground__village__meadow_grass": "<:ground__village__meadow_grass:1559429278670790716>",
+    "ground__volcano__cracked_basalt": "<:ground__volcano__cracked_basalt:1559429280109437008>",
+    "ground__water__blue_water": "<:ground__water__blue_water:1559429281430503434>",
+    "ground__woods__pine_needle_floor": "<:ground__woods__pine_needle_floor:1559429282684477461>",
 }
+
+# trig: enter (walk onto it) · bump (walk into a blocked tile) · approach (end a step next to a blocked tile)
+# eff: none/bump · damage(hp) · heal(hp) · push_back(tiles,hp) · slide(tiles) · reveal(radius_tiles) · loot(pool)
+#      collection(stamp) · cover · spawn_group(max_animals) · block   (once = once per placed prop per expedition)
+EXPLORE_PROPS = {
+    "discovery__shared__deer_rabbit_squirrel_gathering": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="spawn_group", par={"max_animals": 3}, once=True, name="deer rabbit squirrel gathering"),
+    "discovery__shared__red_berry_patch": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="heal", par={"hp": 5}, once=True, name="red berry patch"),
+    "discovery__shared__fox_supply_stash": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="loot", par={"pool": "small_supplies"}, once=True, name="fox supply stash"),
+    "discovery__shared__golden_pawprint_trail": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="reveal", par={"radius_tiles": 4}, once=True, name="golden pawprint trail"),
+    "discovery__shared__abandoned_tent_campsite": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="loot", par={"pool": "small_supplies"}, once=True, name="abandoned tent campsite"),
+    "discovery__shared__wildflower_clearing": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="collection", par={"stamp": "wildflower_clearing"}, once=True, name="wildflower clearing"),
+    "discovery__shared__purple_rune_monument": dict(biome="shared", cat="discovery", walk=False, trig="approach", eff="collection", par={"stamp": "rune_monument"}, once=True, name="purple rune monument"),
+    "discovery__shared__abandoned_supply_bag": dict(biome="shared", cat="discovery", walk=True, trig="enter", eff="loot", par={"pool": "compatible_basic_ammo"}, once=True, name="abandoned supply bag"),
+    "landmark__abyssal_depths__glowing_anemone_cluster": dict(biome="abyssal_depths", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="glowing anemone cluster"),
+    "landmark__abyssal_depths__luminous_coral": dict(biome="abyssal_depths", cat="landmark", walk=True, trig="enter", eff="reveal", par={"radius_tiles": 3}, once=True, name="luminous coral"),
+    "hazard__abyssal_depths__hydrothermal_vent": dict(biome="abyssal_depths", cat="hazard", walk=True, trig="enter", eff="push_back", par={"tiles": 1, "hp": 2}, once=False, name="hydrothermal vent"),
+    "landmark__celestial_peaks__cloud_rock_spires": dict(biome="celestial_peaks", cat="landmark", walk=False, trig="approach", eff="collection", par={"stamp": "cloud_spires"}, once=True, name="cloud rock spires"),
+    "landmark__celestial_peaks__floating_crystal_island": dict(biome="celestial_peaks", cat="landmark", walk=False, trig="approach", eff="collection", par={"stamp": "floating_crystal"}, once=True, name="floating crystal island"),
+    "landmark__celestial_peaks__star_crystal_cluster": dict(biome="celestial_peaks", cat="landmark", walk=False, trig="bump", eff="heal", par={"hp": 3}, once=True, name="star crystal cluster"),
+    "landmark__cursed_ruins__fallen_column": dict(biome="cursed_ruins", cat="landmark", walk=False, trig="bump", eff="reveal", par={"radius_tiles": 2}, once=True, name="fallen column"),
+    "landmark__cursed_ruins__stone_rubble": dict(biome="cursed_ruins", cat="landmark", walk=False, trig="bump", eff="loot", par={"pool": "small_cash"}, once=True, name="stone rubble"),
+    "landmark__cursed_ruins__ruined_stone_arch": dict(biome="cursed_ruins", cat="landmark", walk=True, trig="enter", eff="collection", par={"stamp": "ruined_arch"}, once=True, name="ruined stone arch"),
+    "hazard__desert__flowering_cactus": dict(biome="small_desert", cat="hazard", walk=False, trig="bump", eff="damage", par={"hp": 1}, once=False, name="flowering cactus"),
+    "landmark__desert__sand_dune": dict(biome="small_desert", cat="landmark", walk=True, trig="enter", eff="push_back", par={"tiles": 1, "hp": 0}, once=False, name="sand dune"),
+    "landmark__desert__sandstone_arch": dict(biome="small_desert", cat="landmark", walk=False, trig="bump", eff="reveal", par={"radius_tiles": 3}, once=True, name="sandstone arch"),
+    "obstacle__desert__layered_sandstone_boulder": dict(biome="small_desert", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="layered sandstone boulder"),
+    "obstacle__forest__mossy_boulder": dict(biome="forest", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="mossy boulder"),
+    "obstacle__forest__oak_tree": dict(biome="forest", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="oak tree"),
+    "landmark__jungle__giant_fern": dict(biome="jungle", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="giant fern"),
+    "obstacle__jungle__palm_tree": dict(biome="jungle", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="palm tree"),
+    "landmark__rainbow__pastel_crystal_cluster": dict(biome="rainbow", cat="landmark", walk=False, trig="bump", eff="reveal", par={"radius_tiles": 3}, once=True, name="pastel crystal cluster"),
+    "landmark__rainbow__rainbow_canopy_tree": dict(biome="rainbow", cat="landmark", walk=False, trig="approach", eff="collection", par={"stamp": "rainbow_tree"}, once=True, name="rainbow canopy tree"),
+    "landmark__sunken_coast__boat_wreck": dict(biome="sunken_coast", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_supplies"}, once=True, name="boat wreck"),
+    "landmark__sunken_coast__broken_wooden_jetty": dict(biome="sunken_coast", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_supplies"}, once=True, name="broken wooden jetty"),
+    "obstacle__sunken_coast__driftwood_log": dict(biome="sunken_coast", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="driftwood log"),
+    "obstacle__sunken_coast__jagged_sea_stack": dict(biome="sunken_coast", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="jagged sea stack"),
+    "landmark__sunken_coast__rocky_tide_pool": dict(biome="sunken_coast", cat="landmark", walk=True, trig="enter", eff="collection", par={"stamp": "tide_pool"}, once=True, name="rocky tide pool"),
+    "obstacle__swamp__mangrove_roots": dict(biome="swamp", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="mangrove roots"),
+    "hazard__swamp__muddy_pond": dict(biome="swamp", cat="hazard", walk=True, trig="enter", eff="push_back", par={"tiles": 1, "hp": 0}, once=False, name="muddy pond"),
+    "landmark__swamp__cattail_reeds": dict(biome="swamp", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="cattail reeds"),
+    "obstacle__swamp__twisted_moss_tree": dict(biome="swamp", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="twisted moss tree"),
+    "landmark__tundra__frozen_pond": dict(biome="tundra", cat="landmark", walk=True, trig="enter", eff="slide", par={"tiles": 1}, once=False, name="frozen pond"),
+    "landmark__tundra__frozen_ice_arch": dict(biome="tundra", cat="landmark", walk=True, trig="enter", eff="slide", par={"tiles": 1}, once=False, name="frozen ice arch"),
+    "obstacle__tundra__blue_ice_boulder": dict(biome="tundra", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="blue ice boulder"),
+    "obstacle__tundra__snow_pine": dict(biome="tundra", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="snow pine"),
+    "hazard__tundra__deep_snowdrift": dict(biome="tundra", cat="hazard", walk=True, trig="enter", eff="push_back", par={"tiles": 1, "hp": 1}, once=False, name="deep snowdrift"),
+    "landmark__village__flowering_bush": dict(biome="village", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="flowering bush"),
+    "obstacle__village__maple_tree": dict(biome="village", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="maple tree"),
+    "hazard__volcano__glowing_basalt_rock": dict(biome="volcanic_highlands", cat="hazard", walk=False, trig="bump", eff="damage", par={"hp": 2}, once=False, name="glowing basalt rock"),
+    "hazard__volcano__active_volcano": dict(biome="volcanic_highlands", cat="hazard", walk=False, trig="bump", eff="damage", par={"hp": 3}, once=False, name="active volcano"),
+    "hazard__volcano__steam_vent": dict(biome="volcanic_highlands", cat="hazard", walk=True, trig="enter", eff="push_back", par={"tiles": 1, "hp": 2}, once=False, name="steam vent"),
+    "obstacle__woods__dark_fir_tree": dict(biome="woods", cat="obstacle", walk=False, trig="bump", eff="bump", par={}, once=False, name="dark fir tree"),
+    "landmark__woods__mushroom_log": dict(biome="woods", cat="landmark", walk=False, trig="bump", eff="heal", par={"hp": 2}, once=True, name="mushroom log"),
+}
+
+# the ground texture of each region (opaque 256px squares), plus the special grounds
+EXPLORE_GROUND = {
+    "village": "ground__village__meadow_grass",
+    "forest": "ground__forest__leafy_floor",
+    "woods": "ground__woods__pine_needle_floor",
+    "small_desert": "ground__desert__golden_sand",
+    "sunken_coast": "ground__sunken_coast__wet_beach_sand",
+    "tundra": "ground__tundra__snow_ice_ground",
+    "jungle": "ground__jungle__damp_leaf_floor",
+    "swamp": "ground__swamp__muddy_ground",
+    "volcanic_highlands": "ground__volcano__cracked_basalt",
+    "cursed_ruins": "ground__cursed_ruins__mossy_paving",
+    "rainbow": "ground__rainbow__pastel_grass",
+    "abyssal_depths": "ground__abyssal_depths__dark_seabed",
+    "celestial_peaks": "ground__celestial_peaks__starry_stone",
+}
+EXPLORE_GROUND_LAVA = "ground__lava__molten_lava"      # volcanic highlands only, sparse: stepping on it costs 5 HP
+EXPLORE_GROUND_WATER = "ground__water__blue_water"      # small ponds you cannot walk through
+EXPLORE_GROUND_DIRT = "ground__dirt__brown_dirt"        # the worn ground under a campsite
+
+
+# What turns up where. tree / stone are the ordinary blocking obstacles (a region without one borrows the other's, or is
+# drawn with a plain procedural tree / boulder), bush is walkable COVER, landmark / hazard are the region's rarer scenery.
+EXPLORE_BIOME_PROPS = {
+    "village":            dict(tree=["obstacle__village__maple_tree"], stone=[], bush=["landmark__village__flowering_bush"], landmark=[], hazard=[]),
+    "forest":             dict(tree=["obstacle__forest__oak_tree"], stone=["obstacle__forest__mossy_boulder"], bush=[], landmark=[], hazard=[]),
+    "woods":              dict(tree=["obstacle__woods__dark_fir_tree"], stone=[], bush=[], landmark=["landmark__woods__mushroom_log"], hazard=[]),
+    "small_desert":       dict(tree=[], stone=["obstacle__desert__layered_sandstone_boulder"], bush=[],
+                               landmark=["landmark__desert__sand_dune", "landmark__desert__sandstone_arch"],
+                               hazard=["hazard__desert__flowering_cactus"]),
+    "sunken_coast":       dict(tree=["obstacle__sunken_coast__driftwood_log"], stone=["obstacle__sunken_coast__jagged_sea_stack"], bush=[],
+                               landmark=["landmark__sunken_coast__boat_wreck", "landmark__sunken_coast__broken_wooden_jetty",
+                                         "landmark__sunken_coast__rocky_tide_pool"], hazard=[]),
+    "tundra":             dict(tree=["obstacle__tundra__snow_pine"], stone=["obstacle__tundra__blue_ice_boulder"], bush=[],
+                               landmark=["landmark__tundra__frozen_pond", "landmark__tundra__frozen_ice_arch"],
+                               hazard=["hazard__tundra__deep_snowdrift"]),
+    "jungle":             dict(tree=["obstacle__jungle__palm_tree"], stone=[], bush=["landmark__jungle__giant_fern"], landmark=[], hazard=[]),
+    "swamp":              dict(tree=["obstacle__swamp__twisted_moss_tree"], stone=["obstacle__swamp__mangrove_roots"],
+                               bush=["landmark__swamp__cattail_reeds"], landmark=[], hazard=["hazard__swamp__muddy_pond"]),
+    "volcanic_highlands": dict(tree=[], stone=[], bush=[], landmark=[],
+                               hazard=["hazard__volcano__glowing_basalt_rock", "hazard__volcano__active_volcano", "hazard__volcano__steam_vent"]),
+    "cursed_ruins":       dict(tree=[], stone=[], bush=[],
+                               landmark=["landmark__cursed_ruins__fallen_column", "landmark__cursed_ruins__stone_rubble",
+                                         "landmark__cursed_ruins__ruined_stone_arch"], hazard=[]),
+    "rainbow":            dict(tree=["landmark__rainbow__rainbow_canopy_tree"], stone=[], bush=[],
+                               landmark=["landmark__rainbow__pastel_crystal_cluster"], hazard=[]),
+    "abyssal_depths":     dict(tree=[], stone=[], bush=["landmark__abyssal_depths__glowing_anemone_cluster"],
+                               landmark=["landmark__abyssal_depths__luminous_coral"], hazard=["hazard__abyssal_depths__hydrothermal_vent"]),
+    "celestial_peaks":    dict(tree=[], stone=["landmark__celestial_peaks__cloud_rock_spires"], bush=[],
+                               landmark=["landmark__celestial_peaks__floating_crystal_island", "landmark__celestial_peaks__star_crystal_cluster"],
+                               hazard=[]),
+}
+# Props that fill a whole 2x2 block of tiles. ALWAYS: only ever drawn big. SOMETIMES: a few of that region's trees grow big.
+EXPLORE_BIG_ALWAYS = {"hazard__volcano__active_volcano", "landmark__sunken_coast__boat_wreck",
+                      "landmark__celestial_peaks__floating_crystal_island", "landmark__rainbow__rainbow_canopy_tree",
+                      "landmark__celestial_peaks__cloud_rock_spires"}
+EXPLORE_BIG_SOMETIMES = {"obstacle__forest__oak_tree", "obstacle__village__maple_tree", "obstacle__jungle__palm_tree",
+                         "obstacle__woods__dark_fir_tree", "obstacle__tundra__snow_pine", "obstacle__swamp__twisted_moss_tree"}
+# the walk-over discoveries and what they look like
+EXPLORE_KIND_ART = {
+    "bag": "discovery__shared__abandoned_supply_bag", "berries": "discovery__shared__red_berry_patch",
+    "camp": "discovery__shared__abandoned_tent_campsite", "clearing": "discovery__shared__wildflower_clearing",
+    "gathering": "discovery__shared__deer_rabbit_squirrel_gathering", "trail": "discovery__shared__golden_pawprint_trail",
+    "monument": "discovery__shared__purple_rune_monument", "stash": "discovery__shared__fox_supply_stash",
+}
+# every cosmetic discovery stamp there is (stamp id -> title); a stamp is earned once, ever
+EXPLORE_STAMPS = {"wildflower_clearing": "Wildflower Clearing", "rune_monument": "Rune Monument", "cloud_spires": "Cloud Spires",
+                  "floating_crystal": "Floating Crystal", "ruined_arch": "Ruined Arch", "rainbow_tree": "Rainbow Canopy",
+                  "tide_pool": "Tide Pool"}
+
+
+def _explore_art() -> dict:
+    art = {"hunter": "<:hunter:1559064022240854016>",
+           # chests reuse the crate art: common / uncommon / rare / epic (the rarer the crate, the better the loot)
+           "chest0": EMOJI.get("common_crate", ""), "chest1": EMOJI.get("uncommon_crate", ""),
+           "chest2": EMOJI.get("rare_crate", ""), "chest3": EMOJI.get("epic_crate", "")}
+    art.update(EXPLORE_ASSET_ART)
+    return art
+
+
+# Also usable later: "huntress" (an alternative hunter sprite the renderer already looks up).
+EXPLORE_ART = _explore_art()
 
 
 def biome_rule(biome: str) -> dict:

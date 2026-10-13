@@ -97,6 +97,8 @@ from game_data import (
     TRACK_FAV_RISK, TRACK_FAV_PROGRESS, TRACK_BAD_RISK, TRACK_BAD_PROGRESS, TRACK_CLUE_RELIABILITY,
     TRACK_DOUBT_IF_MISLED, TRACK_DOUBT_IF_TRUE, TRACK_DOUBT_LINES, TRACK_SQUALL_RISK,
     BIOME_RULES, biome_rule, biome_rule_line, ROLE_INFO, tool_role, tool_role_info, EXPLORE_ART,
+    EXPLORE_PROPS, EXPLORE_BIOME_PROPS, EXPLORE_BIG_ALWAYS, EXPLORE_BIG_SOMETIMES, EXPLORE_KIND_ART, EXPLORE_STAMPS,
+    EXPLORE_GROUND, EXPLORE_GROUND_LAVA, EXPLORE_GROUND_WATER,
     GAMBLING_BADGES, AMMO_VARIETY_TYPES,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
@@ -1632,14 +1634,14 @@ def _grant_region_decor(user_id: str, biome: str) -> str:
 
 
 def explore_keepsake_line(user_id: str) -> str:
-    """Profile decorations from the map and the field guide: region decorations, souvenirs, monument stamps."""
+    """Profile decorations from the map and the field guide: region decorations, souvenirs, discovery stamps."""
     d = data.get(user_id, {})
     bits = [REGION_DECOR[b][0] for b in d.get("region_decor", []) if b in REGION_DECOR]
     bits += [next((i for i, n in _EX_SOUVENIRS.values() if n == sv), "🌿") for sv in d.get("explore_souvenirs", [])]
-    st = d.get("explore_stamps", [])
+    n = len([x for x in d.get("explore_stamps", []) if x in EXPLORE_STAMPS])
     out = " ".join(bits)
-    if st:
-        out += (" · " if out else "") + f"🗿 {len(st)}/{len(BIOME_NAMES)} stamps"
+    if n:
+        out += (" · " if out else "") + f"🏅 {n}/{len(EXPLORE_STAMPS)} stamps"
     return out
 
 
@@ -8465,7 +8467,13 @@ EXPLORE_BUSH_PCT      = 10
 EXPLORE_CHEST_PERMILLE = 8    # chance a tile holds a chest: 0.8% — rare, like a crate drop from a hunt (no daily limit)
 # small discoveries you simply walk onto (per mille of tiles, laid end to end after the chest band)
 EXPLORE_DISC_BANDS = (("chest", 0, EXPLORE_CHEST_PERMILLE), ("bag", 8, 12), ("berries", 12, 15), ("camp", 15, 17),
-                      ("monument", 17, 19), ("clearing", 19, 22))
+                      ("clearing", 17, 20), ("gathering", 20, 22), ("trail", 22, 24), ("monument", 24, 26))
+EXPLORE_LANDMARK_PERMILLE = 30     # a region's landmarks / hazards: share of tiles (per mille)
+EXPLORE_HAZARD_PERMILLE   = 25
+EXPLORE_LAVA_PERMILLE     = 12     # volcanic highlands only: sparse
+EXPLORE_WATER_PERMILLE    = {"sunken_coast": 25, "village": 10}
+EXPLORE_BIG_PERMILLE      = 28     # share of 2x2 blocks that hold one big prop (a volcano, a big tree...)
+EXPLORE_LAVA_HP           = 5
 EXPLORE_FLEE_RUN      = 3     # an animal runs this many steps in a row, then...
 EXPLORE_REST_STEPS    = 2     # ...stops for this many (grazing / sniffing the air): your chance to close in
 EXPLORE_GROUP_CHANCE  = 0.15  # a new animal arrives with a mate right beside it
@@ -8486,8 +8494,12 @@ _EX_DIRS   = {"n": (0, -1), "s": (0, 1), "w": (-1, 0), "e": (1, 0)}
 _EX_QUIET  = ("bump", "blocked", "none", "cooldown", "over")     # outcomes that change nothing: answered privately
 _EX_ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"]          # 45-degree sectors, y grows downward
 _EX_NEIGHBOURS = [(0, -1), (-1, 0), (1, 0), (0, 1)]     # animals walk 4-way like you, so none can slip through a diagonal gap you can't
-_EX_PICKUPS = ("chest", "bag", "berries", "camp", "monument", "clearing")          # walk onto them to collect
-_EX_WALKABLE = ("grass", "bush") + _EX_PICKUPS
+_EX_PICKUPS = ("chest", "bag", "berries", "camp", "clearing", "gathering", "trail", "stash")    # walk onto them to collect
+_EX_WALKABLE = ("grass", "bush", "lava") + _EX_PICKUPS      # (hazard / landmark tiles are walkable or not by the prop; monument, water, tree, stone never)
+_EX_PROP_KIND = {b: {p: k for k, ps in v.items() for p in ps} for b, v in EXPLORE_BIOME_PROPS.items()}
+_EX_BIG_BY_BIOME = {b: tuple(p for p in m if p in EXPLORE_BIG_ALWAYS or p in EXPLORE_BIG_SOMETIMES) for b, m in _EX_PROP_KIND.items()}
+_EX_BUMP_FLAVOR = {"obstacle__swamp__twisted_moss_tree": "A harmless rustling stirs in the moss.",
+                   "obstacle__tundra__snow_pine": "Snow shakes off the branches."}
 _EX_MYSTIC = ("cursed_ruins", "rainbow", "abyssal_depths", "celestial_peaks")      # the strange regions
 # what a clue looks like when it first appears, and the short label shown beside its arrow
 _EX_CLUE_NEW = {
@@ -8505,10 +8517,26 @@ def explore_enabled(user_id: str) -> bool:
     return FEATURE_EXPLORE and bool(data.get(user_id, {}).get("explore_mode", False))
 
 
-def _ex_tile(seed: int, x: int, y: int) -> str:
-    """The same tile every time for the same (seed, x, y) — the map needs no storage."""
+def _ex_big(seed: int, x: int, y: int, biome: str) -> str | None:
+    """The big (2x2) prop that fills the 2x2 block this tile belongs to, if any."""
+    cands = _EX_BIG_BY_BIOME.get(biome)
+    if not cands:
+        return None
+    bx, by = x >> 1, y >> 1
+    if (bx, by) == (EXPLORE_START[0] >> 1, EXPLORE_START[1] >> 1):       # never on top of where you start
+        return None
+    if _zlib.crc32(f"{seed}:{bx}:{by}:big".encode()) % 1000 >= EXPLORE_BIG_PERMILLE:
+        return None
+    return cands[_zlib.crc32(f"{seed}:{bx}:{by}:bp".encode()) % len(cands)]
+
+
+def _ex_tile(seed: int, x: int, y: int, biome: str = "") -> str:
+    """The same tile every time for the same (seed, x, y, biome) — the map needs no storage."""
     if (x, y) == EXPLORE_START:
         return "grass"
+    big = _ex_big(seed, x, y, biome) if biome else None
+    if big:
+        return _EX_PROP_KIND[biome][big]
     h = _zlib.crc32(f"{seed}:{x}:{y}".encode()) % 100
     for kind, pct in (("tree", EXPLORE_TREE_PCT), ("stone", EXPLORE_STONE_PCT), ("bush", EXPLORE_BUSH_PCT)):
         if h < pct:
@@ -8518,6 +8546,17 @@ def _ex_tile(seed: int, x: int, y: int) -> str:
     for kind, lo, hi in EXPLORE_DISC_BANDS:
         if lo <= h2 < hi:
             return kind
+    if biome:
+        h3 = _zlib.crc32(f"{seed}:{x}:{y}:s".encode()) % 1000
+        lists = EXPLORE_BIOME_PROPS.get(biome, {})
+        cur = 0
+        for kind, width in (("landmark", EXPLORE_LANDMARK_PERMILLE if [p for p in lists.get("landmark", []) if p not in EXPLORE_BIG_ALWAYS] else 0),
+                            ("hazard", EXPLORE_HAZARD_PERMILLE if [p for p in lists.get("hazard", []) if p not in EXPLORE_BIG_ALWAYS] else 0),
+                            ("lava", EXPLORE_LAVA_PERMILLE if biome == "volcanic_highlands" else 0),
+                            ("water", EXPLORE_WATER_PERMILLE.get(biome, 0))):
+            if cur <= h3 < cur + width:
+                return kind
+            cur += width
     return "grass"
 
 
@@ -8537,11 +8576,12 @@ def _ex_bounds(st: dict) -> tuple:
 
 
 def _ex_kind(st: dict, x: int, y: int) -> str:
-    """What is on this tile right now: grass / tree / stone / bush / a pickup, or 'void' beyond the border."""
+    """What is on this tile right now: grass / tree / stone / bush / hazard / landmark / lava / water / monument / a pickup,
+    or 'void' beyond the border."""
     x0, y0, x1, y1 = _ex_bounds(st)
     if not (x0 <= x <= x1 and y0 <= y <= y1):
         return "void"
-    t = _ex_tile(st["seed"], x, y)
+    t = _ex_tile(st["seed"], x, y, st.get("biome", ""))
     key = f"{x},{y}"
     if t == "grass" and key in st.get("extra", {}):
         t = st["extra"][key]                                    # a stash the fox left behind
@@ -8550,8 +8590,53 @@ def _ex_kind(st: dict, x: int, y: int) -> str:
     return t
 
 
+def _ex_prop(st: dict, x: int, y: int) -> dict | None:
+    """The prop standing on this tile (its asset id, size, anchor and what it does), or None for plain scenery that has
+    no art for this region (it is drawn procedurally)."""
+    kind = _ex_kind(st, x, y)
+    if kind == "monument":
+        pid, size, ax, ay = "discovery__shared__purple_rune_monument", 1, x, y
+    elif kind in ("tree", "stone", "bush", "hazard", "landmark"):
+        biome, seed = st["biome"], st["seed"]
+        big = _ex_big(seed, x, y, biome)
+        if big and _EX_PROP_KIND.get(biome, {}).get(big) == kind:
+            pid, size, ax, ay = big, 2, (x >> 1) << 1, (y >> 1) << 1
+        else:
+            lists = EXPLORE_BIOME_PROPS.get(biome, {})
+            cand = list(lists.get(kind) or [])
+            if not cand and kind == "tree":
+                cand = list(lists.get("stone") or [])
+            if not cand and kind == "stone":
+                cand = list(lists.get("tree") or [])
+            cand = [p for p in cand if p not in EXPLORE_BIG_ALWAYS]       # some props only ever appear big
+            if not cand:
+                return None
+            pid, size, ax, ay = cand[_zlib.crc32(f"{seed}:{x}:{y}:pp".encode()) % len(cand)], 1, x, y
+    else:
+        return None
+    prop = dict(EXPLORE_PROPS[pid])
+    prop.update(id=pid, size=size, ax=ax, ay=ay, key=f"{ax},{ay}")
+    return prop
+
+
 def _ex_walkable(st: dict, x: int, y: int) -> bool:
-    return _ex_kind(st, x, y) in _EX_WALKABLE
+    k = _ex_kind(st, x, y)
+    if k in _EX_WALKABLE:
+        return True
+    if k in ("hazard", "landmark"):
+        p = _ex_prop(st, x, y)
+        return bool(p and p["walk"])
+    return False
+
+
+def _ex_animal_safe(st: dict, x: int, y: int) -> bool:
+    """Animals stay off lava and anything that hurts or shoves."""
+    k = _ex_kind(st, x, y)
+    if k == "lava":
+        return False
+    if k == "hazard":
+        return False
+    return True
 
 
 def _ex_reach(st: dict) -> dict:
@@ -8716,9 +8801,11 @@ def _ex_spawn(st: dict, easy: bool = False, group: bool = True) -> bool:
     arrives right beside it (a gathering), or one leaves golden footprints."""
     reach = _ex_reach(st)
     lo, hi = EXPLORE_EASY_DIST if easy else (EXPLORE_VIEW + 1, 10 ** 6)
-    cands = [p for p in reach if lo <= _ex_dist(p[0], p[1], st["x"], st["y"]) <= hi and not _ex_animal_at(st, *p)]
+    cands = [p for p in reach if lo <= _ex_dist(p[0], p[1], st["x"], st["y"]) <= hi and not _ex_animal_at(st, *p)
+             and _ex_animal_safe(st, *p)]
     if not cands and easy:
-        cands = [p for p in reach if _ex_dist(p[0], p[1], st["x"], st["y"]) > EXPLORE_VIEW and not _ex_animal_at(st, *p)]
+        cands = [p for p in reach if _ex_dist(p[0], p[1], st["x"], st["y"]) > EXPLORE_VIEW and not _ex_animal_at(st, *p)
+                 and _ex_animal_safe(st, *p)]
     if not cands:
         return False
     x, y = random.choice(cands)
@@ -8734,7 +8821,8 @@ def _ex_spawn(st: dict, easy: bool = False, group: bool = True) -> bool:
     st["animals"].append(a)
     if group and not easy and len(st["animals"]) <= EXPLORE_MAX_ANIMALS and random.random() < EXPLORE_GROUP_CHANCE:
         nb = [(x + dx, y + dy) for dx, dy in _EX_NEIGHBOURS
-              if _ex_walkable(st, x + dx, y + dy) and (x + dx, y + dy) != (st["x"], st["y"]) and not _ex_animal_at(st, x + dx, y + dy)]
+              if _ex_walkable(st, x + dx, y + dy) and (x + dx, y + dy) != (st["x"], st["y"]) and not _ex_animal_at(st, x + dx, y + dy)
+              and _ex_animal_safe(st, x + dx, y + dy)]
         if nb:
             bx, by = random.choice(nb)
             st["animals"].append(_ex_make(st, name, bx, by))
@@ -8782,7 +8870,8 @@ def _ex_step(st: dict, a: dict, score) -> None:
     best = None
     for dx, dy in _EX_NEIGHBOURS:
         nx, ny = a["x"] + dx, a["y"] + dy
-        if (nx, ny) == (st["x"], st["y"]) or not _ex_walkable(st, nx, ny) or _ex_animal_at(st, nx, ny):
+        if (nx, ny) == (st["x"], st["y"]) or not _ex_walkable(st, nx, ny) or _ex_animal_at(st, nx, ny) \
+                or not _ex_animal_safe(st, nx, ny):
             continue
         s = score(nx, ny)
         if best is None or s < best[0]:
@@ -8803,8 +8892,8 @@ def _ex_fox_tick(st: dict, lines: list) -> None:
         fx["left"] -= 1
         if fx["left"] <= 0:
             key = f"{fx['x']},{fx['y']}"
-            if _ex_tile(st["seed"], fx["x"], fx["y"]) == "grass" and key not in st.get("extra", {}):
-                st.setdefault("extra", {})[key] = "bag"
+            if _ex_tile(st["seed"], fx["x"], fx["y"], st["biome"]) == "grass" and key not in st.get("extra", {}):
+                st.setdefault("extra", {})[key] = "stash"
                 lines.append("🦊 The fox darts off — and leaves something behind in the grass.")
             else:
                 lines.append("🦊 The fox trots away into the brush.")
@@ -8813,7 +8902,8 @@ def _ex_fox_tick(st: dict, lines: list) -> None:
         best = None
         for dx, dy in _EX_NEIGHBOURS:
             nx, ny = fx["x"] + dx, fx["y"] + dy
-            if (nx, ny) == (px, py) or not _ex_walkable(st, nx, ny) or _ex_animal_at(st, nx, ny):
+            if (nx, ny) == (px, py) or not _ex_walkable(st, nx, ny) or _ex_animal_at(st, nx, ny) \
+                    or not _ex_animal_safe(st, nx, ny):
                 continue
             sc = (nx - px) ** 2 + (ny - py) ** 2
             if best is None or sc < best[0]:
@@ -8922,6 +9012,163 @@ def _ex_blocked(user_id: str) -> str:
     return ""
 
 
+def _ex_heal_hp(user_id: str, hp: int) -> int:
+    """Heal up to `hp` (never past your maximum). Returns what you actually got."""
+    refresh_health(user_id)
+    h = data[user_id]["health"]
+    before = h["hp"]
+    h["hp"] = min(effective_max_hp(user_id), before + max(0, int(hp)))
+    return h["hp"] - before
+
+
+def _ex_reveal(st: dict, radius: int) -> int:
+    """Light up the clues of every animal within `radius` tiles BEYOND the edge of the picture (what is on screen needs no
+    clue). Returns how many."""
+    radius += EXPLORE_VIEW
+    n = 0
+    for a in st["animals"]:
+        if _ex_dist(a["x"], a["y"], st["x"], st["y"]) <= radius and not _ex_seen(st, a):
+            a["clue"], a["fade"] = EXPLORE_CLUE_TTL, 0
+            a["pd"] = _ex_dist(a["x"], a["y"], st["x"], st["y"])
+            n += 1
+    return n
+
+
+def _ex_stamp(user_id: str, stamp: str, what: str) -> str:
+    stamps = data[user_id].setdefault("explore_stamps", [])
+    title = EXPLORE_STAMPS.get(stamp, stamp.replace("_", " ").title())
+    if stamp in stamps:
+        return f"🏅 You already have the **{title}** stamp."
+    stamps.append(stamp)
+    n = len([x for x in stamps if x in EXPLORE_STAMPS])
+    return f"🏅 **New discovery stamp: {title}!**\n-# Stamps collected: {n}/{len(EXPLORE_STAMPS)} (shown on your profile)"
+
+
+def _ex_loot(user_id: str, pool: str, what: str) -> str:
+    """A small find. Pools: compatible_basic_ammo (a bag), small_supplies (ammo, a bandage or a few coins), small_cash."""
+    d = data[user_id]
+    roll = random.random()
+    if pool == "small_cash" or (pool == "small_supplies" and roll >= 0.65):
+        amt = max(1, int(crate_value_scale(d.get("level", 1)) * random.uniform(0.2, 0.6)))
+        add_money(user_id, amt, f"explore {what}")
+        return f"🪙 You find **◈ {amt:,}** in the {what}."
+    if pool == "compatible_basic_ammo" or roll < 0.4:
+        an, got = _ex_give_ammo(user_id, random.randint(4, 10))
+        if got > 0:
+            return f"📦 In the {what} you find **{got}× {an}**."
+        if _ex_give_bandage(user_id):
+            return f"📦 In the {what} you find **a Bandage**."
+        amt = max(1, int(crate_value_scale(d.get("level", 1)) * 0.3))
+        add_money(user_id, amt, f"explore {what}")
+        return f"📦 In the {what} you find **◈ {amt:,}**."
+    if _ex_give_bandage(user_id):
+        return f"📦 In the {what} you find **a Bandage**."
+    amt = max(1, int(crate_value_scale(d.get("level", 1)) * 0.3))
+    add_money(user_id, amt, f"explore {what}")
+    return f"📦 In the {what} you find **◈ {amt:,}**."
+
+
+def _ex_apply(user_id: str, st: dict, prop: dict) -> str:
+    """The automatic, non-moving effect of a prop (damage / heal / reveal / loot / collection). Returns the line, or ''
+    when nothing happened (already used, or no use right now — a one-time heal you don't need is kept for later)."""
+    eff, par, name = prop["eff"], prop["par"], prop["name"]
+    fired = st.setdefault("fired", [])
+    if prop["once"] and prop["key"] in fired:
+        return ""
+    if eff == "damage":
+        lost = _track_hurt(user_id, par.get("hp", 1))
+        return f"⚠️ The {name} hurts — **-{lost} HP**."
+    if eff == "heal":
+        got = _ex_heal_hp(user_id, par.get("hp", 0))
+        if got <= 0:
+            return ""
+        line = f"💚 The {name} restores **+{got} HP**."
+    elif eff == "reveal":
+        n = _ex_reveal(st, par.get("radius_tiles", 3))
+        line = (f"✨ The {name} shows you where to look — **{n}** animal{'s' if n != 1 else ''} nearby leave{'s' if n == 1 else ''} a trace."
+                if n else f"✨ The {name} glows, but nothing stirs nearby.")
+    elif eff == "loot":
+        line = _ex_loot(user_id, par.get("pool", "small_supplies"), name)
+    elif eff == "collection":
+        line = _ex_stamp(user_id, par.get("stamp", prop["id"]), name)
+    else:
+        return ""
+    if prop["once"]:
+        fired.append(prop["key"])
+    return line
+
+
+def _ex_bump(user_id: str, st: dict, kind: str, prop: dict | None) -> tuple:
+    """Walked into something solid. Returns (text, fired): fired means an effect happened and a turn passes; otherwise
+    it is an ordinary bump (private message, no turn)."""
+    if kind == "water":
+        return "Deep water blocks the way.", False
+    if prop is None:
+        return f"A {'boulder' if kind == 'stone' else 'tree'} blocks the way.", False
+    if prop["trig"] == "bump" and prop["eff"] in ("damage", "heal", "reveal", "loot", "collection"):
+        line = _ex_apply(user_id, st, prop)
+        if line:
+            return line, True
+    text = f"The {prop['name']} blocks the way."
+    return text + (" " + _EX_BUMP_FLAVOR[prop["id"]] if prop["id"] in _EX_BUMP_FLAVOR else ""), False
+
+
+def _ex_slide(st: dict, d: tuple, tiles: int) -> int:
+    """Skate `tiles` more tiles the way you were going, but only over safe ground; nothing along the way triggers."""
+    moved = 0
+    for _ in range(tiles):
+        tx, ty = st["x"] + d[0], st["y"] + d[1]
+        k = _ex_kind(st, tx, ty)
+        if not _ex_walkable(st, tx, ty) or k in ("lava", "hazard", "water") or _ex_animal_at(st, tx, ty):
+            break
+        p = _ex_prop(st, tx, ty)
+        if p and p["eff"] in ("damage", "push_back"):
+            break
+        st["x"], st["y"] = tx, ty
+        moved += 1
+    return moved
+
+
+def _ex_enter(user_id: str, st: dict, kind: str, prop: dict | None, prev: tuple, d: tuple) -> list:
+    """You just stepped onto a walkable tile: collect what is there, or get hurt / shoved / slid by it."""
+    x, y = st["x"], st["y"]
+    if kind == "lava":
+        lost = _track_hurt(user_id, EXPLORE_LAVA_HP)
+        return [f"🌋 You wade into molten lava — **-{lost} HP**! Get out quick."]
+    if kind in _EX_PICKUPS:
+        return [_ex_pickup(user_id, st, x, y, kind)]
+    if prop is None or prop["trig"] != "enter":
+        return []
+    eff, par = prop["eff"], prop["par"]
+    if eff == "push_back":
+        lost = _track_hurt(user_id, par.get("hp", 0)) if par.get("hp") else 0
+        st["x"], st["y"] = prev
+        return [f"💨 The {prop['name']} throws you back" + (f" — **-{lost} HP**." if lost else ".")]
+    if eff == "slide":
+        n = _ex_slide(st, d, par.get("tiles", 1))
+        return [f"🧊 You slide across the {prop['name']}" + ("!" if n else " — and stay put.")]
+    line = _ex_apply(user_id, st, prop)
+    return [line] if line else []
+
+
+def _ex_approach(user_id: str, st: dict) -> list:
+    """Standing next to a solid prop that reacts to being approached (a monument, a spire, a canopy): it fires once."""
+    lines = []
+    seen_keys = set()
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            if (dx, dy) == (0, 0):
+                continue
+            p = _ex_prop(st, st["x"] + dx, st["y"] + dy)
+            if not p or p["walk"] or p["trig"] != "approach" or p["key"] in seen_keys:
+                continue
+            seen_keys.add(p["key"])
+            line = _ex_apply(user_id, st, p)
+            if line:
+                lines.append(line)
+    return lines
+
+
 def _ex_give_ammo(user_id: str, qty: int) -> tuple:
     """Add up to `qty` rounds your tool can use. Returns (ammo name, rounds ACTUALLY added) — the stack cap may trim it."""
     d = data[user_id]
@@ -9008,25 +9255,16 @@ def _ex_pickup(user_id: str, st: dict, x: int, y: int, kind: str) -> str:
     if kind == "chest":
         return _ex_open_chest(user_id, st, x, y)
     if kind == "berries":
-        refresh_health(user_id)
-        hp, mx = player_hp(user_id)
-        if hp >= mx:
+        got = _ex_heal_hp(user_id, EXPLORE_PROPS["discovery__shared__red_berry_patch"]["par"]["hp"])
+        if got <= 0:
             return "🫐 A patch of ripe berries — you're not hurt, so you leave them for when you are."
-        h = d["health"]
-        gain = max(8, int(mx * 0.15))
-        h["hp"] = min(effective_max_hp(user_id), h["hp"] + gain)
         st.setdefault("opened", []).append(key)
-        return f"🫐 **Berry patch!** You eat a handful (+{h['hp'] - hp} HP)."
+        return f"🫐 **Berry patch!** You eat a handful (+{got} HP)."
     st.setdefault("opened", []).append(key)
     if kind == "bag":
-        an, got = _ex_give_ammo(user_id, random.randint(4, 10))
-        if got > 0:
-            return f"🎒 **An abandoned supply bag.** Inside: **{got}× {an}**."
-        if _ex_give_bandage(user_id):
-            return "🎒 **An abandoned supply bag.** Inside: **a Bandage**."
-        amt = max(1, int(crate_value_scale(d.get("level", 1)) * 0.3))
-        add_money(user_id, amt, "explore supply bag")
-        return f"🎒 **An abandoned supply bag.** Inside: **◈ {amt:,}**."
+        return _ex_loot(user_id, "compatible_basic_ammo", "abandoned supply bag")
+    if kind == "stash":
+        return "🦊 " + _ex_loot(user_id, "small_supplies", "fox's stash")
     if kind == "camp":
         found = d.setdefault("explore_journal", [])
         n = _zlib.crc32(f"{st['seed']}:{key}".encode()) % len(_EX_JOURNAL)
@@ -9035,30 +9273,46 @@ def _ex_pickup(user_id: str, st: dict, x: int, y: int, kind: str) -> str:
             found.append(n)
         text = _EX_JOURNAL_MYSTIC if biome in _EX_MYSTIC and random.random() < 0.6 else _EX_JOURNAL[n]
         line = f"⛺ **An old campsite.** {text}" + (f"\n-# 📜 Journal pages found: {len(found)}/{len(_EX_JOURNAL)}" if first else "")
-        if random.random() < 0.35:
-            an, got = _ex_give_ammo(user_id, random.randint(3, 6))
-            if got > 0:
-                line += f"\nYou also find **{got}× {an}** left behind."
-            elif _ex_give_bandage(user_id):
-                line += "\nYou also find **a Bandage** left behind."
-        return line
-    if kind == "monument":
-        stamps = d.setdefault("explore_stamps", [])
-        name = BIOME_NAMES.get(biome, biome)
-        if biome not in stamps:
-            stamps.append(biome)
-            return (f"🗿 **A strange monument.** You press its carving into your journal — a new stamp: **{name}**.\n"
-                    f"-# Stamps collected: {len(stamps)}/{len(BIOME_NAMES)}")
-        return f"🗿 A strange monument. Your journal already has a stamp from **{name}**."
+        return line + "\n" + _ex_loot(user_id, "small_supplies", "campsite")
     if kind == "clearing":
         souv = d.setdefault("explore_souvenirs", [])
         icon, nm = _EX_SOUVENIRS.get(biome, ("🌿", "Wild Flower"))
+        line = f"{icon} **A wildflower clearing.** "
         if nm not in souv:
             souv.append(nm)
-            return (f"{icon} **A scenic clearing.** You take a keepsake: **{nm}**.\n"
-                    f"-# Souvenirs collected: {len(souv)}/{len(_EX_SOUVENIRS)} (shown on your profile)")
-        return f"{icon} A scenic clearing. A lovely spot — you already have this region's souvenir."
+            line += f"You take a keepsake: **{nm}**.\n-# Souvenirs collected: {len(souv)}/{len(_EX_SOUVENIRS)} (shown on your profile)"
+        else:
+            line += "A lovely spot — you already have this region's souvenir."
+        stamp = _ex_stamp(user_id, "wildflower_clearing", "clearing")
+        return line + ("\n" + stamp if "New discovery" in stamp else "")
+    if kind == "gathering":
+        room = EXPLORE_MAX_ANIMALS + 1 - len(st["animals"])
+        want = min(EXPLORE_PROPS["discovery__shared__deer_rabbit_squirrel_gathering"]["par"]["max_animals"], room)
+        if want <= 0:
+            return "🦌 A gathering of animals was here — but they have already moved on."
+        n = 0
+        for _ in range(want):
+            if _ex_spawn_near(st):
+                n += 1
+        return (f"🦌 **A gathering!** {n} animal{'s' if n != 1 else ''} just moved in close — don't spook them."
+                if n else "🦌 A gathering of animals was here — but they have already moved on.")
+    if kind == "trail":
+        n = _ex_reveal(st, EXPLORE_PROPS["discovery__shared__golden_pawprint_trail"]["par"]["radius_tiles"])
+        return (f"✨ **Golden pawprints!** Following them shows **{n}** animal{'s' if n != 1 else ''} nearby."
+                if n else "✨ Golden pawprints — but the trail leads nowhere new.")
     return ""
+
+
+def _ex_spawn_near(st: dict) -> bool:
+    """One more animal a few tiles from you (out of the bushes, within reach on foot): a small gathering."""
+    reach = _ex_reach(st)
+    cands = [p for p in reach if 3 <= _ex_dist(p[0], p[1], st["x"], st["y"]) <= 4 and not _ex_animal_at(st, *p)
+             and _ex_animal_safe(st, *p)]
+    if not cands:
+        return False
+    x, y = random.choice(cands)
+    st["animals"].append(_ex_make(st, pick_biome_animal(st["biome"]), x, y))
+    return True
 
 
 def explore_move(user_id: str, sub: str) -> dict:
@@ -9075,24 +9329,30 @@ def explore_move(user_id: str, sub: str) -> dict:
     lines: list[str] = []
     if sub in _EX_DIRS:
         dx, dy = _EX_DIRS[sub]
-        nx, ny = st["x"] + dx, st["y"] + dy
+        prev = (st["x"], st["y"])
+        nx, ny = prev[0] + dx, prev[1] + dy
         kind = _ex_kind(st, nx, ny)
         if kind == "void":
             st["msg"] = "That's the edge of the known land — it widens as you explore."
-            return {"kind": "bump"}
-        if kind in ("tree", "stone"):
-            st["msg"] = f"A {'boulder' if kind == 'stone' else 'tree'} blocks the way."
             return {"kind": "bump"}
         blocker = _ex_animal_at(st, nx, ny)
         if blocker:
             st["msg"] = f"The **{blocker['name']}** is in the way — fire, or go around."
             return {"kind": "bump"}
-        fx = st.get("fox")
-        if fx and (fx["x"], fx["y"]) == (nx, ny):                   # the fox hops into the tile you just left
-            fx["x"], fx["y"] = st["x"], st["y"]
-        st["x"], st["y"] = nx, ny
-        if kind in _EX_PICKUPS:
-            lines.append(_ex_pickup(user_id, st, nx, ny, kind))
+        prop = _ex_prop(st, nx, ny)
+        if not _ex_walkable(st, nx, ny):
+            text, fired = _ex_bump(user_id, st, kind, prop)
+            if not fired:
+                st["msg"] = text                                       # an ordinary bump costs no turn
+                return {"kind": "bump"}
+            lines.append(text)                                         # a bump that did something (a hurt, a find) takes a turn
+        else:
+            fx = st.get("fox")
+            if fx and (fx["x"], fx["y"]) == (nx, ny):                  # the fox hops into the tile you just left
+                fx["x"], fx["y"] = prev
+            st["x"], st["y"] = nx, ny
+            lines += _ex_enter(user_id, st, kind, prop, prev, (dx, dy))
+    lines += _ex_approach(user_id, st)
     lines += _ex_advance(user_id, st)
     if _ex_over(st):
         lines.append("🧭 **The light is fading — your expedition is over.**")
@@ -9252,7 +9512,14 @@ def _ex_snapshot(user_id: str) -> dict:
     def _shown(x, y):
         k = _ex_kind(st, x, y)
         return "grass" if k in _EX_PICKUPS and (x, y) not in reach else k      # a walled-in pickup is not offered
+    # the window plus one tile each side, so a 2x2 prop that starts just outside it is still drawn
     cells = [[_shown(cx + tx, cy + ty) for tx in range(n)] for ty in range(n)]
+    props = {}
+    for ty in range(-1, n + 1):
+        for tx in range(-1, n + 1):
+            p = _ex_prop(st, cx + tx, cy + ty)
+            if p:
+                props[(p["ax"] - cx, p["ay"] - cy)] = {"id": p["id"], "size": p["size"], "kind": _ex_kind(st, cx + tx, cy + ty)}
     chests = {(tx, ty): _ex_chest_tier(st["seed"], cx + tx, cy + ty)
               for ty in range(n) for tx in range(n) if cells[ty][tx] == "chest"}
     x0, y0, x1, y1 = _ex_bounds(st)
@@ -9265,7 +9532,7 @@ def _ex_snapshot(user_id: str) -> dict:
     fox = (fx["x"] - cx, fx["y"] - cy) if fx and 0 <= fx["x"] - cx < n and 0 <= fx["y"] - cy < n else None
     return {"seed": st["seed"], "biome": st["biome"], "cx": cx, "cy": cy, "hx": px - cx, "hy": py - cy,
             "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges, "moves": moves,
-            "hits": hits, "fox": fox}
+            "hits": hits, "fox": fox, "props": props}
 
 
 # biome look: ground (two greens/sands…), tree canopy, trunk, stone; pine=True draws conifers.
@@ -9288,7 +9555,7 @@ _EX_PAL = {
 _ex_font_cache: dict = {}
 _ex_sprites: dict = {}          # animal name -> PIL RGBA image, or None when it has no custom art
 _ex_art: dict = {}              # map-art key -> PIL RGBA image (EXPLORE_ART), filled by _ex_fetch_art
-_ex_art_try = 0.0
+_ex_art_tried: dict = {}          # art key -> when a download was last attempted
 _ex_grass_cache: dict = {}
 
 
@@ -9374,7 +9641,6 @@ def _ex_player(im) -> None:
     d.polygon([(S * .32, S * .26), (S * .68, S * .26), (S * .5, S * .06)], fill=(120, 80, 44, 255))
 
 
-EXPLORE_LANDMARK_SHARE = 0.35      # share of a biome's trees/boulders drawn as its landmark (looks only; same rules)
 _EX_LANDMARKS = ("small_desert", "tundra", "sunken_coast", "swamp", "volcanic_highlands", "cursed_ruins",
                  "abyssal_depths", "celestial_peaks", "jungle", "rainbow", "woods")
 
@@ -9498,6 +9764,20 @@ def _ex_pickup_art(im, kind: str, r: random.Random) -> None:
         d.line([(S * .5, S * .30), (S * .5, S * .52)], fill=(120, 230, 255, 255), width=4)
         d.line([(S * .44, S * .40), (S * .56, S * .40)], fill=(120, 230, 255, 255), width=4)
         d.ellipse([S * .40, S * .22, S * .60, S * .62], fill=(120, 230, 255, 40))
+    elif kind == "gathering":
+        for ox, oy in ((.26, .66), (.52, .56), (.74, .68)):
+            d.ellipse([S * (ox - .11), S * (oy - .09), S * (ox + .11), S * (oy + .09)], fill=(196, 150, 96, 255), outline=(110, 76, 44, 255))
+            d.ellipse([S * (ox - .11), S * (oy - .17), S * (ox - .01), S * (oy - .05)], fill=(196, 150, 96, 255), outline=(110, 76, 44, 255))
+    elif kind == "trail":
+        for ox, oy in ((.30, .74), (.46, .58), (.62, .44), (.76, .28)):
+            d.ellipse([S * (ox - .06), S * (oy - .05), S * (ox + .06), S * (oy + .06)], fill=(255, 214, 40, 255))
+            for k in (-.08, 0, .08):
+                d.ellipse([S * (ox + k - .025), S * (oy - .11), S * (ox + k + .025), S * (oy - .06)], fill=(255, 214, 40, 255))
+    elif kind == "stash":
+        d.ellipse([S * .16, S * .70, S * .84, S * .90], fill=(0, 0, 0, 70))
+        d.polygon([(S * .30, S * .80), (S * .24, S * .52), (S * .40, S * .40), (S * .60, S * .40), (S * .76, S * .52),
+                   (S * .70, S * .80)], fill=(214, 120, 48, 255), outline=(120, 60, 20, 255))
+        d.polygon([(S * .60, S * .46), (S * .78, S * .36), (S * .70, S * .56)], fill=(255, 255, 255, 255))
     elif kind == "clearing":
         d.ellipse([S * .10, S * .46, S * .90, S * .90], fill=(255, 244, 170, 70))
         for _ in range(9):
@@ -9531,22 +9811,26 @@ def _ex_sprite_fallback(name: str, S: int):
 
 
 def _ex_grass_tile(art, T: int, tint, wx: int, wy: int):
-    """One seamless grass tile. The uploaded tile has a transparent margin and a darker rim, which showed up as dark
-    lines between tiles — so only its inner part is used, laid on a solid fill of its own average colour, and it is
-    mirrored on odd columns / rows (a mirrored neighbour always matches along the shared edge)."""
-    key = (id(art), T, tint)
+    """One seamless ground tile. A texture with a transparent margin and a darker rim (the old grass emoji) is cropped to
+    its inner part and laid on its own average colour; an opaque square (the asset pack's ground) is used whole. Either
+    way it is mirrored on odd columns / rows — a mirrored neighbour always matches along the shared edge, so even a
+    texture that does not tile on its own shows no seams."""
+    key = (id(art), art.size, art.getpixel((0, 0)), art.getpixel((art.width // 2, art.height // 2)), T, tint)
     base = _ex_grass_cache.get(key)
     if base is None:
         alpha = art.getchannel("A").point(lambda v: 255 if v > 200 else 0)
-        l, t, r, b = alpha.getbbox() or (0, 0, art.width, art.height)
-        ins = max(2, int(min(r - l, b - t) * .10))
-        core = art.crop((l + ins, t + ins, r - ins, b - ins))
-        avg = core.convert("RGB").resize((1, 1), _PILImage.BOX).getpixel((0, 0))
-        base = _PILImage.new("RGBA", (T, T), avg + (255,))
-        base.alpha_composite(_ex_fit(core, T))
-        if tint:                                                    # a gentle biome tint so deserts and snow still read
+        solid = sum(alpha.getdata()) / 255 / max(1, art.width * art.height)
+        if solid >= 0.97:                                           # opaque square: no margin to cut away
+            base = _ex_fit(art, T).convert("RGBA")
+        else:
+            l, t, r, b = alpha.getbbox() or (0, 0, art.width, art.height)
+            ins = max(2, int(min(r - l, b - t) * .10))
+            core = art.crop((l + ins, t + ins, r - ins, b - ins))
+            avg = core.convert("RGB").resize((1, 1), _PILImage.BOX).getpixel((0, 0))
+            base = _PILImage.new("RGBA", (T, T), avg + (255,))
+            base.alpha_composite(_ex_fit(core, T))
+        if tint:
             base = _PILImage.blend(base, _PILImage.new("RGBA", (T, T), tint + (255,)), 0.32)
-        _ex_grass_cache.clear()
         _ex_grass_cache[key] = base
     tile = base
     if wx % 2:
@@ -9571,6 +9855,33 @@ def _ex_pasted(canvas, im, tx: int, ty: int, T: int, size: float, feet: float = 
     _ex_put(canvas, _ex_fit(im, sz), tx * T + (T - sz) // 2, ty * T + int(T * feet) - sz)
 
 
+def _ex_put_prop(canvas, im, tx: int, ty: int, T: int, tiles: int = 1, scale: float = .94) -> None:
+    """Draw a prop's art inside its `tiles` x `tiles` box, keeping its proportions, resting on the bottom edge."""
+    box = tiles * T
+    f = min(box / im.width, box / im.height) * scale
+    w, h = max(2, int(im.width * f)), max(2, int(im.height * f))
+    _ex_put(canvas, im.resize((w, h), _PILImage.LANCZOS), tx * T + (box - w) // 2, ty * T + box - h - int(box * .02))
+
+
+def _ex_proc_prop(kind: str, biome: str, r: random.Random, pal: dict, S: int):
+    """A plain stand-in (an RGBA square of side S) for a prop whose art is missing or that has none for this region."""
+    im = _PILImage.new("RGBA", (S, S), (0, 0, 0, 0))
+    if kind == "stone":
+        _ex_stone(im, pal, r)
+    elif kind == "chest":
+        _ex_chest(im)
+    elif kind in _EX_PICKUPS or kind == "monument":
+        _ex_pickup_art(im, kind, r)
+    elif kind in ("landmark", "hazard"):
+        if biome in _EX_LANDMARKS:
+            _ex_landmark(im, biome, r)
+        else:
+            _ex_stone(im, pal, r)
+    else:
+        _ex_tree(im, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
+    return im
+
+
 def _ex_render(snap: dict) -> bytes:
     """Draw the map window as a 7x7 PNG: grass tile at the bottom, then trees / rocks / bushes / chests, yellow
     step boxes, animals (with the yellow target circle), the hunter, trail footprints and clue arrows. The window never shows past the edge of the world: near
@@ -9582,47 +9893,54 @@ def _ex_render(snap: dict) -> bytes:
     SS = 2
     pal = _EX_PAL.get(snap["biome"], _EX_PAL["village"])
     canvas = _PILImage.new("RGB", (T * N, T * N), pal["g1"])        # RGB: translucent shapes drawn on it BLEND (on RGBA they replace the pixel)
-    grass_art = _ex_art.get("grass")
-    tint = None if snap["biome"] in ("village", "forest", "jungle") else pal["g1"]
     cells = snap["cells"]
-    # 1 — the grass tile is the last (bottom) layer under everything
-    for ty in range(N):
-        for tx in range(N):
-            if grass_art is not None:
-                tile = _ex_grass_tile(grass_art, T, tint, snap["cx"] + tx, snap["cy"] + ty)
-            else:
-                tile = _ex_ground(pal, snap["seed"], snap["cx"] + tx, snap["cy"] + ty, T * SS).resize((T, T), _PILImage.LANCZOS)
-            _ex_put(canvas, tile, tx * T, ty * T)
-    # 2 — trees, rocks, bushes (a bush covers whatever stands in it), chests
+    base_id = EXPLORE_GROUND.get(snap["biome"], "")
+    # 1 — the ground texture is the bottom layer (lava and water have their own)
     for ty in range(N):
         for tx in range(N):
             kind = cells[ty][tx]
-            if kind == "grass":
+            gid = EXPLORE_GROUND_LAVA if kind == "lava" else EXPLORE_GROUND_WATER if kind == "water" else base_id
+            ground = _ex_art.get(gid)
+            wx, wy = snap["cx"] + tx, snap["cy"] + ty
+            if ground is not None:
+                tile = _ex_grass_tile(ground, T, None, wx, wy)
+            else:
+                tile = _ex_ground(pal, snap["seed"], wx, wy, T * SS).resize((T, T), _PILImage.LANCZOS)
+                if kind in ("lava", "water"):
+                    tile = _PILImage.blend(tile, _PILImage.new("RGBA", (T, T), (255, 96, 24, 255) if kind == "lava" else (40, 110, 200, 255)), .7)
+            _ex_put(canvas, tile, tx * T, ty * T)
+    # 2 — props (2x2 ones once, at their anchor), discoveries and chests. A bush covers whatever stands in it.
+    props = snap["props"]
+    done = set()
+    for ty in range(-1, N + 1):
+        for tx in range(-1, N + 1):
+            inside = 0 <= tx < N and 0 <= ty < N
+            kind = cells[ty][tx] if inside else (props.get((tx, ty)) or {}).get("kind", "")
+            if kind in ("", "grass", "lava", "water", "void"):
                 continue
             wx, wy = snap["cx"] + tx, snap["cy"] + ty
-            lm = (kind in ("tree", "stone") and snap["biome"] in _EX_LANDMARKS
-                  and _ex_rng(snap["seed"], wx, wy, "lm").random() < EXPLORE_LANDMARK_SHARE)
-            art_key = (f"landmark_{snap['biome']}" if lm else
-                       {"tree": "tree", "stone": "rock", "bush": "bush"}.get(kind)
-                       or (f"chest{snap['chests'].get((tx, ty), 0)}" if kind == "chest" else "")
-                       or (f"disc_{kind}" if kind in _EX_PICKUPS else ""))
-            art = _ex_art.get(art_key)
-            if art is not None:
-                sz = {"bush": 0.92, "chest": 0.78}.get(kind, 0.8 if kind in _EX_PICKUPS else 1.0)
-                _ex_put(canvas, _ex_fit(art, int(T * sz)), tx * T + int(T * (1 - sz) / 2), ty * T + int(T * (1 - sz) / 2))
+            pr = props.get((tx, ty))
+            if pr is not None:                                      # a prop anchored on this tile
+                size = pr["size"]
+                art = _ex_art.get(pr["id"])
+                if art is not None:
+                    _ex_put_prop(canvas, art, tx, ty, T, size)
+                else:
+                    t2 = _ex_proc_prop(pr["kind"], snap["biome"], _ex_rng(snap["seed"], wx, wy, pr["id"]), pal, T * SS * size)
+                    _ex_put(canvas, t2.resize((T * size, T * size), _PILImage.LANCZOS), tx * T, ty * T)
+                done.add((tx, ty))
                 continue
-            t2 = _PILImage.new("RGBA", (T * SS, T * SS), (0, 0, 0, 0))
-            r = _ex_rng(snap["seed"], wx, wy, kind)
-            if lm:
-                _ex_landmark(t2, snap["biome"], r)
-            elif kind == "stone":
-                _ex_stone(t2, pal, r)
-            elif kind == "chest":
-                _ex_chest(t2)
-            elif kind in _EX_PICKUPS:
-                _ex_pickup_art(t2, kind, r)
-            else:
-                _ex_tree(t2, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
+            if not inside:
+                continue
+            if any((tx - ox, ty - oy) in props and props[(tx - ox, ty - oy)]["size"] == 2 for ox in (0, 1) for oy in (0, 1)):
+                continue                                            # another cell of a 2x2 prop drawn from its anchor
+            r_ = _ex_rng(snap["seed"], wx, wy, kind)
+            art_id = EXPLORE_KIND_ART.get(kind, "") or (f"chest{snap['chests'].get((tx, ty), 0)}" if kind == "chest" else "")
+            art = _ex_art.get(art_id)
+            if art is not None:
+                _ex_put_prop(canvas, art, tx, ty, T, 1, scale=.8 if kind in _EX_PICKUPS else .94)
+                continue
+            t2 = _ex_proc_prop(kind, snap["biome"], r_, pal, T * SS)
             _ex_put(canvas, t2.resize((T, T), _PILImage.LANCZOS), tx * T, ty * T)
     d = _PILDraw.Draw(canvas, "RGBA")
     # 2a — the tiles your next shot will cover, in orange (the shape of your weapon, aimed at the target)
@@ -9675,15 +9993,6 @@ def _ex_render(snap: dict) -> bytes:
     _ex_pasted(canvas, hero, hx, hy, T, 1.0, feet=.98)
     W = H = T * N
     d = _PILDraw.Draw(canvas, "RGBA")
-    # 5 — trail footprints on the edge tile that lies toward each clue (above the fade so they stay visible)
-    trail = _ex_art.get("trail")
-    for c in snap["clues"]:
-        m = max(abs(c["dx"]), abs(c["dy"])) or 1
-        k = EXPLORE_VIEW / m
-        tx = max(0, min(N - 1, hx + round(c["dx"] * k)))
-        ty = max(0, min(N - 1, hy + round(c["dy"] * k)))
-        if trail is not None and (tx, ty) != (hx, hy):
-            _ex_pasted(canvas, trail, tx, ty, T, .8, feet=.9)
     # 6 — the edge of the world: an amber line on every side where the land stops
     amber = (255, 196, 80, 235)
     e = snap["edges"]
@@ -9718,13 +10027,24 @@ def _ex_render(snap: dict) -> bytes:
     return buf.getvalue()
 
 
-async def _ex_fetch_art() -> None:
-    """Download the map-art emoji once (EXPLORE_ART). Missing ones are retried at most once a minute."""
-    global _ex_art_try
-    missing = {k: v for k, v in EXPLORE_ART.items() if k not in _ex_art}
-    if not missing or time.time() - _ex_art_try < 60:
+def _ex_art_wanted(biome: str) -> list[str]:
+    """The art keys one region's map can show: ground, its props, the discoveries, the hunter and the chests."""
+    keys = {"hunter", "chest0", "chest1", "chest2", "chest3", EXPLORE_GROUND.get(biome, ""), EXPLORE_GROUND_LAVA,
+            EXPLORE_GROUND_WATER, *EXPLORE_KIND_ART.values()}
+    for ps in EXPLORE_BIOME_PROPS.get(biome, {}).values():
+        keys.update(ps)
+    return sorted(k for k in keys if k in EXPLORE_ART)
+
+
+async def _ex_fetch_art(biome: str | None = None) -> None:
+    """Download the map-art emoji a region needs, once (EXPLORE_ART). A failed one is retried at most once a minute."""
+    now = time.time()
+    keys = _ex_art_wanted(biome) if biome else list(EXPLORE_ART)
+    missing = {k: EXPLORE_ART[k] for k in keys if k not in _ex_art and now - _ex_art_tried.get(k, 0) >= 60}
+    if not missing:
         return
-    _ex_art_try = time.time()
+    for k in missing:
+        _ex_art_tried[k] = now
 
     async def one(session, key, ref):
         url = _emoji_cdn_url(ref, size=128)
@@ -9737,7 +10057,7 @@ async def _ex_fetch_art() -> None:
         except Exception:
             pass
 
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as s:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
         await asyncio.gather(*(one(s, k, v) for k, v in missing.items()))
 
 
@@ -9772,7 +10092,7 @@ async def explore_image(user_id: str) -> bytes | None:
         return None
     try:
         snap = _ex_snapshot(user_id)
-        await _ex_fetch_art()
+        await _ex_fetch_art(snap["biome"])
         await _ex_fetch_sprites({a["name"] for a in snap["animals"]})
         return await asyncio.to_thread(_ex_render, snap)
     except Exception:
@@ -9836,7 +10156,7 @@ async def explore_info_show(interaction, user_id: str) -> None:
     png = None
     if _PIL_OK:
         try:
-            png = await asyncio.to_thread(_ex_range_png, tool)
+            png = await asyncio.to_thread(_ex_range_png, tool, data[user_id].get("biome", "village"))
         except Exception:
             logger.exception("explore range picture failed")
     comps = build_explore_info_components(user_id, image=png is not None)
@@ -9983,7 +10303,7 @@ def _ex_blocked_dirs(st: dict) -> set:
     seen = {(a["x"], a["y"]) for a in _ex_visible(st)}
     for key, (dx, dy) in _EX_DIRS.items():
         nx, ny = st["x"] + dx, st["y"] + dy
-        if _ex_kind(st, nx, ny) in ("void", "tree", "stone") or (nx, ny) in seen:
+        if _ex_kind(st, nx, ny) == "void" or not _ex_walkable(st, nx, ny) or (nx, ny) in seen:
             out.add(key)
     return out
 
@@ -10083,7 +10403,7 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     ]}]
 
 
-def _ex_range_png(tool: str) -> bytes:
+def _ex_range_png(tool: str, biome: str = "village") -> bytes:
     """A 7x7 field with the hunter in the middle: yellow = where an animal can stand and be aimed at, orange = what one
     sample shot covers (aimed at the circled tile). Drawn from the tool's real shape, so it is exactly the hit area."""
     T, N = 64, EXPLORE_VIEW * 2 + 1
@@ -10093,7 +10413,7 @@ def _ex_range_png(tool: str) -> bytes:
     sample = max(east) if east else max(reach)
     hits = shape_hits(tool, *sample)
     canvas = _PILImage.new("RGB", (T * N, T * N), (84, 140, 70))
-    grass = _ex_art.get("grass")
+    grass = _ex_art.get(EXPLORE_GROUND.get(biome, ""))
     for ty in range(N):
         for tx in range(N):
             if grass is not None:
@@ -10151,6 +10471,12 @@ def build_explore_info_components(user_id: str, image: bool = True) -> list:
                                 "- ⚪ A faint circle: in view but out of reach — walk closer. Animals tire when they run and stop to graze.\n"
                                 "- 🌿 Bushes hide an animal until you're next to it. Walk onto 🎒 bags, 🫐 berries, ⛺ camps, 🗿 monuments, 🌼 clearings and chests.\n"
                                 "- 🔫 Every animal a shot covers costs one round and every shot (hit or miss) uses your cooldown."},
+        {"type": 10, "content": "**The land bites back (a little)**\n"
+                                "- 🧊 Ice slides you one more tile · ♨️ steam vents, 🌫️ mud and 🏔️ snowdrifts throw you back to where you were\n"
+                                "- 🌵🌋 prickly cactus and hot rock hurt when you bump them · molten lava costs 5 HP (it never knocks you out)\n"
+                                "- 🌿 reeds, ferns and bushes hide animals until you're beside them · water can't be crossed\n"
+                                "- ✨ glowing coral, crystals and arches show where animals are; some landmarks give a small find or a discovery stamp. "
+                                "Each one only pays out once."},
         {"type": 14, "divider": False, "spacing": 1},
         {"type": 10, "content": f"**Every tool's shape**\n{others}"},
     ]

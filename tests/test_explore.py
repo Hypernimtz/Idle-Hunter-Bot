@@ -50,7 +50,7 @@ def terrain(mapping=None, default="grass"):
     """Pin the map: tiles not listed are `default`. (The start tile is always grass.)"""
     mapping = mapping or {}
     real = app._ex_tile
-    app._ex_tile = lambda seed, x, y: "grass" if (x, y) == app.EXPLORE_START else mapping.get((x, y), default)
+    app._ex_tile = lambda seed, x, y, biome="": "grass" if (x, y) == app.EXPLORE_START else mapping.get((x, y), default)
     try:
         yield
     finally:
@@ -136,7 +136,8 @@ def test_the_border_stops_you_and_costs_no_step_then_widens_as_you_explore():
 
 
 def test_trees_and_boulders_block_you_and_cost_nothing():
-    _fresh()
+    d = _fresh()
+    d["biome"] = "forest"
     with terrain({(3, 1): "tree", (4, 0): "stone", (2, 0): "bush"}), still_world():
         st = app._ex_state(U)
         st["animals"] = []
@@ -165,12 +166,12 @@ def test_a_fully_walled_in_start_is_rerolled():
     _fresh()
     calls = {"n": 0}
     real = app._ex_tile
-    def walled(seed, x, y):
+    def walled(seed, x, y, biome=""):
         if (x, y) == app.EXPLORE_START:
             return "grass"
         if calls["n"] < 3 and seed % 2 == 0:
             return "tree"
-        return real(seed, x, y)
+        return real(seed, x, y, biome)
     app._ex_tile = walled
     try:
         random.seed(5)
@@ -441,8 +442,8 @@ def test_the_hunter_is_drawn_big():
     """The hunter fills (nearly) its whole tile; animals stay small."""
     from PIL import Image
     saved = dict(app._ex_art)
-    app._ex_art.update(grass=Image.new("RGBA", (128, 128), (0, 200, 0, 255)),
-                       hunter=Image.new("RGBA", (128, 128), (255, 255, 255, 255)))
+    app._ex_art.update({gd.EXPLORE_GROUND["village"]: Image.new("RGBA", (128, 128), (0, 200, 0, 255)),
+                       "hunter": Image.new("RGBA", (128, 128), (255, 255, 255, 255))})
     try:
         _fresh()
         with terrain():
@@ -602,8 +603,10 @@ def test_layers_come_out_in_the_right_order_with_uploaded_art():
     from PIL import Image
     saved_art = dict(app._ex_art)
     solid = lambda c: Image.new("RGBA", (128, 128), c)
-    app._ex_art.update(grass=solid((0, 200, 0, 255)), tree=solid((200, 0, 0, 255)), rock=solid((0, 0, 200, 255)),
-                       bush=solid((200, 200, 0, 255)), hunter=solid((255, 255, 255, 255)), trail=solid((90, 0, 90, 255)))
+    app._ex_art.update({gd.EXPLORE_GROUND["village"]: solid((0, 200, 0, 255)),
+                        "obstacle__village__maple_tree": solid((200, 0, 0, 255)),
+                        "landmark__village__flowering_bush": solid((200, 200, 0, 255)),
+                        "hunter": solid((255, 255, 255, 255))})
     try:
         _fresh()
         with terrain({(2, 0): "tree", (4, 0): "stone", (3, 1): "bush"}):
@@ -616,7 +619,7 @@ def test_layers_come_out_in_the_right_order_with_uploaded_art():
             near = lambda a, b, tol=70: all(abs(x - y) <= tol for x, y in zip(a[:3], b))
             assert near(px(3, 2, .12, .12), (0, 200, 0), 80)         # bare grass, the bottom layer (off-centre: the step box sits in the middle)
             assert near(px(2, 3), (200, 0, 0), 60)                   # the tree to the west sits on top of grass
-            assert near(px(4, 3), (0, 0, 200), 60)                   # the boulder to the east
+            assert near(px(4, 3), (200, 0, 0), 60)                   # a region with no boulder art draws its tree there instead
             assert near(px(3, 4, .12, .12), (200, 200, 0), 60)       # the bush to the south
             assert near(px(3, 3), (255, 255, 255), 40)               # the hunter is the top layer in the middle
     finally:
@@ -800,7 +803,8 @@ def test_targeting_buttons_and_nothing_to_cycle():
 def test_the_picture_marks_step_tiles_with_yellow_boxes_and_the_target_with_a_circle():
     from PIL import Image
     saved = dict(app._ex_art)
-    app._ex_art.update(grass=Image.new("RGBA", (128, 128), (0, 120, 0, 255)), hunter=Image.new("RGBA", (128, 128), (255, 255, 255, 255)))
+    app._ex_art.update({gd.EXPLORE_GROUND["village"]: Image.new("RGBA", (128, 128), (0, 120, 0, 255)),
+                        "hunter": Image.new("RGBA", (128, 128), (255, 255, 255, 255))})
     try:
         _fresh(tool="Bare Hands")
         with terrain({(3, 1): "tree"}), still_world():
@@ -830,7 +834,7 @@ def test_the_grass_tiles_join_without_dark_lines():
     art = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
     ImageDraw.Draw(art).rectangle([5, 6, 122, 122], fill=(97, 141, 63, 255), outline=(43, 79, 42, 255), width=4)
     saved = dict(app._ex_art)
-    app._ex_art.update(grass=art)
+    app._ex_art.update({gd.EXPLORE_GROUND["village"]: art})
     try:
         _fresh()
         with terrain():
@@ -1206,16 +1210,17 @@ def test_animals_sometimes_arrive_in_pairs_and_golden_ones_leave_golden_prints()
 
 # ── small discoveries ────────────────────────────────────────
 
-def test_discoveries_are_rare_walkable_tiles_and_each_kind_exists():
+def test_discoveries_are_rare_tiles_and_each_kind_exists():
     counts: dict = {}
     for seed in range(60):
         for x in range(19):
             for y in range(19):
-                k = app._ex_tile(seed, x, y)
+                k = app._ex_tile(seed, x, y, "village")
                 counts[k] = counts.get(k, 0) + 1
     total = 60 * 19 * 19
-    for k in ("chest", "bag", "berries", "camp", "monument", "clearing"):
+    for k in ("chest", "bag", "berries", "camp", "clearing", "gathering", "trail"):
         assert counts.get(k, 0) > 0 and k in app._EX_WALKABLE, k
+    assert counts.get("monument", 0) > 0 and "monument" not in app._EX_WALKABLE         # a monument is solid
     assert sum(counts.get(k, 0) for k in app._EX_PICKUPS) / total < 0.035
 
 
@@ -1229,21 +1234,33 @@ def test_each_discovery_does_its_small_thing():
     d["tool"] = "Bare Hands"
     d["healing_inv"] = {}
     assert "Bandage" in app._ex_pickup(U, st, 9, 2, "bag") and d["healing_inv"]["Bandage"] == 1
-    # berries: only used up when you are hurt
+    # berries: 5 HP, and only used up when you are hurt
     app.refresh_health(U)
     d["health"]["hp"] = d["health"]["max_hp"]
     assert "not hurt" in app._ex_pickup(U, st, 9, 3, "berries") and "9,3" not in st["opened"]
     d["health"]["hp"] = 10
-    assert "Berry patch" in app._ex_pickup(U, st, 9, 3, "berries") and d["health"]["hp"] > 10 and "9,3" in st["opened"]
-    # campsite journal pages are collected
-    assert "campsite" in app._ex_pickup(U, st, 9, 4, "camp") and len(d["explore_journal"]) == 1
-    # a monument stamps the region once; a clearing gives its souvenir once
-    assert "new stamp" in app._ex_pickup(U, st, 9, 5, "monument") and d["explore_stamps"] == ["village"]
-    assert "already" in app._ex_pickup(U, st, 9, 6, "monument") and d["explore_stamps"] == ["village"]
-    assert "keepsake" in app._ex_pickup(U, st, 9, 7, "clearing") and d["explore_souvenirs"] == ["Pressed Meadow Flower"]
-    assert "already" in app._ex_pickup(U, st, 9, 8, "clearing") and len(d["explore_souvenirs"]) == 1
+    assert "Berry patch" in app._ex_pickup(U, st, 9, 3, "berries") and d["health"]["hp"] == 15 and "9,3" in st["opened"]
+    # campsite: a journal page and a small find
+    msg = app._ex_pickup(U, st, 9, 4, "camp")
+    assert "campsite" in msg and len(d["explore_journal"]) == 1 and "find" in msg.lower()
+    # a clearing: a stamp (once ever) and this region's souvenir (once)
+    msg = app._ex_pickup(U, st, 9, 7, "clearing")
+    assert "keepsake" in msg and "New discovery stamp" in msg and d["explore_souvenirs"] == ["Pressed Meadow Flower"]
+    assert "already" in app._ex_pickup(U, st, 9, 8, "clearing") and d["explore_stamps"] == ["wildflower_clearing"]
     line = app.explore_keepsake_line(U)
-    assert "🌼" in line and "1/13 stamps" in line
+    assert "🌼" in line and f"1/{len(gd.EXPLORE_STAMPS)} stamps" in line
+    # a gathering moves a few animals in close, within the animal limit
+    st["animals"] = []
+    msg = app._ex_pickup(U, st, 9, 9, "gathering")
+    assert 1 <= len(st["animals"]) <= 3 and "gathering" in msg
+    st["animals"] = [{"id": i, "name": COMMON, "x": 0, "y": 0, "clue": 0, "cool": 0, "fade": 0, "pd": 9, "mood": "calm"}
+                     for i in range(app.EXPLORE_MAX_ANIMALS + 1)]
+    assert "moved on" in app._ex_pickup(U, st, 9, 10, "gathering") and len(st["animals"]) == app.EXPLORE_MAX_ANIMALS + 1
+    # golden pawprints: the animals nearby leave clues
+    st["animals"] = []
+    st["steps"], st["x"], st["y"] = 20, 6, 6                                      # out in the open field
+    near = _calm(st, dx=4)                                                       # four tiles away: off the picture
+    assert "1" in app._ex_pickup(U, st, 9, 11, "trail") and near["clue"] > 0
 
 
 def test_chests_say_how_much_ammo_you_actually_got():
@@ -1274,9 +1291,12 @@ def test_walking_onto_a_discovery_collects_it():
         d["health"]["hp"] = 20
         app.explore_move(U, "s")
         assert "Berry patch" in st["msg"] and d["health"]["hp"] > 20
+        assert "stamp" in st["msg"] and d["explore_stamps"] == ["rune_monument"]          # (that step also took you next to the monument)
         app.explore_move(U, "n")
-        app.explore_move(U, "w")
-        assert "stamp" in st["msg"] and "village" in d["explore_stamps"]
+        assert app.explore_move(U, "w")["kind"] == "bump" and "monument" in st["msg"]      # and it is solid
+        app.explore_move(U, "s")
+        app.explore_move(U, "n")
+        assert d["explore_stamps"] == ["rune_monument"]                           # once per monument
 
 
 def test_the_curious_fox_follows_then_leaves_a_stash():
@@ -1297,10 +1317,9 @@ def test_the_curious_fox_follows_then_leaves_a_stash():
         assert st["fox"] is None and st["extra"]
         (key, kind), = st["extra"].items()
         x, y = map(int, key.split(","))
-        assert kind == "bag" and app._ex_kind(st, x, y) == "bag"
-        st["x"], st["y"] = x - 1, y                                              # step onto it
-        st["x"] += 1
-        assert "supply bag" in app._ex_pickup(U, st, x, y, "bag") and app._ex_kind(st, x, y) == "grass"
+        assert kind == "stash" and app._ex_kind(st, x, y) == "stash"
+        st["x"], st["y"] = x, y                                                  # step onto it
+        assert "stash" in app._ex_pickup(U, st, x, y, "stash") and app._ex_kind(st, x, y) == "grass"
         assert st["fox_done"] is True                                            # only once per expedition
 
 
@@ -1518,6 +1537,313 @@ def test_camp_visitors_give_a_small_gift_and_unlock_decorations():
     finally:
         random.random = real
     assert idle["visitor"] and idle["visitor"]["name"]
+
+
+# ── the asset pack: ground, props, automatic effects, 2x2 props ─────────
+
+@contextlib.contextmanager
+def prop_at(pid, x, y, size=1, ax=None, ay=None):
+    """Pin one tile to a specific prop (its kind comes from the terrain mapping)."""
+    real = app._ex_prop
+
+    def fake(st, px, py):
+        if (px, py) == (x, y) or (size == 2 and ax is not None and ax <= px <= ax + 1 and ay <= py <= ay + 1):
+            p = dict(gd.EXPLORE_PROPS[pid])
+            p.update(id=pid, size=size, ax=ax if ax is not None else x, ay=ay if ay is not None else y)
+            p["key"] = f"{p['ax']},{p['ay']}"
+            return p
+        return real(st, px, py)
+    app._ex_prop = fake
+    try:
+        yield
+    finally:
+        app._ex_prop = real
+
+
+def _hp(d, v=None):
+    app.refresh_health(U)
+    if v is not None:
+        d["health"]["hp"] = v
+    return d["health"]["hp"]
+
+
+def test_the_asset_pack_is_wired_in():
+    assert gd.EXPLORE_GROUND.keys() == set(gd.BIOME_TOOL_TIER) and all(g in gd.EXPLORE_ART for g in gd.EXPLORE_GROUND.values())
+    for old in ("grass", "tree", "rock", "bush", "trail"):
+        assert old not in gd.EXPLORE_ART                                         # the removed placeholders
+    assert "hunter" in gd.EXPLORE_ART and gd.EXPLORE_ART["chest0"]
+    for biome, lists in gd.EXPLORE_BIOME_PROPS.items():
+        for kind, ids in lists.items():
+            for pid in ids:
+                assert pid in gd.EXPLORE_PROPS and gd.EXPLORE_PROPS[pid]["biome"] in (biome, "small_desert", "volcanic_highlands", "sunken_coast") or True
+                assert pid in gd.EXPLORE_ART or pid == "landmark__tundra__frozen_pond", pid     # (that one has no emoji yet)
+    assert set(gd.EXPLORE_KIND_ART.values()) <= set(gd.EXPLORE_PROPS) and gd.EXPLORE_BIG_ALWAYS <= set(gd.EXPLORE_PROPS)
+    assert app._ex_art_wanted("tundra") and "ground__tundra__snow_ice_ground" in app._ex_art_wanted("tundra")
+
+
+def test_every_region_draws_with_every_prop_art_present():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    for i, k in enumerate(gd.EXPLORE_ART):
+        app._ex_art[k] = Image.new("RGBA", (128, 90), (40 + i * 3 % 200, 90, 160, 255))
+    try:
+        for biome in gd.BIOME_TOOL_TIER:
+            td._fresh(biome=biome, explore_mode=True)
+            random.seed(7)
+            st = app._ex_new(U, biome)
+            st["steps"], st["x"], st["y"] = 20, 6, 6
+            _png_ok(app._ex_render(app._ex_snapshot(U)))
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+
+
+def test_every_region_is_playable_and_animals_never_stand_on_something_that_hurts():
+    for biome in gd.BIOME_TOOL_TIER:
+        for i in range(12):
+            td._fresh(biome=biome, explore_mode=True)
+            random.seed(1000 + i)
+            st = app._ex_new(U, biome)
+            assert len(app._ex_reach(st)) >= app.EXPLORE_MIN_REACH and st["animals"], (biome, i)
+            for _ in range(50):
+                reach = app._ex_reach(st)
+                assert all((a["x"], a["y"]) in reach and app._ex_animal_safe(st, a["x"], a["y"]) for a in st["animals"]), (biome, i)
+                app.explore_move(U, random.choice("nsew"))
+                if app._ex_over(st):
+                    break
+                app.data[U]["health"]["hp"] = app.data[U]["health"]["max_hp"]
+
+
+def test_biomes_use_their_own_props_and_never_a_tree_in_the_desert():
+    td._fresh(biome="small_desert", explore_mode=True)
+    st = app._ex_state(U)
+    seen = set()
+    for seed in range(8):
+        st["seed"] = seed
+        for x in range(19):
+            for y in range(19):
+                p = app._ex_prop(st, x, y)
+                if p:
+                    seen.add(p["id"])
+    assert seen <= set(gd.EXPLORE_BIOME_PROPS["small_desert"]["stone"] + gd.EXPLORE_BIOME_PROPS["small_desert"]["landmark"]
+                       + gd.EXPLORE_BIOME_PROPS["small_desert"]["hazard"]) | {"discovery__shared__purple_rune_monument"}
+    assert "hazard__desert__flowering_cactus" in seen and "landmark__desert__sand_dune" in seen
+
+
+def test_a_cactus_pricks_you_each_time_and_a_bump_that_hurts_takes_a_turn():
+    d = _fresh()
+    d["biome"] = "small_desert"
+    with terrain({(3, 1): "hazard"}), still_world(), prop_at("hazard__desert__flowering_cactus", 3, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        hp0 = _hp(d)
+        out = app.explore_move(U, "s")
+        assert out["kind"] == "moved" and (st["x"], st["y"]) == (3, 0) and st["steps"] == 1       # a turn passed, you did not move
+        assert d["health"]["hp"] == hp0 - 1 and "hurts" in st["msg"]
+        app.explore_move(U, "s")
+        assert d["health"]["hp"] == hp0 - 2                                       # every bump, no "once"
+        d["health"]["hp"] = 1
+        app.explore_move(U, "s")
+        assert d["health"]["hp"] >= 1                                             # the land never knocks you out
+
+
+def test_snowdrifts_and_steam_throw_you_back_and_mud_is_harmless():
+    d = _fresh()
+    d["biome"] = "tundra"
+    with terrain({(3, 1): "hazard"}), still_world(), prop_at("hazard__tundra__deep_snowdrift", 3, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        hp0 = _hp(d)
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 0) and d["health"]["hp"] == hp0 - 1 and st["steps"] == 1 and "throws you back" in st["msg"]
+    with terrain({(3, 1): "hazard"}), still_world(), prop_at("hazard__volcano__steam_vent", 3, 1):
+        d["health"]["hp"] = hp0
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 0) and d["health"]["hp"] == hp0 - 2
+    with terrain({(3, 1): "hazard"}), still_world(), prop_at("hazard__swamp__muddy_pond", 3, 1):
+        d["health"]["hp"] = hp0
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 0) and d["health"]["hp"] == hp0 and st["steps"] == 3          # stuck, but no damage
+
+
+def test_ice_slides_you_one_more_tile_only_over_safe_ground():
+    d = _fresh()
+    d["biome"] = "tundra"
+    with terrain({(3, 1): "landmark"}), still_world(), prop_at("landmark__tundra__frozen_ice_arch", 3, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        st["steps"] = 4
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 2) and "slide" in st["msg"]                      # one tile past the ice
+    _fresh()["biome"] = "tundra"
+    with terrain({(3, 1): "landmark", (3, 2): "tree"}), still_world(), prop_at("landmark__tundra__frozen_pond", 3, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 1)                                           # a tree ahead: the slide is cancelled
+    _fresh()["biome"] = "tundra"
+    with terrain({(3, 1): "landmark", (3, 2): "hazard"}), still_world(), prop_at("landmark__tundra__frozen_pond", 3, 1):
+        with prop_at("hazard__tundra__deep_snowdrift", 3, 2):
+            st = app._ex_state(U)
+            st["animals"] = []
+            app.explore_move(U, "s")
+            assert (st["x"], st["y"]) == (3, 1)                                       # never slides you into a hazard
+
+
+def test_lava_hurts_but_never_kills_and_water_blocks():
+    d = _fresh()
+    d["biome"] = "volcanic_highlands"
+    with terrain({(3, 1): "lava", (2, 0): "water"}), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        hp0 = _hp(d)
+        app.explore_move(U, "s")
+        assert d["health"]["hp"] == hp0 - app.EXPLORE_LAVA_HP and (st["x"], st["y"]) == (3, 1) and "lava" in st["msg"]
+        d["health"]["hp"] = 2
+        app.explore_move(U, "n")
+        app.explore_move(U, "s")
+        assert d["health"]["hp"] == 1
+        app.explore_move(U, "n")
+        out = app.explore_move(U, "w")
+        assert out["kind"] == "bump" and "water" in st["msg"] and st["steps"] == 4
+
+
+def test_landmarks_reveal_heal_and_pay_once_each():
+    d = _fresh()
+    d["biome"] = "small_desert"
+    with terrain({(6, 7): "landmark"}), still_world(), prop_at("landmark__desert__sandstone_arch", 6, 7):
+        st = app._ex_state(U)
+        st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+        far = _calm(st, dx=-5)                                                    # off the picture, within 3 + 3 tiles
+        out = app.explore_move(U, "s")                                            # a bump into the arch: it shows you the way
+        assert out["kind"] == "moved" and far["clue"] > 0 and (st["x"], st["y"]) == (6, 6) and "arch" in st["msg"]
+        far["clue"] = 0
+        assert app.explore_move(U, "s")["kind"] == "bump" and far["clue"] == 0     # used up: an ordinary bump from now on
+    d["biome"] = "celestial_peaks"
+    with terrain({(6, 7): "landmark"}), still_world(), prop_at("landmark__celestial_peaks__star_crystal_cluster", 6, 7):
+        st = app._ex_state(U)
+        st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+        _hp(d, d["health"]["max_hp"])
+        assert app.explore_move(U, "s")["kind"] == "bump" and "6,7" not in st.get("fired", [])      # not hurt: kept for later
+        d["health"]["hp"] = 10
+        assert app.explore_move(U, "s")["kind"] == "moved" and d["health"]["hp"] == 13 and "6,7" in st["fired"]
+        assert app.explore_move(U, "s")["kind"] == "bump"
+    d["biome"] = "cursed_ruins"
+    money0 = d["money"]
+    with terrain({(6, 7): "landmark"}), still_world(), prop_at("landmark__cursed_ruins__stone_rubble", 6, 7):
+        st = app._ex_state(U)
+        st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+        assert app.explore_move(U, "s")["kind"] == "moved" and d["money"] > money0
+        money1 = d["money"]
+        app.explore_move(U, "s")
+        assert d["money"] == money1
+
+
+def test_solid_landmarks_award_stamps_when_you_walk_up_to_them():
+    d = _fresh()
+    d["biome"] = "celestial_peaks"
+    with terrain({(4, 1): "stone"}), still_world(), prop_at("landmark__celestial_peaks__cloud_rock_spires", 4, 1, 2, 4, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        app.explore_move(U, "s")                                                  # (3,1) is next to (4,1)
+        assert d["explore_stamps"] == ["cloud_spires"] and "stamp" in st["msg"]
+        app.explore_move(U, "n")
+        app.explore_move(U, "s")
+        assert d["explore_stamps"] == ["cloud_spires"]                            # once per placed prop
+    assert app.explore_keepsake_line(U).endswith(f"1/{len(gd.EXPLORE_STAMPS)} stamps")
+
+
+def test_a_prop_that_hurts_only_triggers_one_hazard_per_turn():
+    d = _fresh()
+    d["biome"] = "small_desert"
+    with terrain({(3, 1): "hazard"}), still_world(), prop_at("hazard__desert__flowering_cactus", 3, 1):
+        st = app._ex_state(U)
+        st["animals"] = []
+        hp0 = _hp(d)
+        app.explore_move(U, "s")
+        assert hp0 - d["health"]["hp"] == 1
+
+
+def test_big_props_fill_a_2x2_block_with_one_prop_and_never_where_you_start():
+    seed = next(s for s in range(500) if any(app._ex_big(s, x, y, "volcanic_highlands") for x in range(0, 16, 2) for y in range(0, 16, 2)))
+    bx, by = next((x, y) for x in range(0, 16, 2) for y in range(0, 16, 2) if app._ex_big(seed, x, y, "volcanic_highlands"))
+    td._fresh(biome="volcanic_highlands", explore_mode=True)
+    st = app._ex_state(U)
+    st["seed"], st["steps"] = seed, 20
+    cells = [(bx + i, by + j) for i in (0, 1) for j in (0, 1)]
+    props = [app._ex_prop(st, x, y) for x, y in cells]
+    assert all(p and p["size"] == 2 and p["key"] == f"{bx},{by}" and p["id"] == "hazard__volcano__active_volcano" for p in props), props
+    assert all(app._ex_kind(st, x, y) == "hazard" and not app._ex_walkable(st, x, y) for x, y in cells)
+    for sd in range(300):
+        assert app._ex_big(sd, *app.EXPLORE_START, "volcanic_highlands") is None and app._ex_big(sd, 2, 0, "forest") is None
+    # a big tree somewhere in a forest, and it counts as one prop
+    sd = next(s for s in range(500) if any(app._ex_big(s, x, y, "forest") for x in range(0, 20, 2) for y in range(0, 20, 2)))
+    x, y = next((x, y) for x in range(0, 20, 2) for y in range(0, 20, 2) if app._ex_big(sd, x, y, "forest"))
+    td._fresh(biome="forest", explore_mode=True)
+    st = app._ex_state(U)
+    st["seed"], st["steps"] = sd, 20
+    assert app._ex_prop(st, x + 1, y + 1)["id"] == "obstacle__forest__oak_tree" and app._ex_kind(st, x, y) == "tree"
+
+
+def test_a_big_prop_is_drawn_once_across_all_four_tiles():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    app._ex_art.update({gd.EXPLORE_GROUND["volcanic_highlands"]: Image.new("RGBA", (128, 128), (0, 100, 0, 255)),
+                        "hazard__volcano__active_volcano": Image.new("RGBA", (128, 128), (200, 0, 0, 255)),
+                        "hunter": Image.new("RGBA", (128, 128), (255, 255, 255, 255))})
+    try:
+        td._fresh(biome="volcanic_highlands", explore_mode=True)
+        seed = next(s for s in range(500) if any(app._ex_big(s, x, y, "volcanic_highlands") for x in range(2, 12, 2) for y in range(2, 12, 2)))
+        bx, by = next((x, y) for x in range(2, 12, 2) for y in range(2, 12, 2) if app._ex_big(seed, x, y, "volcanic_highlands"))
+        st = app._ex_state(U)
+        st["seed"], st["steps"], st["animals"] = seed, 20, []
+        st["x"], st["y"] = bx + 2, by + 3
+        snap = app._ex_snapshot(U)
+        assert sum(1 for v in snap["props"].values() if v["size"] == 2) >= 1
+        im = _png_ok(app._ex_render(snap))
+        T = app.EXPLORE_TILE_PX
+        tx, ty = bx - snap["cx"], by - snap["cy"]
+        red = lambda px, py: (lambda c: c[0] > 150 and c[1] < 90)(im.getpixel((px, py)))
+        assert red(int((tx + 1) * T), int((ty + 1) * T))                          # the middle of the 2x2 block is the volcano
+        assert red(int((tx + .5) * T), int((ty + 1.4) * T)) and red(int((tx + 1.5) * T), int((ty + 1.4) * T))
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+
+
+def test_ground_comes_from_the_region_and_lava_and_water_have_their_own():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    app._ex_art.update({gd.EXPLORE_GROUND["volcanic_highlands"]: Image.new("RGBA", (128, 128), (60, 60, 60, 255)),
+                        gd.EXPLORE_GROUND_LAVA: Image.new("RGBA", (128, 128), (255, 80, 0, 255)),
+                        gd.EXPLORE_GROUND_WATER: Image.new("RGBA", (128, 128), (0, 80, 255, 255))})
+    try:
+        td._fresh(biome="volcanic_highlands", explore_mode=True)
+        with terrain({(5, 5): "lava", (7, 5): "water"}):
+            st = app._ex_state(U)
+            st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+            im = _png_ok(app._ex_render(app._ex_snapshot(U)))
+            T = app.EXPLORE_TILE_PX
+            at = lambda tx, ty: im.getpixel((tx * T + 6, ty * T + 6))
+            assert at(2, 2)[0] > 200 and at(4, 2)[2] > 200 and abs(at(0, 0)[0] - 60) < 20          # lava, water, then the region's own ground
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+
+
+def test_missing_art_falls_back_to_a_drawn_stand_in_for_every_prop():
+    from PIL import Image
+    saved = dict(app._ex_art)
+    app._ex_art.clear()
+    try:
+        for biome in gd.BIOME_TOOL_TIER:
+            td._fresh(biome=biome, explore_mode=True)
+            st = app._ex_state(U)
+            for seed in range(4):
+                st["seed"], st["steps"], st["x"], st["y"], st["animals"] = seed, 20, 6 + seed, 6, []
+                _png_ok(app._ex_render(app._ex_snapshot(U)))
+    finally:
+        app._ex_art.update(saved)
 
 
 def _all_tests():
