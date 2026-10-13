@@ -2175,6 +2175,11 @@ BIOME_RULES = {
 
 # Explore Mode map art — application emoji uploaded for the on-foot map (fetched from the CDN and layered by the
 # renderer: grass is the bottom layer). "huntress" will be added alongside "hunter" when that art exists.
+# Extra art the map will use as soon as an application emoji for it is added here (each is drawn procedurally until then):
+#   "landmark_<biome>" for small_desert, tundra, sunken_coast, swamp, volcanic_highlands, cursed_ruins, abyssal_depths,
+#                      celestial_peaks, jungle, rainbow, woods  — replaces ~1 in 3 trees/boulders of that region (same rules)
+#   "disc_bag", "disc_berries", "disc_camp", "disc_monument", "disc_clearing" — the walk-over discoveries
+#   "huntress" — an alternative hunter sprite (the renderer already looks it up)
 EXPLORE_ART = {
     "grass":  "<:grass_tile:1559064015844544522>",
     "tree":   "<:tree:1559064023515926658>",
@@ -5065,19 +5070,131 @@ def tool_combat_accuracy(tool_name: str) -> float:
     return TOOL_COMBAT_OVERRIDES.get(tool_name, {}).get("accuracy", TOOL_COMBAT_BASE_ACCURACY)
 
 
-# ── Explore Mode attack range ─────────────────────────────────
-# How many tiles away a tool can hit on the Explore map: every tile within N steps counts (diagonals too, so range 1 is
-# the 8 tiles around you and range 3 is the whole 7x7 field). The map window is 7x7, so 3 is the longest reach there is.
-TOOL_RANGE = {
-    "Bare Hands": 1, "Hunting Knife": 1,
-    "Slingshot": 2, "Spear": 2, "Shortbow": 2, "Shotgun": 2, "Gravity Trap": 2, "Soul Snare": 2, "Mythic Net": 2,
+# ── Explore Mode weapon shapes ────────────────────────────────
+# Every tool has a SHAPE. The player just presses Fire: the game aims the shape at the chosen target by itself and the
+# map lights up the tiles it will hit. Offsets are (dx, dy) from the hunter, y grows downward. The map window is 7x7,
+# so nothing reaches further than 3 tiles.
+#   single(r)      one animal within r tiles (square range: diagonals count)
+#   arc            a quick sweep: the target plus the animals next to the hunter on either side of it (r=1)
+#   line(n)        a straight thrust n tiles long in one of the 8 directions; the target must stand on the line
+#   cone(n, wide)  a wedge n tiles long toward the target (wide = ±60 degrees instead of ±45)
+#   burst(r2)      a circle round the TARGET: every tile with dx²+dy² <= r2 from it
+#   self(r2)       a circle round the HUNTER: catches what is near you, no aiming at all
+TOOL_SHAPES = {
+    "Bare Hands":      ("single", 1),
+    "Hunting Knife":   ("arc",),
+    "Spear":           ("line", 2),
+    "Slingshot":       ("single", 2),
+    "Shortbow":        ("single", 2),
+    "Longbow":         ("single", 3),
+    "Crossbow":        ("single", 3),
+    "Musket":          ("single", 3),
+    "Hunting Rifle":   ("single", 3),
+    "Sniper Rifle":    ("single", 3),
+    "Tranq Gun":       ("single", 3),
+    "Shotgun":         ("cone", 2, False),
+    "Plasma Caster":   ("burst", 3, 1),
+    "Gravity Trap":    ("self", 5),
+    "Soul Snare":      ("burst", 2, 2),
+    "Mythic Net":      ("burst", 2, 4),
+    "Void Bow":        ("line", 3),
+    "Celestial Lance": ("line", 3),
+    "Dragon Cannon":   ("cone", 3, True),
+    "Cosmic RPG":      ("burst", 3, 4),
+    "Nuke Launcher":   ("burst", 3, 8),
 }
-TOOL_RANGE_DEFAULT = 3
+TOOL_SHAPE_DEFAULT = ("single", 3)
 TOOL_RANGE_MAX = 3
+# Shape weapons that would otherwise only ever catch one animal (a 1-catch tool) may take up to this many, so an arc,
+# a thrust or a net visibly does something. Every other tool is held to its normal multi-catch allowance.
+EXPLORE_SHAPE_MIN_CAP = 2
+SHAPE_NAMES = {"single": "Single shot", "arc": "Sweep", "line": "Thrust line", "cone": "Cone",
+               "burst": "Burst circle", "self": "Circle round you"}
+_DIR8 = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]     # clockwise, y down
+
+
+def tool_shape(tool_name: str) -> tuple:
+    return TOOL_SHAPES.get(tool_name, TOOL_SHAPE_DEFAULT)
+
+
+def _dir_index(dx: int, dy: int) -> int:
+    """Which of the 8 directions points most nearly toward (dx, dy)."""
+    import math as _m
+    return round(_m.atan2(dy, dx) / (_m.pi / 4)) % 8
+
+
+def shape_reach(tool_name: str) -> frozenset:
+    """Every tile (relative to the hunter) where an animal can stand and be aimed at with this tool."""
+    sh = tool_shape(tool_name)
+    k = sh[0]
+    if k == "single":
+        r = sh[1]
+        return frozenset((x, y) for x in range(-r, r + 1) for y in range(-r, r + 1) if (x, y) != (0, 0))
+    if k == "arc":
+        return frozenset((x, y) for x in (-1, 0, 1) for y in (-1, 0, 1) if (x, y) != (0, 0))
+    if k == "line":
+        return frozenset((ux * i, uy * i) for ux, uy in _DIR8 for i in range(1, sh[1] + 1))
+    if k == "cone":
+        n = sh[1]
+        return frozenset((x, y) for x in range(-n, n + 1) for y in range(-n, n + 1) if (x, y) != (0, 0))
+    if k == "burst":
+        r = sh[1]
+        return frozenset((x, y) for x in range(-r, r + 1) for y in range(-r, r + 1) if (x, y) != (0, 0))
+    # self: you do not aim, anything inside the circle is caught
+    r2 = sh[1]
+    return frozenset((x, y) for x in range(-3, 4) for y in range(-3, 4) if (x, y) != (0, 0) and x * x + y * y <= r2)
+
+
+def shape_hits(tool_name: str, tx: int, ty: int) -> frozenset:
+    """The tiles (relative to the hunter) a shot aimed at the animal on (tx, ty) covers. The target tile is always in it."""
+    sh = tool_shape(tool_name)
+    k = sh[0]
+    if k == "single":
+        return frozenset({(tx, ty)})
+    ux, uy = _DIR8[_dir_index(tx, ty)]
+    if k == "arc":
+        i = _dir_index(tx, ty)
+        return frozenset(_DIR8[(i + j) % 8] for j in (-1, 0, 1))
+    if k == "line":
+        return frozenset((ux * i, uy * i) for i in range(1, sh[1] + 1))
+    if k == "cone":
+        n, wide = sh[1], sh[2]
+        out = set()
+        for x in range(-n, n + 1):
+            for y in range(-n, n + 1):
+                if (x, y) == (0, 0):
+                    continue
+                dot = x * ux + y * uy
+                if dot <= 0:
+                    continue
+                t2, d2 = x * x + y * y, ux * ux + uy * uy
+                # cos(angle) >= cos(45) is dot²*2 >= t2*d2 ; cos(60) is dot²*4 >= t2*d2 (all integers: no rounding)
+                if dot * dot * (4 if wide else 2) >= t2 * d2:
+                    out.add((x, y))
+        return frozenset(out)
+    if k == "burst":
+        r2 = sh[2]
+        return frozenset((tx + x, ty + y) for x in range(-3, 4) for y in range(-3, 4) if x * x + y * y <= r2)
+    return shape_reach(tool_name)                                  # self: the whole circle at once
+
+
+def shape_blurb(tool_name: str) -> str:
+    """One plain sentence for the Info sheet."""
+    k = tool_shape(tool_name)[0]
+    return {
+        "single": "A single shot at one animal.",
+        "arc": "A quick sweep: the target and the animals beside it, right next to you.",
+        "line": "A straight thrust along a line - the target has to stand on it, and everything on the line is hit.",
+        "cone": "A wedge in front of you: animals grouped behind the target are hit too.",
+        "burst": "A burst on the target that also catches animals standing close to it.",
+        "self": "A circle round you: it catches the animals near you by itself - no aiming.",
+    }[k]
 
 
 def tool_range(tool_name: str) -> int:
-    return TOOL_RANGE.get(tool_name, TOOL_RANGE_DEFAULT)
+    """How far (in tiles) the tool reaches at most."""
+    return max(max(abs(x), abs(y)) for x, y in shape_reach(tool_name))
+
 
 
 # ── Healing items ─────────────────────────────────────────────

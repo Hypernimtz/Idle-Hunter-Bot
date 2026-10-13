@@ -714,7 +714,9 @@ def test_buttons_move_you_through_the_dispatcher_and_new_expedition_resets():
             assert (st["y"], st["steps"]) == (1, 1) and h.panels
             st["bag"] = [{"name": COMMON, "value": 1, "perfect": False}]
             with tr.Harness() as h:
-                run(app._dispatch_component(tr.FakeInteraction(U, f"explore:new:{U}")))
+                run(app._dispatch_component(tr.FakeInteraction(U, f"explore:new:{U}")))     # asks first (unfinished)
+                assert app.data[U]["explore"]["steps"] == 1 and h.panels
+                run(app._dispatch_component(tr.FakeInteraction(U, f"explore:new:{U}")))     # confirmed
             st2 = app.data[U]["explore"]
             assert st2["steps"] == 0 and st2["bag"] == []
     finally:
@@ -732,7 +734,7 @@ def test_the_hunt_button_path_is_unchanged_without_a_forced_animal():
 
 def test_every_tool_has_a_range_that_fits_the_7x7_field():
     assert all(1 <= gd.tool_range(t) <= gd.TOOL_RANGE_MAX for t in gd.TOOLS)
-    assert gd.TOOL_RANGE_MAX == app.EXPLORE_VIEW == 3 and set(gd.TOOL_RANGE) <= set(gd.TOOLS)
+    assert gd.TOOL_RANGE_MAX == app.EXPLORE_VIEW == 3 and set(gd.TOOL_SHAPES) == set(gd.TOOLS)
     assert gd.tool_range("Bare Hands") == 1 and gd.tool_range("Shotgun") == 2 and gd.tool_range("Sniper Rifle") == 3
     assert gd.tool_range("Nuke Launcher") == 3                                   # unlisted tools use the default
 
@@ -745,20 +747,20 @@ def test_you_can_only_shoot_inside_your_tools_range():
         a = _calm(st, dx=3)                                                      # in view, but 3 away: out of reach
         lt0, cd0 = d["stats"].get("lifetime_hunts", 0), d["hunt_cd"]
         out = app.explore_fire(U)
-        assert out["kind"] == "none" and "Out of range" in st["msg"] and "reaches **1** tile" in st["msg"]
+        assert out["kind"] == "none" and "Out of reach" in st["msg"] and "reaches **1** tile" in st["msg"]
         assert d["stats"].get("lifetime_hunts", 0) == lt0 and d["hunt_cd"] == cd0          # nothing was spent
         comps = app.build_explore_components(U)[0]["components"]
         assert comps[-2]["components"][0]["label"] == "Fire" and comps[-2]["components"][0]["disabled"] is True
-        assert "out of range" in json.dumps(comps)
+        assert "out of reach" in json.dumps(comps)
         a["x"] -= 2                                                              # now right beside you
-        assert app.explore_fire is not None and app._ex_target(st, 1) is a
+        assert app._ex_target(st, "Bare Hands") is a
         comps = app.build_explore_components(U)[0]["components"]
         assert comps[-2]["components"][0]["disabled"] is False and "target" in json.dumps(comps)
 
 
 def test_the_yellow_target_is_the_one_you_pick_and_fire_hits_it():
-    d = _fresh(tool="Shotgun", owned_tools=["Shotgun"])
-    ammo = gd.get_ammo_for_tool("Shotgun")[0]
+    d = _fresh(tool="Longbow", owned_tools=["Longbow"])
+    ammo = gd.get_ammo_for_tool("Longbow")[0]
     d["ammo_inv"], d["equipped_ammo"] = {ammo: 50}, ammo
     other = gd.BIOME_ANIMALS["village"][1]
     with terrain(), still_world():
@@ -766,12 +768,11 @@ def test_the_yellow_target_is_the_one_you_pick_and_fire_hits_it():
         st["animals"] = []
         near = _calm(st, name=COMMON, dx=1)
         far = _calm(st, name=other, dx=2)
-        rng = gd.tool_range("Shotgun")
-        assert app._ex_target(st, rng) is near                                   # nearest by default
+        assert app._ex_target(st, "Longbow") is near                             # nearest by default
         assert [a["target"] for a in sorted(app._ex_snapshot(U)["animals"], key=lambda a: a["tx"])] == [True, False]
-        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, rng) is far
+        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, "Longbow") is far
         assert [a["target"] for a in sorted(app._ex_snapshot(U)["animals"], key=lambda a: a["tx"])] == [False, True]
-        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, rng) is near       # and back again
+        assert app.explore_target(U)["kind"] == "target" and app._ex_target(st, "Longbow") is near       # and back again
         app.explore_target(U)
         real = random.random
         random.random = lambda: 0.0
@@ -852,12 +853,13 @@ def test_the_grass_tiles_join_without_dark_lines():
 def test_the_info_sheet_explains_the_range_with_a_7x7_picture():
     _fresh(tool="Shotgun")
     blob = json.dumps(app.build_explore_info_components(U), ensure_ascii=False)
-    assert "attachment://range.png" in blob and "Range 2 tiles" in blob and "Shotgun" in blob
+    assert "attachment://range.png" in blob and "Cone" in blob and "Reach **2** tiles" in blob and "Shotgun" in blob
     assert "Yellow circle" in blob and "yellow boxes" in blob and "Bare Hands" in blob and "Hit chance" in blob
     assert "attachment://" not in json.dumps(app.build_explore_info_components(U, image=False))
-    im = _png_ok(app._ex_range_png(2), (448, 448))
-    lit, dim, mid = im.getpixel((5 * 64 + 6, 3 * 64 + 6)), im.getpixel((6 * 64 + 6, 3 * 64 + 6)), im.getpixel((3 * 64 + 6, 3 * 64 + 6))
-    assert lit[0] > dim[0] + 40 and mid[0] > dim[0] + 40                         # the reach is lit, outside it is dimmed
+    im = _png_ok(app._ex_range_png("Shotgun"), (448, 448))
+    px = lambda tx, ty: im.getpixel((tx * 64 + 6, ty * 64 + 6))
+    hit, reach_only, outside = px(5, 3), px(3, 5), px(6, 3)                      # (+2,0) is in the cone, (0,+2) only in reach, (+3,0) out
+    assert hit[0] > 180 and hit[1] < 150 and reach_only[1] > 155 and reach_only[0] < 170 and reach_only[0] > outside[0] + 60
     assert app.build_explore_components(U)[0]["components"][-2]["components"][3]["custom_id"] == f"explore:info:{U}"
 
 
@@ -883,7 +885,7 @@ def test_the_info_button_sends_a_private_sheet_with_the_picture_attached():
     body = payload["data"]
     assert m == "POST" and "callback" in path and body["flags"] & 64                     # ephemeral
     assert body["attachments"] == [{"id": 0, "filename": "range.png"}] and files
-    assert "Range 3 tiles" in json.dumps(body["components"], ensure_ascii=False)
+    assert "Single shot" in json.dumps(body["components"], ensure_ascii=False)
 
 
 def test_the_info_button_goes_through_the_dispatcher_without_touching_the_world():
@@ -949,6 +951,573 @@ def test_with_explore_on_hunt_opens_the_map_instead_of_an_instant_hunt():
         assert len(shown) == 3 and d["stats"].get("lifetime_hunts", 0) == lt0 + 1
     finally:
         app.explore_show = real
+
+
+# ── weapon shapes (auto-aimed) ───────────────────────────────
+
+def _armed(tool, n=50, **over):
+    d = _fresh(tool=tool, owned_tools=[tool], **over)
+    if gd.tool_needs_ammo(tool):
+        ammo = gd.get_ammo_for_tool(tool)[0]
+        d["ammo_inv"], d["equipped_ammo"] = {ammo: n}, ammo
+    return d
+
+
+def _land(chance=0.0):
+    """Every roll comes up `chance`: 0.0 = every shot hits."""
+    real = random.random
+    random.random = lambda: chance
+    return real
+
+
+def test_weapon_shapes_cover_exactly_what_they_say():
+    sh, rc = gd.shape_hits, gd.shape_reach
+    assert sh("Bare Hands", 1, 0) == {(1, 0)} and sh("Longbow", 3, 1) == {(3, 1)}
+    assert sh("Hunting Knife", 1, 0) == {(1, -1), (1, 0), (1, 1)}                # a small arc toward the target
+    assert sh("Spear", 1, 1) == {(1, 1), (2, 2)} and sh("Spear", 2, 0) == {(1, 0), (2, 0)}
+    assert (2, 0) in rc("Spear") and (2, 2) in rc("Spear") and (1, 2) not in rc("Spear")      # on a line, or not at all
+    assert len(sh("Shotgun", 2, 0)) == 8 and len(sh("Dragon Cannon", 3, 0)) > len(sh("Shotgun", 2, 0))
+    assert sh("Plasma Caster", 3, 0) == {(3, 0), (2, 0), (4, 0), (3, 1), (3, -1)}
+    assert len(sh("Gravity Trap", 2, 0)) == len(rc("Gravity Trap")) == 20          # a circle round the hunter, no aiming
+    assert len(sh("Nuke Launcher", 3, 0)) == 25 and (3, 0) in sh("Void Bow", 1, 0) and len(sh("Void Bow", 1, 0)) == 3
+    for t in gd.TOOLS:                                                           # the target is always inside its own shot
+        for off in rc(t):
+            assert off in sh(t, *off), (t, off)
+        assert gd.tool_range(t) <= 3 and gd.tool_shape(t)[0] in gd.SHAPE_NAMES
+
+
+def test_a_cone_takes_every_animal_in_the_wedge_for_one_round_each():
+    d = _armed("Shotgun", 10)
+    a2, a3 = gd.BIOME_ANIMALS["village"][1], gd.BIOME_ANIMALS["village"][2]
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        _calm(st, name=a2, dx=2)                                                 # both straight east: in the wedge
+        c = _calm(st, name=a3, dy=2)                                             # south: not
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "caught" and sorted(x["animal"] for x in out["result"]["catches"]) == sorted([COMMON, a2])
+        assert d["ammo_inv"][gd.get_ammo_for_tool("Shotgun")[0]] == 8            # a round for each animal it covered
+        assert c in st["animals"] and len(st["bag"]) == 2
+
+
+def test_single_shot_weapons_take_exactly_one_even_in_a_crowd():
+    d = _armed("Longbow", 20)
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        _calm(st, name=gd.BIOME_ANIMALS["village"][1], dx=1, dy=1)
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "caught" and len(out["result"]["catches"]) == 1
+        assert d["ammo_inv"][gd.get_ammo_for_tool("Longbow")[0]] == 19
+
+
+def test_a_one_catch_tool_with_a_shape_may_take_two():
+    _armed("Hunting Knife")
+    names = gd.BIOME_ANIMALS["village"][:3]
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        for n, dy in zip(names, (-1, 0, 1)):
+            _calm(st, name=n, dx=1, dy=dy if st["y"] + dy >= 0 else 1)
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "caught" and 1 <= len(out["result"]["catches"]) <= app.EXPLORE_SHAPE_MIN_CAP
+
+
+def test_a_line_weapon_needs_the_animal_on_its_line():
+    _armed("Spear")
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        a = _calm(st, dx=1, dy=2)                                                # a knight's move away: not on any line
+        out = app.explore_fire(U)
+        assert out["kind"] == "none" and "Out of reach" in st["msg"]
+        a["x"], a["y"] = st["x"] + 2, st["y"] + 2                                # the diagonal line
+        assert app._ex_target(st, "Spear") is a
+
+
+def test_a_circle_weapon_catches_what_is_near_you_without_aiming():
+    d = _armed("Gravity Trap", 10)
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        _calm(st, name=gd.BIOME_ANIMALS["village"][1], dy=2)
+        far = _calm(st, name=gd.BIOME_ANIMALS["village"][2], dx=3)
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "caught" and len(out["result"]["catches"]) == 2 and far in st["animals"]
+
+
+def test_a_miss_still_costs_the_ammo_and_the_cooldown_and_spooks():
+    d = _armed("Longbow", 20)
+    ammo = gd.get_ammo_for_tool("Longbow")[0]
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        a = _calm(st, dx=1)
+        lt0 = d["stats"].get("lifetime_hunts", 0)
+        real = _land(0.999)
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        assert out["kind"] == "miss" and d["ammo_inv"][ammo] == 19 and d["hunt_cd"] > time.time()
+        assert a["mood"] == "flee" and d["stats"].get("lifetime_hunts", 0) == lt0
+
+
+def test_a_refused_shot_spends_nothing_and_never_spooks():
+    d = _armed("Longbow", 20)
+    ammo = gd.get_ammo_for_tool("Longbow")[0]
+
+    def boom():
+        raise AssertionError("a refused shot must not roll the dice")
+    with terrain():
+        st = app._ex_state(U)
+        st["animals"] = []
+        a = _calm(st, dx=1)
+        real = random.random
+        random.random = boom
+        try:
+            d["hunt_cd"] = time.time() + 60                                      # still reloading
+            assert app.explore_fire(U)["kind"] == "cooldown"
+            d["hunt_cd"] = 0
+            d["equipped_ammo"] = None                                            # nothing loaded
+            out = app.explore_fire(U)
+            assert out["kind"] == "blocked" and "Equip Ammo" in st["msg"]
+            d["equipped_ammo"], d["ammo_inv"] = ammo, {ammo: 0}                  # loaded but empty
+            assert app.explore_fire(U)["kind"] == "blocked"
+        finally:
+            random.random = real
+        assert a["mood"] == "calm" and d["ammo_inv"][ammo] == 0
+        comps = app.build_explore_components(U)[0]["components"]
+        fire = comps[-2]["components"][0]
+        assert fire["label"] == "Fire" and fire["disabled"] is True              # a clear unavailable state
+        assert any(b["label"] == "Buy Ammo" for b in comps[-1]["components"])
+
+
+def test_the_hit_area_is_lit_in_the_picture():
+    _armed("Shotgun")
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, dx=2)
+        snap = app._ex_snapshot(U)
+        assert set(snap["hits"]) == {(3 + x, 0 + y) for x, y in gd.shape_hits("Shotgun", 2, 0) if 0 <= 3 + x < 7 and 0 <= y < 7}
+
+
+# ── the rhythm of a chase ────────────────────────────────────
+
+def test_a_fleeing_animal_runs_a_few_steps_then_stops_to_graze():
+    _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        a = _calm(st, name="Red Fox", dx=2, mood="flee")
+        lines = []
+        real_seen = app._ex_seen
+        app._ex_seen = lambda st_, a_: True                                      # (it has run out of the picture by now)
+        try:
+            for _ in range(app.EXPLORE_FLEE_RUN):
+                lines = app._ex_advance(U, st)
+        finally:
+            app._ex_seen = real_seen
+        assert a["rest"] == app.EXPLORE_REST_STEPS and a["run"] == 0
+        assert any("Red Fox" in ln and "freezes" in ln for ln in lines)
+        pos = (a["x"], a["y"])
+        app._ex_advance(U, st)
+        assert (a["x"], a["y"]) == pos and a["rest"] == app.EXPLORE_REST_STEPS - 1      # it stays put: your chance
+        app._ex_advance(U, st)
+        app._ex_advance(U, st)
+        assert a["run"] >= 1                                                      # then the chase can start again
+
+
+def test_every_expedition_starts_with_a_gentle_animal_a_short_walk_away():
+    near = 0
+    for i in range(40):
+        _fresh()
+        random.seed(100 + i)
+        st = app._ex_new(U, "village")
+        first = st["animals"][0]
+        assert gd.animal_combat_stats(first["name"], "village")["behavior"] == "passive"
+        dist = app._ex_dist(first["x"], first["y"], st["x"], st["y"])
+        assert dist > app.EXPLORE_VIEW
+        near += dist <= app.EXPLORE_EASY_DIST[1]
+    assert near >= 30
+
+
+def test_animals_sometimes_arrive_in_pairs_and_golden_ones_leave_golden_prints():
+    _fresh()
+    st = app._ex_state(U)
+    st["animals"] = []
+    real = _land(0.0)
+    try:
+        assert app._ex_spawn(st)
+    finally:
+        random.random = real
+    a, b = st["animals"][0], st["animals"][1]
+    assert a["name"] == b["name"] and app._ex_dist(a["x"], a["y"], b["x"], b["y"]) == 1 and a.get("gold")
+    # the footprints are golden and say so, and the picture's arrow is golden too
+    st["animals"] = []
+    st["steps"], st["x"], st["y"] = 20, 6, 6
+    g = _calm(st, dx=5, gold=True)
+    with still_world():
+        lines = app._ex_advance(U, st)
+    assert any("Golden footprints" in ln for ln in lines)
+    assert app._ex_snapshot(U)["clues"][0]["gold"] is True
+    # and shooting a golden animal raises the Perfect Catch chance
+    seen = {}
+    real_run = app.run_hunt
+
+    def spy(uid, **kw):
+        seen.update(kw)
+        return real_run(uid, **kw)
+    app.run_hunt = spy
+    try:
+        _armed("Longbow")
+        st = app._ex_state(U)
+        st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+        _calm(st, dx=1, gold=True)
+        r = _land()
+        try:
+            app.explore_fire(U)
+        finally:
+            random.random = r
+    finally:
+        app.run_hunt = real_run
+    assert seen.get("perfect_bonus") == app.EXPLORE_GOLD_PERFECT
+
+
+# ── small discoveries ────────────────────────────────────────
+
+def test_discoveries_are_rare_walkable_tiles_and_each_kind_exists():
+    counts: dict = {}
+    for seed in range(60):
+        for x in range(19):
+            for y in range(19):
+                k = app._ex_tile(seed, x, y)
+                counts[k] = counts.get(k, 0) + 1
+    total = 60 * 19 * 19
+    for k in ("chest", "bag", "berries", "camp", "monument", "clearing"):
+        assert counts.get(k, 0) > 0 and k in app._EX_WALKABLE, k
+    assert sum(counts.get(k, 0) for k in app._EX_PICKUPS) / total < 0.035
+
+
+def test_each_discovery_does_its_small_thing():
+    d = _armed("Longbow", 10)
+    ammo = gd.get_ammo_for_tool("Longbow")[0]
+    st = app._ex_state(U)
+    st["animals"] = []
+    msg = app._ex_pickup(U, st, 9, 1, "bag")
+    assert "supply bag" in msg and d["ammo_inv"][ammo] > 10
+    d["tool"] = "Bare Hands"
+    d["healing_inv"] = {}
+    assert "Bandage" in app._ex_pickup(U, st, 9, 2, "bag") and d["healing_inv"]["Bandage"] == 1
+    # berries: only used up when you are hurt
+    app.refresh_health(U)
+    d["health"]["hp"] = d["health"]["max_hp"]
+    assert "not hurt" in app._ex_pickup(U, st, 9, 3, "berries") and "9,3" not in st["opened"]
+    d["health"]["hp"] = 10
+    assert "Berry patch" in app._ex_pickup(U, st, 9, 3, "berries") and d["health"]["hp"] > 10 and "9,3" in st["opened"]
+    # campsite journal pages are collected
+    assert "campsite" in app._ex_pickup(U, st, 9, 4, "camp") and len(d["explore_journal"]) == 1
+    # a monument stamps the region once; a clearing gives its souvenir once
+    assert "new stamp" in app._ex_pickup(U, st, 9, 5, "monument") and d["explore_stamps"] == ["village"]
+    assert "already" in app._ex_pickup(U, st, 9, 6, "monument") and d["explore_stamps"] == ["village"]
+    assert "keepsake" in app._ex_pickup(U, st, 9, 7, "clearing") and d["explore_souvenirs"] == ["Pressed Meadow Flower"]
+    assert "already" in app._ex_pickup(U, st, 9, 8, "clearing") and len(d["explore_souvenirs"]) == 1
+    line = app.explore_keepsake_line(U)
+    assert "🌼" in line and "1/13 stamps" in line
+
+
+def test_chests_say_how_much_ammo_you_actually_got():
+    d = _armed("Longbow", 10)
+    ammo = gd.get_ammo_for_tool("Longbow")[0]
+    d["ammo_inv"][ammo] = gd.AMMO_MAX_STACK - 4                                   # only 4 more fit
+    st = app._ex_state(U)
+    real = random.choices
+    random.choices = lambda pop, weights=None, k=1: ["ammo"]
+    try:
+        msg = app._ex_open_chest(U, st, 9, 9)
+    finally:
+        random.choices = real
+    assert "**4× " in msg and d["ammo_inv"][ammo] == gd.AMMO_MAX_STACK
+    random.choices = lambda pop, weights=None, k=1: ["ammo"]
+    try:
+        assert "× " not in app._ex_open_chest(U, st, 9, 10)                       # full: something else instead
+    finally:
+        random.choices = real
+
+
+def test_walking_onto_a_discovery_collects_it():
+    d = _fresh()
+    with terrain({(3, 1): "berries", (2, 0): "monument"}), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        app.refresh_health(U)
+        d["health"]["hp"] = 20
+        app.explore_move(U, "s")
+        assert "Berry patch" in st["msg"] and d["health"]["hp"] > 20
+        app.explore_move(U, "n")
+        app.explore_move(U, "w")
+        assert "stamp" in st["msg"] and "village" in d["explore_stamps"]
+
+
+def test_the_curious_fox_follows_then_leaves_a_stash():
+    d = _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        st["steps"], st["x"], st["y"] = 20, 6, 6
+        real = _land(0.0)
+        try:
+            lines = []
+            app._ex_fox_tick(st, lines)
+        finally:
+            random.random = real
+        assert st["fox"] and st["fox_done"] and any("fox" in ln for ln in lines)
+        for _ in range(app.EXPLORE_FOX_FOLLOW + 1):
+            app._ex_advance(U, st)
+        assert st["fox"] is None and st["extra"]
+        (key, kind), = st["extra"].items()
+        x, y = map(int, key.split(","))
+        assert kind == "bag" and app._ex_kind(st, x, y) == "bag"
+        st["x"], st["y"] = x - 1, y                                              # step onto it
+        st["x"] += 1
+        assert "supply bag" in app._ex_pickup(U, st, x, y, "bag") and app._ex_kind(st, x, y) == "grass"
+        assert st["fox_done"] is True                                            # only once per expedition
+
+
+def test_every_region_with_a_landmark_draws_it():
+    from PIL import Image
+    for biome in app._EX_LANDMARKS:
+        im = Image.new("RGBA", (144, 144), (0, 0, 0, 0))
+        app._ex_landmark(im, biome, random.Random(3))
+        assert im.getbbox() is not None, biome
+    assert {"small_desert", "tundra", "sunken_coast", "swamp", "volcanic_highlands", "cursed_ruins",
+            "abyssal_depths", "celestial_peaks"} <= set(app._EX_LANDMARKS)
+    for kind in app._EX_PICKUPS:
+        im = Image.new("RGBA", (144, 144), (0, 0, 0, 0))
+        if kind == "chest":
+            continue
+        app._ex_pickup_art(im, kind, random.Random(3))
+        assert im.getbbox() is not None, kind
+
+
+def test_the_picture_draws_landmarks_pickups_and_the_fox_for_a_strange_region():
+    saved = dict(app._ex_art)
+    app._ex_art.clear()
+    try:
+        d = td._fresh(biome="celestial_peaks", explore_mode=True)
+        with terrain({(2, 1): "tree", (4, 1): "stone", (3, 2): "monument", (2, 2): "camp", (4, 2): "bag",
+                      (1, 1): "berries", (5, 1): "clearing"}):
+            st = app._ex_state(U)
+            st["animals"] = []
+            st["fox"] = {"x": 3, "y": 1, "left": 3}
+            snap = app._ex_snapshot(U)
+            assert snap["fox"] == (3, 1) and snap["cells"][2][3] == "monument"
+            blob = app._ex_render(snap)
+            _png_ok(blob)
+    finally:
+        app._ex_art.update(saved)
+
+
+# ── fewer pointless clicks ───────────────────────────────────
+
+def test_arrows_that_lead_nowhere_are_disabled():
+    _fresh()
+    with terrain({(3, 1): "tree"}), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        row = app.build_explore_components(U)[0]["components"][-3]["components"]
+        by = {b["label"]: b["disabled"] for b in row}
+        assert by["▲"] is True and by["▼"] is True and by["◀"] is False and by["▶"] is False   # border north, tree south
+
+
+def test_new_expedition_asks_before_throwing_away_an_unfinished_one():
+    _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        st["bag"] = [{"name": COMMON, "value": 7, "perfect": False}]
+        st["steps"] = 9
+        seed = st["seed"]
+        out = app.explore_new(U)
+        assert out["kind"] == "confirm" and st["seed"] == seed and COMMON in st["msg"] and "again" in st["msg"]
+        assert "Really start new?" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+        app.explore_move(U, "s")                                                 # doing something else cancels it
+        assert st["confirm_new"] is False and app.explore_new(U)["kind"] == "confirm"
+        assert app.explore_new(U)["kind"] == "new" and app.data[U]["explore"]["seed"] != seed
+        app.data[U]["explore"]["steps"] = app.EXPLORE_MAX_STEPS                  # finished ones restart at once
+        assert app.explore_new(U)["kind"] == "new"
+
+
+def test_heal_and_ammo_shortcuts_show_up_only_when_needed():
+    d = _armed("Longbow", 5, healing_inv={"Bandage": 2})
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        labels = lambda: [b["label"] for r in app.build_explore_components(U)[0]["components"][-4:] if r.get("type") == 1 for b in r["components"]]
+        app.refresh_health(U)
+        d["health"]["hp"] = d["health"]["max_hp"]
+        assert "Heal" not in labels() and "Buy Ammo" not in labels()
+        d["health"]["hp"] = 10
+        d["equipped_ammo"] = None
+        d["ammo_inv"] = {"Wooden Arrow": 3, "Enchanted Arrow": 3}
+        got = labels()
+        assert "Heal" in got and "Equip Ammo" in got and "Buy Ammo" in got
+        hp0, steps0 = d["health"]["hp"], st["steps"]
+        assert app.explore_heal(U)["kind"] == "healed" and d["health"]["hp"] > hp0 and d["healing_inv"]["Bandage"] == 1
+        assert st["steps"] == steps0                                             # patching up takes no time on the map
+
+
+def test_quick_equip_loads_the_cheapest_and_quick_buy_stocks_up():
+    d = _armed("Longbow", 1)
+    d["equipped_ammo"], d["ammo_inv"] = None, {"Enchanted Arrow": 5, "Wooden Arrow": 4}
+    ok, msg = app.quick_equip_ammo(U)
+    assert ok and d["equipped_ammo"] == "Wooden Arrow"                           # never the expensive one by accident
+    d["ammo_inv"], d["equipped_ammo"], d["money"] = {}, None, 100_000
+    ok, msg = app.quick_buy_ammo(U)
+    assert ok and d["ammo_inv"]["Wooden Arrow"] == app.EXPLORE_QUICK_AMMO and d["equipped_ammo"] == "Wooden Arrow"
+    assert d["money"] == 100_000 - 10 * app.EXPLORE_QUICK_AMMO
+    d["money"] = 0
+    ok, msg = app.quick_buy_ammo(U)
+    assert not ok and "need" in msg.lower()
+    assert app.quick_equip_ammo(U)[0] is True                                    # (it still holds 50 Wooden Arrows)
+    d["ammo_inv"] = {}
+    assert app.quick_equip_ammo(U)[0] is False
+
+
+def test_a_needs_ammo_notice_carries_equip_and_buy_buttons():
+    d = _armed("Longbow", 1)
+    d["ammo_inv"] = {"Wooden Arrow": 2}
+    sent = []
+
+    async def fake(interaction, comps, ephemeral=False):
+        sent.append((comps, ephemeral))
+    real = app.send_v2_followup
+    app.send_v2_followup = fake
+    try:
+        run(app.send_ammo_help(object(), U, "out of arrows"))
+    finally:
+        app.send_v2_followup = real
+    blob = json.dumps(sent[0][0])
+    assert sent[0][1] is True and f"qammo:equip:{U}" in blob and f"qammo:buy:{U}" in blob
+    with tr.Harness() as h:
+        d["equipped_ammo"], d["ammo_inv"] = None, {"Wooden Arrow": 2}
+        run(app._dispatch_component(tr.FakeInteraction(U, f"qammo:equip:{U}")))
+        assert d["equipped_ammo"] == "Wooden Arrow" and any("Loaded" in m for m in h.ephemerals)
+        run(app._dispatch_component(tr.FakeInteraction("999", f"qammo:buy:{U}")))
+        assert d["equipped_ammo"] == "Wooden Arrow"                              # somebody else's button does nothing
+
+
+def test_quick_hunt_and_explore_mode_switch_from_the_panels_without_settings():
+    d = _fresh(level=300)
+    d["hunt_cd"] = 0
+    with tr.Harness() as h:
+        run(app._dispatch_component(tr.FakeInteraction(U, f"explore:quick:{U}")))
+        assert d["explore_mode"] is False and h.panels and any("Quick Hunt" in m for m in h.ephemerals)
+    res = app.run_hunt(U)
+    assert res["ok"] and f"explore:on:{U}" in json.dumps(app.build_hunt_components(U, res))
+    shown = []
+
+    async def rec(interaction, uid, **kw):
+        shown.append(uid)
+    real = app.explore_show
+    app.explore_show = rec
+    try:
+        with tr.Harness():
+            run(app._dispatch_component(tr.FakeInteraction(U, f"explore:on:{U}")))
+    finally:
+        app.explore_show = real
+    assert d["explore_mode"] is True and shown == [U]
+
+
+def test_the_panel_shows_one_next_goal():
+    d = _fresh(tool="Bare Hands", owned_tools=["Bare Hands"], money=0, quests=[])
+    d["quests"], d["weekly_quests"] = [], []
+    assert "collection" in app.next_goal_line(U) or "Next upgrade" in app.next_goal_line(U)
+    d["money"] = int(gd.TOOLS["Slingshot"]["price"] * 0.8)
+    assert "Next upgrade: **Slingshot** — 80% saved" in app.next_goal_line(U)
+    d["quests"] = [{"id": "q", "completed": True, "claimed": False}]
+    assert "Quest complete" in app.next_goal_line(U)
+    assert app.next_goal_line(U).count("\n") == 0 and "Quest complete" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+
+
+def test_claim_all_pays_every_finished_quest_at_once():
+    d = _fresh(money=0)
+    mk = lambda i, done: {"id": f"q{i}", "completed": done, "claimed": False, "xp_reward": 10, "money_reward": 5,
+                          "description": "x", "progress": 1, "target": 1, "template": app.QUEST_TEMPLATES[0]["id"], "stat": "nothing", "created_date": gd.today_utc()}
+    d["quests"] = [mk(1, True), mk(2, True), mk(3, False)]
+    d["quests_last_roll"] = gd.today_utc()
+    blob = json.dumps(app.build_quests_components(U), ensure_ascii=False)
+    assert "Claim All (2)" in blob and f"quests:claimall:{U}" in blob
+    with tr.Harness() as h:
+        run(app._dispatch_component(tr.FakeInteraction(U, f"quests:claimall:{U}")))
+    assert [q["claimed"] for q in d["quests"]] == [True, True, False] and d["money"] >= 10
+    assert any("Claimed **2** quests" in m for m in h.ephemerals)
+    assert "Claim All" not in json.dumps(app.build_quests_components(U), ensure_ascii=False)
+
+
+# ── field guide + camp ───────────────────────────────────────
+
+def test_finishing_a_region_gives_a_profile_decoration_once():
+    d = _fresh()
+    d["record"] = {a: {"count": 1, "best": 1} for a in gd.BIOME_ANIMALS["village"][:-1]}
+    assert app._grant_region_decor(U, "village") == ""                           # one species short
+    d["record"][gd.BIOME_ANIMALS["village"][-1]] = {"count": 1, "best": 1}
+    got = app._grant_region_decor(U, "village")
+    assert "Village Banner" in got and d["region_decor"] == ["village"]
+    assert app._grant_region_decor(U, "village") == "" and "🏡" in app.explore_keepsake_line(U)
+    assert "🏡" in json.dumps(app.build_profile_components(U, "Tester"), ensure_ascii=False)
+
+
+def test_the_camp_uses_your_best_owned_tool_not_the_one_in_your_hand():
+    d = _fresh(level=1000, tool="Bare Hands", owned_tools=["Bare Hands", "Longbow"])
+    d["idle"]["camp_biome"] = "woods"                                             # needs Tier 3
+    assert app.idle_camp_biome(U) == "woods" and app.idle_can_camp(U, "woods")[0] is True
+    d["owned_tools"] = ["Bare Hands"]
+    assert app.idle_camp_biome(U) == "village" and app.idle_can_camp(U, "woods")[0] is False
+
+
+def test_camp_visitors_give_a_small_gift_and_unlock_decorations():
+    d = _fresh(level=50)
+    idle = d["idle"]
+    idle.update(stacks=1, active=True, started_at=time.time())
+    idle["visitor"] = {"name": "Old Marta the trapper", "gift": "swaps a tale for a bandage", "ts": 0}
+    blob = json.dumps(app.build_idle_components(U), ensure_ascii=False)
+    assert "Welcome Visitor" in blob and "Old Marta" in blob
+    with tr.Harness() as h:
+        run(app._dispatch_component(tr.FakeInteraction(U, f"idle:visitor:{U}")))
+    assert idle["visitor"] is None and idle["visitors_met"] == 1 and any("Old Marta" in m for m in h.ephemerals)
+    assert "Campfire" in app.idle_camp_extras(U) and "Welcome Visitor" not in json.dumps(app.build_idle_components(U), ensure_ascii=False)
+    idle["haul"] = [COMMON]
+    assert "Welcome back" in app.idle_camp_extras(U)
+    # visitors turn up while hunters work
+    idle["haul"], idle["visitor"] = [], None
+    idle["started_at"] = time.time() - 3 * 3600
+    real = _land(0.0)
+    try:
+        app.idle_tick(U)
+    finally:
+        random.random = real
+    assert idle["visitor"] and idle["visitor"]["name"]
 
 
 def _all_tests():

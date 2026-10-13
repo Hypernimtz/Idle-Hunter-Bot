@@ -41,7 +41,8 @@ from game_data import (
     BEGINNER_CHALLENGE_ANIMAL, BEGINNER_CHALLENGE_STEP, BEGINNER_CHALLENGE_REWARD,
     HUNTERS_PATH_MYTH_UNLOCK_STEP,
     animal_combat_stats, animal_encounter_chance, encounter_priority,
-    tool_combat_damage, tool_combat_accuracy, tool_range, TOOL_RANGE, TOOL_RANGE_DEFAULT,
+    tool_combat_damage, tool_combat_accuracy, tool_range, tool_shape, shape_reach, shape_hits, shape_blurb,
+    SHAPE_NAMES, EXPLORE_SHAPE_MIN_CAP,
     # Animals
     ANIMAL_DATA, ANIMAL_EMOJI, animal_emoji,
     # Mythical creatures (mythic tier / boss roster)
@@ -1604,6 +1605,42 @@ def _grant_keepsake(uid: str, key: str) -> bool:
         return False
     ks.append(key)
     return True
+
+
+REGION_DECOR = {
+    "village": ("🏡", "Village Banner"), "forest": ("🌳", "Forest Wreath"), "woods": ("🍄", "Woods Charm"),
+    "small_desert": ("🌵", "Desert Sun Disc"), "sunken_coast": ("⚓", "Driftwood Anchor"), "tundra": ("❄️", "Frostwork Crest"),
+    "jungle": ("🌴", "Jungle Feather"), "swamp": ("🪷", "Marsh Lantern"), "volcanic_highlands": ("🌋", "Ember Medallion"),
+    "cursed_ruins": ("🏛️", "Ruin Sigil"), "rainbow": ("🌈", "Prism Pendant"), "abyssal_depths": ("🪸", "Deep Pearl"),
+    "celestial_peaks": ("✨", "Starlit Halo"),
+}
+
+
+def _grant_region_decor(user_id: str, biome: str) -> str:
+    """Finish every species of a region and it leaves a decoration on your profile. Returns '🌳 Forest Wreath' the
+    moment it is earned, else ''."""
+    have, total = _guide_region_progress(user_id, biome)
+    if not total or have < total or biome not in REGION_DECOR:
+        return ""
+    owned = data[user_id].setdefault("region_decor", [])
+    if biome in owned:
+        return ""
+    owned.append(biome)
+    mark_user_dirty(user_id)
+    ico, name = REGION_DECOR[biome]
+    return f"{ico} **{name}**"
+
+
+def explore_keepsake_line(user_id: str) -> str:
+    """Profile decorations from the map and the field guide: region decorations, souvenirs, monument stamps."""
+    d = data.get(user_id, {})
+    bits = [REGION_DECOR[b][0] for b in d.get("region_decor", []) if b in REGION_DECOR]
+    bits += [next((i for i, n in _EX_SOUVENIRS.values() if n == sv), "🌿") for sv in d.get("explore_souvenirs", [])]
+    st = d.get("explore_stamps", [])
+    out = " ".join(bits)
+    if st:
+        out += (" · " if out else "") + f"🗿 {len(st)}/{len(BIOME_NAMES)} stamps"
+    return out
 
 
 def keepsake_line(uid: str) -> str:
@@ -6093,6 +6130,73 @@ def idle_capacity(user_id: str) -> int:
 def idle_capacity_upgrade_cost(current_upgrades: int) -> int:
     return 25_000 * (2 ** current_upgrades)
 
+def best_tool_tier(user_id: str) -> int:
+    """The highest tool tier you own (or hold): the camp uses this, so swapping weapons never changes camp output."""
+    d = data.get(user_id, {})
+    names = set(d.get("owned_tools", [])) | {d.get("tool", "Bare Hands")}
+    return max((get_tool_tier(n) for n in names), default=1)
+
+
+IDLE_VISITOR_CHANCE = 0.10
+IDLE_VISITORS = [("Old Marta the trapper", "swaps a tale for a bandage"), ("Pip the map-seller", "leaves a few coins for your hospitality"),
+                 ("Rook the wandering cook", "stirs a pot and leaves a scent lure"), ("Sister Wren the herbalist", "presses a herb poultice into your hand"),
+                 ("Big Ned the fisher", "pays in silver for a place by the fire")]
+IDLE_DECORATIONS = [(1, "🔥 Campfire"), (3, "⛺ Second Tent"), (6, "🏮 Lanterns"), (10, "🚩 Camp Banner"), (15, "🪑 Storyteller's Bench")]
+_IDLE_AWAY_LINES = ["Your hunters spotted something unusual overnight.", "A quiet stretch — the hunters sharpened their tools.",
+                    "The hunters swapped stories by the fire while the haul grew.", "Tracks crossed the camp at dawn; nobody can say whose."]
+
+
+def idle_camp_extras(user_id: str) -> str:
+    """The cosmetic, no-homework side of the camp: a welcome-back line, decorations and a visitor."""
+    d = data[user_id]
+    idle = d.get("idle", {})
+    bits = []
+    haul_n = len(idle.get("haul", []))
+    if haul_n:
+        bits.append(_IDLE_AWAY_LINES[_zlib.crc32(f"{user_id}:{today_utc()}".encode()) % len(_IDLE_AWAY_LINES)])
+    wb = []
+    if haul_n:
+        wb.append(f"**{haul_n}** animals waiting")
+    if d.get("last_daily_date") != today_utc():
+        wb.append("daily reward ready")
+    qn = sum(1 for key in ("quests", "weekly_quests") for q in d.get(key, []) if q.get("completed") and not q.get("claimed"))
+    if qn:
+        wb.append(f"**{qn}** quest{'s' if qn != 1 else ''} to claim")
+    if wb:
+        bits.append("👋 Welcome back: " + " · ".join(wb) + ".")
+    met = idle.get("visitors_met", 0)
+    deco = [n for need, n in IDLE_DECORATIONS if met >= need]
+    if deco:
+        bits.append("Camp: " + ", ".join(deco))
+    v = idle.get("visitor")
+    if v:
+        bits.append(f"🧳 **{v['name']}** has come by the camp.")
+    return "\n".join(f"-# {b}" for b in bits)
+
+
+def idle_visitor_collect(user_id: str) -> str:
+    """Welcome the visitor: one free small gift. Mutates (call in a user_transaction)."""
+    idle = data[user_id]["idle"]
+    v = idle.get("visitor")
+    if not v:
+        return "Nobody is waiting at the camp right now."
+    idle["visitor"] = None
+    idle["visitors_met"] = idle.get("visitors_met", 0) + 1
+    roll = random.random()
+    if roll < 0.40 and _ex_give_bandage(user_id):
+        gift = "a **Bandage**"
+    elif roll < 0.60:
+        add_item(user_id, "Scent Lure", 1)
+        gift = "a **Scent Lure**"
+    else:
+        amt = max(1, int(crate_value_scale(data[user_id].get("level", 1)) * random.uniform(0.3, 0.8)))
+        add_money(user_id, amt, "camp visitor")
+        gift = f"**◈ {amt:,}**"
+    new = [n for need, n in IDLE_DECORATIONS if idle["visitors_met"] == need]
+    mark_user_dirty(user_id)
+    return f"🧳 **{v['name']}** {v['gift']} — you receive {gift}." + (f"\n-# New camp decoration: {new[0]}" if new else "")
+
+
 def idle_camp_biome(user_id: str) -> str:
     """The camp's biome for production. Falls back to Village if the player no
     longer meets that biome's level gate (e.g. after a prestige)."""
@@ -6101,8 +6205,8 @@ def idle_camp_biome(user_id: str) -> str:
         return "village"
     if data.get(user_id, {}).get("level", 1) < biome_level(b):
         return "village"
-    if get_tool_tier(data.get(user_id, {}).get("tool", "Bare Hands")) < BIOME_TOOL_TIER.get(b, 1):
-        return "village"     # same gate as hunting there in person: swapping to a weaker tool pulls the camp back
+    if best_tool_tier(user_id) < BIOME_TOOL_TIER.get(b, 1):
+        return "village"     # the camp needs a tool you OWN that is good enough — trying a different weapon no longer pulls it back
     return b
 
 def idle_catches_per_hour(user_id: str, at: float | None = None) -> float:
@@ -6124,9 +6228,8 @@ def idle_can_camp(user_id: str, biome: str) -> tuple[bool, str]:
     if data[user_id]["level"] < lvl_req:
         return False, f"{BIOME_NAMES[biome]} unlocks at Level {lvl_req:,}."
     tier_req  = BIOME_TOOL_TIER.get(biome, 1)
-    tool_name = data[user_id].get("tool", "Bare Hands")
-    if get_tool_tier(tool_name) < tier_req:
-        return False, f"{BIOME_NAMES[biome]} needs a Tier {tier_req}+ tool (you have {tool_name})."
+    if best_tool_tier(user_id) < tier_req:
+        return False, f"{BIOME_NAMES[biome]} needs a Tier {tier_req}+ tool (your best is Tier {best_tool_tier(user_id)})."
     return True, ""
 
 def _roll_idle_animal(user_id: str) -> str:
@@ -6161,6 +6264,9 @@ def idle_tick(user_id: str) -> int:
     take = min(n, cap - len(haul))
     for _ in range(take):
         haul.append(_roll_idle_animal(user_id))
+    if take > 0 and not idle.get("visitor") and random.random() < IDLE_VISITOR_CHANCE:
+        nm, gift = random.choice(IDLE_VISITORS)
+        idle["visitor"] = {"name": nm, "gift": gift, "ts": int(now)}
     if take < n:
         idle["started_at"] = now                       # the haul filled up: hunters idle, the clock restarts
     else:
@@ -7360,7 +7466,8 @@ def craft_queue_summary(user_id: str) -> str:
 # HUNT LOGIC
 # ─────────────────────────────────────────────
 
-def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = None) -> dict:
+def run_hunt(user_id: str, guided: bool = False, forced_animal: "str | list | None" = None,
+             perfect_bonus: float = 0.0) -> dict:
     """One hunt. ``guided=True`` is the onboarding's first hunt: the SAME code
     path as every other hunt (cooldown, verify, travel, XP, level-ups, records,
     quests, the Beginner Track checkpoint), only made beginner-safe and
@@ -7368,6 +7475,8 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
     tip, mythic, dangerous-animal encounter or shard/crate roll to upstage it."""
     player_in_combat(user_id)          # expires a fight left hanging past the idle timeout
     init_user(user_id)
+    # Explore: the animals a shot covers (one name, or a list when a shape hits several)
+    _forced = [forced_animal] if isinstance(forced_animal, str) else list(forced_animal or [])
 
     now = time.time()
     cd  = data[user_id]["hunt_cd"]
@@ -7429,7 +7538,7 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
                 "tool_name":  tool_name}
 
     needs_ammo = tool_needs_ammo(tool_name)
-    multi      = 1 if forced_animal else TOOLS.get(tool_name, {}).get("multi_catch", 1)   # Explore: one shot, one animal
+    multi      = len(_forced) if _forced else TOOLS.get(tool_name, {}).get("multi_catch", 1)   # Explore: the shot covers exactly these
     ammo_name  = get_equipped_ammo(user_id)
     ammo_cost  = multi
 
@@ -7568,10 +7677,11 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
     _rare_p  = min(RARE_CATCH_MAX_WORLD if world_mods["rare_mult"] > 1 else 1.0,
                    rare_catch_chance(luck_boost) * world_mods["rare_mult"]
                    + trophy_effect_value(user_id, "perfect_catch_pp") / 100   # Grindylow: Webbed Claw
-                   + _capture_pp(user_id))                                     # capture gear: helps a Perfect Catch quest
+                   + _capture_pp(user_id)                                     # capture gear: helps a Perfect Catch quest
+                   + perfect_bonus)                                           # Explore: golden footprints                                     # capture gear: helps a Perfect Catch quest
 
     rolled = ([ONBOARDING_FIRST_ANIMAL] * multi if guided
-              else [forced_animal] if forced_animal
+              else list(_forced) if _forced
               else _capture_lure(user_id, biome, [pick_biome_animal(biome) for _ in range(multi)]))
 
     # ── One dangerous animal, at most, becomes an interactive encounter ──
@@ -7744,6 +7854,7 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
         data[user_id]["stats"]["world_conditions_hunted"] = \
             data[user_id]["stats"].get("world_conditions_hunted", 0) + 1
     _sighting_add_clues(user_id, biome)
+    _region_decor = _grant_region_decor(user_id, biome)
     _guide = data[user_id].setdefault("guide_seen", [])
     if biome not in _guide:
         _guide.append(biome)
@@ -7768,6 +7879,7 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: str | None = Non
         "party_line": _party_line(_tm),
         "verify": False,
         "next_hunt_ts": int(data[user_id]["hunt_cd"]),
+        "region_decor": _region_decor,
         "tool": tool_name, "ammo": ammo_name, "remaining_ammo": remaining_ammo,
         "shard_drops": shard_drops,
         "crate_drops": crate_drops,
@@ -8351,6 +8463,17 @@ EXPLORE_TREE_PCT      = 18
 EXPLORE_STONE_PCT     = 8
 EXPLORE_BUSH_PCT      = 10
 EXPLORE_CHEST_PERMILLE = 8    # chance a tile holds a chest: 0.8% — rare, like a crate drop from a hunt (no daily limit)
+# small discoveries you simply walk onto (per mille of tiles, laid end to end after the chest band)
+EXPLORE_DISC_BANDS = (("chest", 0, EXPLORE_CHEST_PERMILLE), ("bag", 8, 12), ("berries", 12, 15), ("camp", 15, 17),
+                      ("monument", 17, 19), ("clearing", 19, 22))
+EXPLORE_FLEE_RUN      = 3     # an animal runs this many steps in a row, then...
+EXPLORE_REST_STEPS    = 2     # ...stops for this many (grazing / sniffing the air): your chance to close in
+EXPLORE_GROUP_CHANCE  = 0.15  # a new animal arrives with a mate right beside it
+EXPLORE_GOLD_CHANCE   = 0.06  # an animal that leaves golden footprints: a better chance of a Perfect Catch
+EXPLORE_GOLD_PERFECT  = 0.35  # ...this much more
+EXPLORE_FOX_CHANCE    = 0.012 # per step, once per expedition: a curious fox follows you and leaves a stash
+EXPLORE_FOX_FOLLOW    = 5
+EXPLORE_EASY_DIST     = (4, 5)   # the first animal of an expedition is a gentle one this far away
 EXPLORE_REWARD_MULT   = 10    # money AND XP multiplier on an animal caught in Explore: you catch far fewer per minute
                               # than with the Hunt button (one shot, one animal, plus the walking), so each one pays a lot more
 EXPLORE_CHEST_TIERS   = ("common", "uncommon", "rare", "epic")        # drawn with the matching crate art
@@ -8363,7 +8486,9 @@ _EX_DIRS   = {"n": (0, -1), "s": (0, 1), "w": (-1, 0), "e": (1, 0)}
 _EX_QUIET  = ("bump", "blocked", "none", "cooldown", "over")     # outcomes that change nothing: answered privately
 _EX_ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"]          # 45-degree sectors, y grows downward
 _EX_NEIGHBOURS = [(0, -1), (-1, 0), (1, 0), (0, 1)]     # animals walk 4-way like you, so none can slip through a diagonal gap you can't
-_EX_WALKABLE = ("grass", "bush", "chest")
+_EX_PICKUPS = ("chest", "bag", "berries", "camp", "monument", "clearing")          # walk onto them to collect
+_EX_WALKABLE = ("grass", "bush") + _EX_PICKUPS
+_EX_MYSTIC = ("cursed_ruins", "rainbow", "abyssal_depths", "celestial_peaks")      # the strange regions
 # what a clue looks like when it first appears, and the short label shown beside its arrow
 _EX_CLUE_NEW = {
     "passive":    "👣 Fresh footprints cross your path.",
@@ -8389,8 +8514,10 @@ def _ex_tile(seed: int, x: int, y: int) -> str:
         if h < pct:
             return kind
         h -= pct
-    if _zlib.crc32(f"{seed}:{x}:{y}:c".encode()) % 1000 < EXPLORE_CHEST_PERMILLE:
-        return "chest"
+    h2 = _zlib.crc32(f"{seed}:{x}:{y}:c".encode()) % 1000
+    for kind, lo, hi in EXPLORE_DISC_BANDS:
+        if lo <= h2 < hi:
+            return kind
     return "grass"
 
 
@@ -8410,12 +8537,15 @@ def _ex_bounds(st: dict) -> tuple:
 
 
 def _ex_kind(st: dict, x: int, y: int) -> str:
-    """What is on this tile right now: grass / tree / stone / bush / chest, or 'void' beyond the border."""
+    """What is on this tile right now: grass / tree / stone / bush / a pickup, or 'void' beyond the border."""
     x0, y0, x1, y1 = _ex_bounds(st)
     if not (x0 <= x <= x1 and y0 <= y <= y1):
         return "void"
     t = _ex_tile(st["seed"], x, y)
-    if t == "chest" and f"{x},{y}" in st.get("opened", []):
+    key = f"{x},{y}"
+    if t == "grass" and key in st.get("extra", {}):
+        t = st["extra"][key]                                    # a stash the fox left behind
+    if t in _EX_PICKUPS and key in st.get("opened", []):
         return "grass"
     return t
 
@@ -8476,52 +8606,158 @@ def _ex_visible(st: dict) -> list[dict]:
                   key=lambda a: _ex_dist(a["x"], a["y"], st["x"], st["y"]))
 
 
-def _ex_reach_tiles(user_id: str) -> int:
-    return tool_range(data[user_id].get("tool", "Bare Hands"))
+def _ex_tool(user_id: str) -> str:
+    return data[user_id].get("tool", "Bare Hands")
 
 
-def _ex_in_range(st: dict, a: dict, rng: int) -> bool:
-    return _ex_dist(a["x"], a["y"], st["x"], st["y"]) <= rng
+def _ex_in_reach(st: dict, a: dict, tool: str) -> bool:
+    """Can this tool be aimed at the animal where it stands? (Its shape decides, see game_data.TOOL_SHAPES.)"""
+    return (a["x"] - st["x"], a["y"] - st["y"]) in shape_reach(tool)
 
 
-def _ex_targets(st: dict, rng: int) -> list[dict]:
-    """Animals you can see AND reach with your tool, nearest first."""
-    return [a for a in _ex_visible(st) if _ex_in_range(st, a, rng)]
+def _ex_targets(st: dict, tool: str) -> list[dict]:
+    """Animals you can see AND aim at with your tool, nearest first."""
+    return [a for a in _ex_visible(st) if _ex_in_reach(st, a, tool)]
 
 
-def _ex_target(st: dict, rng: int) -> dict | None:
-    """The animal you are aiming at: the one you picked while it is still in reach, otherwise the nearest in reach."""
-    ts = _ex_targets(st, rng)
+def _ex_target(st: dict, tool: str) -> dict | None:
+    """The animal you are aiming at: the one you picked while it is still aimable, otherwise the nearest one."""
+    ts = _ex_targets(st, tool)
     if not ts:
         return None
     return next((a for a in ts if a["id"] == st.get("target")), ts[0])
 
 
-def _ex_spawn(st: dict) -> bool:
-    """Put an animal on a tile the player can WALK to (never behind a wall of trees), out of view."""
+def _ex_cap(tool: str) -> int:
+    """Most animals one shot may take: one for a single shot, otherwise the tool's multi-catch allowance."""
+    if tool_shape(tool)[0] == "single":
+        return 1
+    return max(TOOLS.get(tool, {}).get("multi_catch", 1), EXPLORE_SHAPE_MIN_CAP)
+
+
+def _ex_affected(st: dict, tool: str, target: dict, ammo_left: int | None = None) -> list[dict]:
+    """The animals this shot covers, the target first, capped by the tool's allowance and by the ammo you hold."""
+    hit = shape_hits(tool, target["x"] - st["x"], target["y"] - st["y"])
+    cands = [a for a in _ex_visible(st) if (a["x"] - st["x"], a["y"] - st["y"]) in hit]
+    cands.sort(key=lambda a: (a is not target, _ex_dist(a["x"], a["y"], st["x"], st["y"])))
+    cap = _ex_cap(tool)
+    if ammo_left is not None:
+        cap = min(cap, ammo_left)
+    return cands[:max(1, cap)]
+
+
+def _ex_hit_tiles(st: dict, tool: str, target: dict | None) -> set:
+    """World tiles the next shot would cover (for the picture)."""
+    if target is None:
+        return set()
+    return {(st["x"] + dx, st["y"] + dy)
+            for dx, dy in shape_hits(tool, target["x"] - st["x"], target["y"] - st["y"])}
+
+
+def _ex_hit_chance(tool: str, dist: int) -> float:
+    return max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1)))
+
+
+def _ex_spend_ammo(user_id: str, n: int) -> None:
+    """Spend `n` rounds of the equipped ammo (the same rules as a normal hunt: free during an ammo event)."""
+    tool = _ex_tool(user_id)
+    if n <= 0 or not tool_needs_ammo(tool) or ev_ammo_free():
+        return
+    an = get_equipped_ammo(user_id)
+    if not an:
+        return
+    consume_ammo(user_id, an, min(n, get_ammo_count(user_id, an)))
+    if get_ammo_count(user_id, an) == 0:
+        data[user_id]["equipped_ammo"] = None
+
+
+def _ex_shot_blocker(user_id: str) -> tuple[str, str]:
+    """Everything that stops a shot, checked BEFORE any hit roll so a refused shot never spooks an animal or spends
+    anything. Returns (kind, text); kind '' means go ahead."""
+    d = data[user_id]
+    tool = _ex_tool(user_id)
+    if d.get("verify", {}).get("needed"):
+        return "blocked", f"{emoji('lock')} Verification required — use {_verify_cmd_ref()}."
+    if d.get("hunt_cd", 0) > time.time():
+        return "cooldown", f"{emoji('cooldown')} Reloading — ready <t:{int(d['hunt_cd'])}:R>."
+    if not can_hunt_biome(tool, d.get("biome", "village")):
+        return "blocked", (f"{emoji('cross_mark')} **{BIOME_NAMES[d['biome']]}** needs a Tier "
+                           f"{BIOME_TOOL_TIER.get(d['biome'], 1)}+ tool.")
+    why = _ex_ammo_problem(user_id)
+    if why:
+        return "blocked", why
+    return "", ""
+
+
+def _ex_ammo_problem(user_id: str) -> str:
+    """'' when the equipped ammo (if the tool needs any) is fine, else a plain explanation."""
+    tool = _ex_tool(user_id)
+    if not tool_needs_ammo(tool):
+        return ""
+    an = get_equipped_ammo(user_id)
+    atype = AMMO_TYPE_LABELS.get(get_tool_ammo_type(tool), "ammo")
+    if not an or not ammo_compatible_with_tool(an, tool):
+        return f"{emoji('warning')} **{tool}** needs {atype} equipped — tap **Equip Ammo** or **Buy Ammo**."
+    if get_ammo_count(user_id, an) < 1:
+        return f"{emoji('warning')} You're out of {atype} — tap **Equip Ammo** or **Buy Ammo**."
+    return ""
+
+
+def _ex_make(st: dict, name: str, x: int, y: int) -> dict:
+    a = {"id": st["nid"], "name": name, "x": x, "y": y, "clue": 0, "cool": 0, "fade": 0, "pd": 99, "mood": "calm",
+         "run": 0, "rest": 0}
+    st["nid"] += 1
+    return a
+
+
+def _ex_spawn(st: dict, easy: bool = False, group: bool = True) -> bool:
+    """Put an animal on a tile the player can WALK to (never behind a wall of trees), out of view. `easy` places a
+    gentle (passive) one a short walk away — the first animal of every expedition. Now and then a second animal
+    arrives right beside it (a gathering), or one leaves golden footprints."""
     reach = _ex_reach(st)
-    cands = [p for p in reach
-             if _ex_dist(p[0], p[1], st["x"], st["y"]) > EXPLORE_VIEW and not _ex_animal_at(st, *p)]
+    lo, hi = EXPLORE_EASY_DIST if easy else (EXPLORE_VIEW + 1, 10 ** 6)
+    cands = [p for p in reach if lo <= _ex_dist(p[0], p[1], st["x"], st["y"]) <= hi and not _ex_animal_at(st, *p)]
+    if not cands and easy:
+        cands = [p for p in reach if _ex_dist(p[0], p[1], st["x"], st["y"]) > EXPLORE_VIEW and not _ex_animal_at(st, *p)]
     if not cands:
         return False
     x, y = random.choice(cands)
-    st["animals"].append({"id": st["nid"], "name": pick_biome_animal(st["biome"]), "x": x, "y": y,
-                          "clue": 0, "cool": 0, "fade": 0, "pd": 99, "mood": "calm"})
-    st["nid"] += 1
+    name = pick_biome_animal(st["biome"])
+    if easy:
+        for _ in range(30):
+            if animal_combat_stats(name, st["biome"])["behavior"] == "passive":
+                break
+            name = pick_biome_animal(st["biome"])
+    a = _ex_make(st, name, x, y)
+    if not easy and random.random() < EXPLORE_GOLD_CHANCE:
+        a["gold"] = True
+    st["animals"].append(a)
+    if group and not easy and len(st["animals"]) <= EXPLORE_MAX_ANIMALS and random.random() < EXPLORE_GROUP_CHANCE:
+        nb = [(x + dx, y + dy) for dx, dy in _EX_NEIGHBOURS
+              if _ex_walkable(st, x + dx, y + dy) and (x + dx, y + dy) != (st["x"], st["y"]) and not _ex_animal_at(st, x + dx, y + dy)]
+        if nb:
+            bx, by = random.choice(nb)
+            st["animals"].append(_ex_make(st, name, bx, by))
+            if _ex_dist(x, y, st["x"], st["y"]) <= EXPLORE_NOTICE_RADIUS:
+                st.setdefault("_lines", []).append("🐾 Several animals have gathered somewhere close.")
     return True
 
 
 def _ex_new(user_id: str, biome: str) -> dict:
-    """A fresh expedition. Re-rolls the map until the start has room to move and the full arena is well connected."""
+    """A fresh expedition. Re-rolls the map until the start has room to move and the full arena is well connected;
+    it always begins with one gentle animal a short walk away."""
     st: dict = {}
     for _ in range(40):
         st = {"biome": biome, "seed": random.randrange(1 << 30), "x": EXPLORE_START[0], "y": EXPLORE_START[1],
-              "animals": [], "steps": 0, "msg": "", "nid": 1, "opened": [], "bag": []}
+              "animals": [], "steps": 0, "msg": "", "nid": 1, "opened": [], "bag": [], "extra": {}, "fox": None,
+              "fox_done": False, "target": None, "confirm_new": False}
         full = dict(st, steps=EXPLORE_MAX_GROW * EXPLORE_GROW_EVERY)
-        if len(_ex_reach(st)) >= EXPLORE_MIN_REACH and len(_ex_reach(full)) >= 100:
+        r0 = _ex_reach(st)
+        if (len(r0) >= EXPLORE_MIN_REACH and len(_ex_reach(full)) >= 100
+                and any(_ex_dist(p[0], p[1], st["x"], st["y"]) > EXPLORE_VIEW for p in r0)):       # room for an animal out of view
             break
-    for _ in range(2):
-        _ex_spawn(st)
+    _ex_spawn(st, easy=True, group=False)
+    _ex_spawn(st, group=False)
     data[user_id]["explore"] = st
     mark_user_dirty(user_id)
     return st
@@ -8555,9 +8791,48 @@ def _ex_step(st: dict, a: dict, score) -> None:
         a["x"], a["y"] = best[1], best[2]
 
 
+_EX_REST_LINE = {"passive": "stops to graze.", "skittish": "freezes and sniffs the air.",
+                 "defensive": "stops and turns to watch you."}
+
+
+def _ex_fox_tick(st: dict, lines: list) -> None:
+    """The curious fox: it turns up once an expedition, follows you for a few steps, then trots off and leaves a stash."""
+    fx = st.get("fox")
+    px, py = st["x"], st["y"]
+    if fx:
+        fx["left"] -= 1
+        if fx["left"] <= 0:
+            key = f"{fx['x']},{fx['y']}"
+            if _ex_tile(st["seed"], fx["x"], fx["y"]) == "grass" and key not in st.get("extra", {}):
+                st.setdefault("extra", {})[key] = "bag"
+                lines.append("🦊 The fox darts off — and leaves something behind in the grass.")
+            else:
+                lines.append("🦊 The fox trots away into the brush.")
+            st["fox"] = None
+            return
+        best = None
+        for dx, dy in _EX_NEIGHBOURS:
+            nx, ny = fx["x"] + dx, fx["y"] + dy
+            if (nx, ny) == (px, py) or not _ex_walkable(st, nx, ny) or _ex_animal_at(st, nx, ny):
+                continue
+            sc = (nx - px) ** 2 + (ny - py) ** 2
+            if best is None or sc < best[0]:
+                best = (sc, nx, ny)
+        if best and best[0] > 2:
+            fx["x"], fx["y"] = best[1], best[2]
+    elif not st.get("fox_done") and random.random() < EXPLORE_FOX_CHANCE:
+        reach = _ex_reach(st)
+        cands = [p for p in reach if 2 <= _ex_dist(p[0], p[1], px, py) <= 3 and not _ex_animal_at(st, *p)]
+        if cands:
+            fx_, fy_ = random.choice(cands)
+            st["fox"] = {"x": fx_, "y": fy_, "left": EXPLORE_FOX_FOLLOW}
+            st["fox_done"] = True
+            lines.append("🦊 A curious fox pads out of the grass and starts following you.")
+
+
 def _ex_advance(user_id: str, st: dict) -> list[str]:
     """One tick of the world: animals act, a new one may wander in, clues update."""
-    lines: list[str] = []
+    lines: list[str] = list(st.pop("_lines", []))
     px, py = st["x"], st["y"]
     toward = lambda x, y: (x - px) ** 2 + (y - py) ** 2
     away = lambda x, y: -((x - px) ** 2 + (y - py) ** 2)
@@ -8567,19 +8842,31 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
         d0 = _ex_dist(a["x"], a["y"], px, py)
         if a.get("cool", 0) > 0:
             a["cool"] -= 1
+        resting = a.get("rest", 0) > 0
+        if resting:
+            a["rest"] -= 1
         spooky = {"skittish": (3, 0.9), "defensive": (3, 0.5), "passive": (2, 0.3)}.get(beh)
-        if a.get("mood") == "flee" or (spooky and d0 <= spooky[0] and random.random() < spooky[1]):
-            _ex_step(st, a, away)
-        elif beh in ("aggressive", "predator") and (a.get("mood") == "stalk" or d0 <= 9) \
-                and random.random() < (1.0 if beh == "predator" else 0.6):
-            if d0 > 1:
-                _ex_step(st, a, toward)
-            elif a.get("cool", 0) <= 0 and stats["damage"][1] > 0:
-                lost = _track_hurt(user_id, random.randint(*stats["damage"]))
-                a["cool"] = EXPLORE_ATTACK_COOLDOWN
-                lines.append(f"{emoji('warning')} The **{a['name']}** lunges at you — **-{lost} HP**!")
-        elif random.random() < 0.4:
-            _ex_step(st, a, lambda x, y: random.random())
+        fleeing = a.get("mood") == "flee" or bool(spooky and d0 <= spooky[0] and random.random() < spooky[1])
+        if fleeing:
+            if not resting:
+                _ex_step(st, a, away)
+                a["run"] = a.get("run", 0) + 1
+                if a["run"] >= EXPLORE_FLEE_RUN:             # out of breath: it stops for a moment — your chance
+                    a["run"], a["rest"] = 0, EXPLORE_REST_STEPS
+                    if _ex_seen(st, a):
+                        lines.append(f"🌿 The **{a['name']}** {_EX_REST_LINE.get(beh, 'stops to catch its breath.')}")
+        else:
+            a["run"] = 0
+            if beh in ("aggressive", "predator") and (a.get("mood") == "stalk" or d0 <= 9) \
+                    and random.random() < (1.0 if beh == "predator" else 0.6):
+                if d0 > 1:
+                    _ex_step(st, a, toward)
+                elif a.get("cool", 0) <= 0 and stats["damage"][1] > 0:
+                    lost = _track_hurt(user_id, random.randint(*stats["damage"]))
+                    a["cool"] = EXPLORE_ATTACK_COOLDOWN
+                    lines.append(f"{emoji('warning')} The **{a['name']}** lunges at you — **-{lost} HP**!")
+            elif not resting and random.random() < 0.4:
+                _ex_step(st, a, lambda x, y: random.random())
         if a.get("mood") == "flee" and _ex_dist(a["x"], a["y"], px, py) > 8:
             a["mood"] = "calm"
     if len(st["animals"]) < EXPLORE_MAX_ANIMALS and random.random() < 0.25:
@@ -8611,8 +8898,16 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
                     lines.append("-# The trail fades — you've lost it.")
         elif d <= EXPLORE_NOTICE_RADIUS and a["fade"] <= 0:
             a["clue"] = EXPLORE_CLUE_TTL
-            lines.append(_EX_CLUE_NEW.get(beh, _EX_CLUE_NEW["passive"]))
+            if a.get("gold"):
+                lines.append("✨ Golden footprints glitter somewhere ahead — a rare chance for a Perfect Catch.")
+            elif st["biome"] in _EX_MYSTIC:
+                lines.append("✨ Glowing footprints fade in and out of the ground.")
+            else:
+                lines.append(_EX_CLUE_NEW.get(beh, _EX_CLUE_NEW["passive"]))
+            if st["biome"] in _EX_MYSTIC and random.random() < 0.25:
+                lines.append("👁 Something watches you from the edge of the clearing — then it is gone.")
         a["pd"] = d
+    _ex_fox_tick(st, lines)
     st["steps"] = st.get("steps", 0) + 1
     return lines
 
@@ -8625,6 +8920,22 @@ def _ex_blocked(user_id: str) -> str:
     if is_traveling(user_id):
         return "You're in transit — you can't explore until you land."
     return ""
+
+
+def _ex_give_ammo(user_id: str, qty: int) -> tuple:
+    """Add up to `qty` rounds your tool can use. Returns (ammo name, rounds ACTUALLY added) — the stack cap may trim it."""
+    d = data[user_id]
+    tool = _ex_tool(user_id)
+    if not tool_needs_ammo(tool):
+        return None, 0
+    names = [n for n in get_ammo_for_tool(tool) if AMMO[n].get("currency", "money") == "money"] or get_ammo_for_tool(tool)
+    an = get_equipped_ammo(user_id) or (names[0] if names else None)
+    if not an:
+        return None, 0
+    inv = d.setdefault("ammo_inv", {})
+    before = inv.get(an, 0)
+    inv[an] = min(AMMO_MAX_STACK, before + qty)
+    return an, inv[an] - before
 
 
 def _ex_open_chest(user_id: str, st: dict, x: int, y: int) -> str:
@@ -8641,14 +8952,10 @@ def _ex_open_chest(user_id: str, st: dict, x: int, y: int) -> str:
     if kind == "heal" and d.setdefault("healing_inv", {}).get("Bandage", 0) >= HEALING_BUY_CAP:
         kind = "cash"
     if kind == "ammo":
-        names = [n for n in get_ammo_for_tool(tool) if AMMO[n].get("currency", "money") == "money"] or get_ammo_for_tool(tool)
-        an = get_equipped_ammo(user_id) or (names[0] if names else None)
-        qty = max(1, int(random.randint(8, 20) * mult))
-        if an:
-            inv = d.setdefault("ammo_inv", {})
-            inv[an] = min(AMMO_MAX_STACK, inv.get(an, 0) + qty)
-            return f"{icon} **You found a chest!** Inside: **{qty}× {an}**."
-        kind = "cash"
+        an, got = _ex_give_ammo(user_id, max(1, int(random.randint(8, 20) * mult)))
+        if got > 0:
+            return f"{icon} **You found a chest!** Inside: **{got}× {an}**."
+        kind = "cash"                                   # no ammo to give (or the stack is full)
     if kind == "heal":
         inv = d.setdefault("healing_inv", {})
         inv["Bandage"] = inv.get("Bandage", 0) + 1
@@ -8661,6 +8968,99 @@ def _ex_open_chest(user_id: str, st: dict, x: int, y: int) -> str:
     return f"{icon} **You found a chest!** Inside: **◈ {amt:,}**."
 
 
+_EX_JOURNAL = [
+    "“Day 3. The tracks all lead the same way. Whatever it is, it isn't afraid of us.”",
+    "“Left a snare by the creek. Came back to find it sprung and the bait untouched. Clever.”",
+    "“If you find this, the bushes here hide more than you'd think. Look twice.”",
+    "“The fox follows at a distance. I swear it is keeping count of my steps.”",
+    "“Marked the safe path with three stones. The wind keeps knocking them over.”",
+    "“Ran out of ammo on day 5. A good hunter packs spare. A great one finds a bag.”",
+    "“The light fades quickly out here. Don't be on the open ground when it does.”",
+    "“I have never seen so many animals sleeping in one place. Odd. Peaceful, though.”",
+    "“Shot wide, the thing bolted — then stopped to graze, as if it forgot. Wait them out.”",
+    "“Whoever reads this: the golden prints are real. Follow them.”",
+    "“Packed up in a hurry. Something moved in the trees. Probably nothing.”",
+    "“The best catch I ever made was the one I waited for.”",
+]
+_EX_JOURNAL_MYSTIC = "A campsite with no owner. The fire is warm, the bedroll is dry — and nobody has been here for years."
+_EX_SOUVENIRS = {
+    "village": ("🌼", "Pressed Meadow Flower"), "forest": ("🍂", "Amber Leaf"), "woods": ("🌲", "Frosted Pinecone"),
+    "small_desert": ("🏜️", "Sandstone Chip"), "sunken_coast": ("🐚", "Sea-glass Shard"), "tundra": ("❄️", "Ice Crystal"),
+    "jungle": ("🌺", "Orchid Petal"), "swamp": ("🪷", "Bog Lily"), "volcanic_highlands": ("🌋", "Obsidian Chip"),
+    "cursed_ruins": ("🏺", "Carved Tile Fragment"), "rainbow": ("🌈", "Prism Shard"),
+    "abyssal_depths": ("🪸", "Glowing Coral Piece"), "celestial_peaks": ("⭐", "Starlit Pebble"),
+}
+
+
+def _ex_give_bandage(user_id: str) -> bool:
+    inv = data[user_id].setdefault("healing_inv", {})
+    if inv.get("Bandage", 0) >= HEALING_BUY_CAP:
+        return False
+    inv["Bandage"] = inv.get("Bandage", 0) + 1
+    return True
+
+
+def _ex_pickup(user_id: str, st: dict, x: int, y: int, kind: str) -> str:
+    """Walk onto a small discovery. Returns the line to show. (Chests have their own function.)"""
+    d = data[user_id]
+    key = f"{x},{y}"
+    biome = st["biome"]
+    if kind == "chest":
+        return _ex_open_chest(user_id, st, x, y)
+    if kind == "berries":
+        refresh_health(user_id)
+        hp, mx = player_hp(user_id)
+        if hp >= mx:
+            return "🫐 A patch of ripe berries — you're not hurt, so you leave them for when you are."
+        h = d["health"]
+        gain = max(8, int(mx * 0.15))
+        h["hp"] = min(effective_max_hp(user_id), h["hp"] + gain)
+        st.setdefault("opened", []).append(key)
+        return f"🫐 **Berry patch!** You eat a handful (+{h['hp'] - hp} HP)."
+    st.setdefault("opened", []).append(key)
+    if kind == "bag":
+        an, got = _ex_give_ammo(user_id, random.randint(4, 10))
+        if got > 0:
+            return f"🎒 **An abandoned supply bag.** Inside: **{got}× {an}**."
+        if _ex_give_bandage(user_id):
+            return "🎒 **An abandoned supply bag.** Inside: **a Bandage**."
+        amt = max(1, int(crate_value_scale(d.get("level", 1)) * 0.3))
+        add_money(user_id, amt, "explore supply bag")
+        return f"🎒 **An abandoned supply bag.** Inside: **◈ {amt:,}**."
+    if kind == "camp":
+        found = d.setdefault("explore_journal", [])
+        n = _zlib.crc32(f"{st['seed']}:{key}".encode()) % len(_EX_JOURNAL)
+        first = n not in found
+        if first:
+            found.append(n)
+        text = _EX_JOURNAL_MYSTIC if biome in _EX_MYSTIC and random.random() < 0.6 else _EX_JOURNAL[n]
+        line = f"⛺ **An old campsite.** {text}" + (f"\n-# 📜 Journal pages found: {len(found)}/{len(_EX_JOURNAL)}" if first else "")
+        if random.random() < 0.35:
+            an, got = _ex_give_ammo(user_id, random.randint(3, 6))
+            if got > 0:
+                line += f"\nYou also find **{got}× {an}** left behind."
+            elif _ex_give_bandage(user_id):
+                line += "\nYou also find **a Bandage** left behind."
+        return line
+    if kind == "monument":
+        stamps = d.setdefault("explore_stamps", [])
+        name = BIOME_NAMES.get(biome, biome)
+        if biome not in stamps:
+            stamps.append(biome)
+            return (f"🗿 **A strange monument.** You press its carving into your journal — a new stamp: **{name}**.\n"
+                    f"-# Stamps collected: {len(stamps)}/{len(BIOME_NAMES)}")
+        return f"🗿 A strange monument. Your journal already has a stamp from **{name}**."
+    if kind == "clearing":
+        souv = d.setdefault("explore_souvenirs", [])
+        icon, nm = _EX_SOUVENIRS.get(biome, ("🌿", "Wild Flower"))
+        if nm not in souv:
+            souv.append(nm)
+            return (f"{icon} **A scenic clearing.** You take a keepsake: **{nm}**.\n"
+                    f"-# Souvenirs collected: {len(souv)}/{len(_EX_SOUVENIRS)} (shown on your profile)")
+        return f"{icon} A scenic clearing. A lovely spot — you already have this region's souvenir."
+    return ""
+
+
 def explore_move(user_id: str, sub: str) -> dict:
     """Step n/s/e/w (or wait). Mutates — call inside a user_transaction."""
     st = _ex_state(user_id)
@@ -8671,6 +9071,7 @@ def explore_move(user_id: str, sub: str) -> dict:
     if _ex_over(st):
         st["msg"] = "Your expedition is over — start a new one."
         return {"kind": "over"}
+    st["confirm_new"] = False
     lines: list[str] = []
     if sub in _EX_DIRS:
         dx, dy = _EX_DIRS[sub]
@@ -8686,9 +9087,12 @@ def explore_move(user_id: str, sub: str) -> dict:
         if blocker:
             st["msg"] = f"The **{blocker['name']}** is in the way — fire, or go around."
             return {"kind": "bump"}
+        fx = st.get("fox")
+        if fx and (fx["x"], fx["y"]) == (nx, ny):                   # the fox hops into the tile you just left
+            fx["x"], fx["y"] = st["x"], st["y"]
         st["x"], st["y"] = nx, ny
-        if kind == "chest":
-            lines.append(_ex_open_chest(user_id, st, nx, ny))
+        if kind in _EX_PICKUPS:
+            lines.append(_ex_pickup(user_id, st, nx, ny, kind))
     lines += _ex_advance(user_id, st)
     if _ex_over(st):
         lines.append("🧭 **The light is fading — your expedition is over.**")
@@ -8698,25 +9102,32 @@ def explore_move(user_id: str, sub: str) -> dict:
 
 
 def explore_new(user_id: str) -> dict:
-    """Start a fresh expedition (anytime). Mutates."""
+    """Start a fresh expedition. Mid-expedition it asks first (and shows what you have so far); a second press
+    confirms. Mutates."""
     d = data[user_id]
+    st = d.get("explore")
+    if st and st.get("biome") == d.get("biome", "village") and not _ex_over(st) and st.get("steps", 0) > 0 \
+            and not st.get("confirm_new"):
+        st["confirm_new"] = True
+        st["msg"] = ("🧭 **Start a new expedition?** This one isn't over yet — "
+                     + _ex_summary(st, header=False) + "\nPress **New Expedition** again to confirm, or keep exploring.")
+        mark_user_dirty(user_id)
+        return {"kind": "confirm"}
     st = _ex_new(user_id, d.get("biome", "village"))
     st["msg"] = "🧭 A new expedition begins."
     return {"kind": "new"}
 
 
-def _ex_hit_chance(tool: str, dist: int) -> float:
-    return max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1)))
-
-
 def explore_target(user_id: str) -> dict:
-    """Aim at the next animal in reach (no time passes). Mutates."""
+    """Aim at the next animal you can reach (no time passes). Mutates."""
     st = _ex_state(user_id)
-    ts = _ex_targets(st, _ex_reach_tiles(user_id))
+    tool = _ex_tool(user_id)
+    st["confirm_new"] = False
+    ts = _ex_targets(st, tool)
     if not ts:
         st["msg"] = "Nothing in reach to aim at."
         return {"kind": "none"}
-    cur = _ex_target(st, _ex_reach_tiles(user_id))
+    cur = _ex_target(st, tool)
     nxt = ts[(ts.index(cur) + 1) % len(ts)] if cur in ts else ts[0]
     st["target"] = nxt["id"]
     st["msg"] = f"{emoji('target')} Aiming at the **{nxt['name']}**."
@@ -8725,7 +9136,10 @@ def explore_target(user_id: str) -> dict:
 
 
 def explore_fire(user_id: str) -> dict:
-    """Take a shot at your target (an animal in view AND inside your tool's range). A hit is a real single-animal hunt. Mutates."""
+    """Fire at your target. The tool's shape is aimed for you; every animal it covers (up to the tool's allowance and
+    the ammo you hold) gets its own hit roll. Cooldown, ammo and every other restriction are checked BEFORE any roll,
+    so a refused shot spends nothing and never spooks an animal; a shot that misses still costs its ammo and cooldown.
+    Hits are one real hunt (quests, drops, records). Mutates."""
     st = _ex_state(user_id)
     d = data[user_id]
     why = _ex_blocked(user_id)
@@ -8739,60 +9153,80 @@ def explore_fire(user_id: str) -> dict:
     if not seen:
         st["msg"] = "Nothing in view to shoot at."
         return {"kind": "none"}
-    tool = d.get("tool", "Bare Hands")
-    rng = tool_range(tool)
-    a = _ex_target(st, rng)
+    tool = _ex_tool(user_id)
+    a = _ex_target(st, tool)
     if a is None:
         near = _ex_dist(seen[0]["x"], seen[0]["y"], st["x"], st["y"])
-        st["msg"] = (f"Out of range — your **{tool}** reaches **{rng}** tile{'s' if rng != 1 else ''} and the nearest "
-                     f"animal is **{near}** away. Move closer (tap **Info** to see your range).")
+        rng = tool_range(tool)
+        st["msg"] = (f"Out of reach — your **{tool}** ({SHAPE_NAMES[tool_shape(tool)[0]].lower()}) reaches **{rng}** "
+                     f"tile{'s' if rng != 1 else ''} and the nearest animal is **{near}** away. Move closer "
+                     f"(tap **Info** to see where you can hit).")
         return {"kind": "none"}
-    now = time.time()
-    if d.get("hunt_cd", 0) > now:
-        st["msg"] = f"{emoji('cooldown')} Reloading — ready <t:{int(d['hunt_cd'])}:R>."
-        return {"kind": "cooldown"}
-    dist = _ex_dist(a["x"], a["y"], st["x"], st["y"])
-    p = _ex_hit_chance(tool, dist)
-    beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
-    if random.random() >= p:
-        a["mood"] = "stalk" if beh in ("aggressive", "predator") else "flee"
-        lines = [f"{emoji('target')} Your shot goes wide — the **{a['name']}** "
-                 + ("charges!" if a["mood"] == "stalk" else "bolts!")]
-        st["msg"] = "\n".join(lines + _ex_advance(user_id, st))
-        mark_user_dirty(user_id)
-        return {"kind": "miss"}
-    res = run_hunt(user_id, forced_animal=a["name"])
-    if not res.get("ok"):
-        if res.get("verify"):
-            st["msg"] = f"{emoji('lock')} Verification required — use {_verify_cmd_ref()}."
-        elif res.get("tool_locked"):
-            st["msg"] = f"{emoji('cross_mark')} **{res['biome_name']}** needs a Tier {res['req_tier']}+ tool."
-        elif res.get("no_ammo"):
-            st["msg"] = f"{emoji('warning')} **{res['tool_name']}** needs {res.get('ammo_type', 'ammo')} equipped."
-        elif res.get("cooldown_ts"):
-            st["msg"] = f"{emoji('cooldown')} Reloading — ready <t:{res['cooldown_ts']}:R>."
-        else:
-            st["msg"] = "You can't take the shot right now."
-        return {"kind": "blocked", "result": res}
-    if a in st["animals"]:
-        st["animals"].remove(a)
-    st["target"] = None
+    kind, text = _ex_shot_blocker(user_id)
+    if kind:
+        st["msg"] = text
+        return {"kind": kind}
+    st["confirm_new"] = False
+    needs = tool_needs_ammo(tool)
+    ammo_name = get_equipped_ammo(user_id)
+    ammo_left = get_ammo_count(user_id, ammo_name) if needs and not ev_ammo_free() else None
+    group = _ex_affected(st, tool, a, ammo_left)
+    hits, misses = [], []
+    for g in group:
+        dist = _ex_dist(g["x"], g["y"], st["x"], st["y"])
+        (hits if random.random() < _ex_hit_chance(tool, dist) else misses).append(g)
     lines: list[str] = []
-    for c in res.get("catches", []):
+    for m_ in misses:
+        beh = animal_combat_stats(m_["name"], st["biome"])["behavior"]
+        m_["mood"] = "stalk" if beh in ("aggressive", "predator") else "flee"
+        m_["run"], m_["rest"] = 0, 0
+    if misses:
+        names = ", ".join(f"**{m_['name']}**" for m_ in misses)
+        lines.append(f"{emoji('target')} Your shot goes wide — " + (
+            f"the {names} " + ("charges!" if misses[0]["mood"] == "stalk" else "bolts!") if len(misses) == 1
+            else f"{names} scatter!"))
+    res = None
+    if hits:
+        bonus = EXPLORE_GOLD_PERFECT if any(h.get("gold") for h in hits) else 0.0
+        res = run_hunt(user_id, forced_animal=[h["name"] for h in hits], perfect_bonus=bonus)
+        if not res.get("ok"):
+            if res.get("verify"):
+                st["msg"] = f"{emoji('lock')} Verification required — use {_verify_cmd_ref()}."
+            elif res.get("tool_locked"):
+                st["msg"] = f"{emoji('cross_mark')} **{res['biome_name']}** needs a Tier {res['req_tier']}+ tool."
+            elif res.get("no_ammo"):
+                st["msg"] = f"{emoji('warning')} **{res['tool_name']}** needs {res.get('ammo_type', 'ammo')} equipped."
+            elif res.get("cooldown_ts"):
+                st["msg"] = f"{emoji('cooldown')} Reloading — ready <t:{res['cooldown_ts']}:R>."
+            else:
+                st["msg"] = "You can't take the shot right now."
+            return {"kind": "blocked", "result": res}
+        for h in hits:
+            if h in st["animals"]:
+                st["animals"].remove(h)
+        _ex_spend_ammo(user_id, len(misses))            # the rounds that missed still left the barrel
+    else:
+        _ex_spend_ammo(user_id, len(misses))
+        d["hunt_cd"] = time.time() + hunt_cooldown_s(user_id)
+    st["target"] = None
+    for c in (res or {}).get("catches", []):
         st.setdefault("bag", []).append({"name": c["animal"], "value": c["sell_value"], "perfect": bool(c.get("is_rare"))})
         lines.append(f"{emoji('target')} **You caught {animal_emoji(c['animal'])} {c['animal']}!** "
                      f"◈ {c['sell_value']:,} · +{c['xp_earned']:,} XP · ×{EXPLORE_REWARD_MULT} Explore bonus"
-                     + (" · ✨ Perfect Catch" if c.get("is_rare") else ""))
-    if res.get("level_ups"):
+                     + (" · ✨ Perfect Catch" if c.get("is_rare") else "")
+                     + (" · 🆕 **NEW SPECIES!**" if c.get("is_new_species") else ""))
+    if res and res.get("region_decor"):
+        lines.append(f"🏆 **Region complete!** You earned the {res['region_decor']} decoration for your profile.")
+    if res and res.get("level_ups"):
         lines.append(f"{USER_EMOJIS['level_up']} **Level up!** Now level **{res['level']}**.")
-    if res.get("crate_drops"):
+    if res and res.get("crate_drops"):
         lines.append("📦 **Drop:** " + ", ".join(f"{n}× {c}" for c, n in res["crate_drops"].items()))
     lines += _ex_advance(user_id, st)
     if _ex_over(st):
         lines.append("🧭 **The light is fading — your expedition is over.**")
     st["msg"] = "\n".join(lines)
     mark_user_dirty(user_id)
-    return {"kind": "caught", "result": res}
+    return {"kind": "caught" if hits else "miss", "result": res}
 
 
 def _ex_snapshot(user_id: str) -> dict:
@@ -8802,22 +9236,22 @@ def _ex_snapshot(user_id: str) -> dict:
     cx, cy = _ex_cam(st)
     n = EXPLORE_VIEW * 2 + 1
     seen = _ex_visible(st)
-    rng = _ex_reach_tiles(user_id)
-    tgt = _ex_target(st, rng)
+    tool = _ex_tool(user_id)
+    tgt = _ex_target(st, tool)
     animals, clues = [], []
     for a in st["animals"]:
         stats = animal_combat_stats(a["name"], st["biome"])
         if a in seen:
             animals.append({"tx": a["x"] - cx, "ty": a["y"] - cy, "name": a["name"], "beh": stats["behavior"],
-                            "mood": a.get("mood", "calm"), "hp": stats["hp"],
-                            "inrange": _ex_in_range(st, a, rng), "target": a is tgt})
+                            "mood": a.get("mood", "calm"), "hp": stats["hp"], "gold": bool(a.get("gold")),
+                            "inrange": _ex_in_reach(st, a, tool), "target": a is tgt})
         elif a["clue"] > 0:
-            clues.append({"dx": a["x"] - px, "dy": a["y"] - py,
+            clues.append({"dx": a["x"] - px, "dy": a["y"] - py, "gold": bool(a.get("gold")),
                           "d": max(2, 2 * round(_ex_dist(a["x"], a["y"], px, py) / 2))})
     reach = _ex_reach(st)
     def _shown(x, y):
         k = _ex_kind(st, x, y)
-        return "grass" if k == "chest" and (x, y) not in reach else k          # a walled-in chest is not offered
+        return "grass" if k in _EX_PICKUPS and (x, y) not in reach else k      # a walled-in pickup is not offered
     cells = [[_shown(cx + tx, cy + ty) for tx in range(n)] for ty in range(n)]
     chests = {(tx, ty): _ex_chest_tier(st["seed"], cx + tx, cy + ty)
               for ty in range(n) for tx in range(n) if cells[ty][tx] == "chest"}
@@ -8826,8 +9260,12 @@ def _ex_snapshot(user_id: str) -> dict:
     shown = {(a["tx"], a["ty"]) for a in animals}
     moves = [(px + dx - cx, py + dy - cy) for dx, dy in _EX_DIRS.values()
              if _ex_walkable(st, px + dx, py + dy) and (px + dx - cx, py + dy - cy) not in shown]
+    hits = [(x - cx, y - cy) for x, y in _ex_hit_tiles(st, tool, tgt) if 0 <= x - cx < n and 0 <= y - cy < n]
+    fx = st.get("fox")
+    fox = (fx["x"] - cx, fx["y"] - cy) if fx and 0 <= fx["x"] - cx < n and 0 <= fx["y"] - cy < n else None
     return {"seed": st["seed"], "biome": st["biome"], "cx": cx, "cy": cy, "hx": px - cx, "hy": py - cy,
-            "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges, "moves": moves}
+            "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges, "moves": moves,
+            "hits": hits, "fox": fox}
 
 
 # biome look: ground (two greens/sands…), tree canopy, trunk, stone; pine=True draws conifers.
@@ -8936,6 +9374,152 @@ def _ex_player(im) -> None:
     d.polygon([(S * .32, S * .26), (S * .68, S * .26), (S * .5, S * .06)], fill=(120, 80, 44, 255))
 
 
+EXPLORE_LANDMARK_SHARE = 0.35      # share of a biome's trees/boulders drawn as its landmark (looks only; same rules)
+_EX_LANDMARKS = ("small_desert", "tundra", "sunken_coast", "swamp", "volcanic_highlands", "cursed_ruins",
+                 "abyssal_depths", "celestial_peaks", "jungle", "rainbow", "woods")
+
+
+def _ex_shadow(d, S: float, y0: float = .78, y1: float = .94) -> None:
+    d.ellipse([S * .2, S * y0, S * .8, S * y1], fill=(0, 0, 0, 70))
+
+
+def _ex_landmark(im, biome: str, r: random.Random) -> None:
+    """One distinctive silhouette per region, drawn when there is no uploaded art (EXPLORE_ART 'landmark_<biome>').
+    They are decoration only — they block like the tree or boulder they stand in for."""
+    S = im.width
+    d = _PILDraw.Draw(im, "RGBA")
+    _ex_shadow(d, S)
+    if biome == "small_desert":
+        if r.random() < .6:                                   # a cactus
+            g, g2 = (64, 140, 74, 255), (44, 108, 56, 255)
+            d.rounded_rectangle([S * .42, S * .22, S * .58, S * .84], radius=S * .08, fill=g, outline=g2, width=3)
+            d.rounded_rectangle([S * .24, S * .40, S * .36, S * .60], radius=S * .05, fill=g, outline=g2, width=3)
+            d.rectangle([S * .24, S * .54, S * .46, S * .62], fill=g)
+            d.rounded_rectangle([S * .64, S * .30, S * .76, S * .52], radius=S * .05, fill=g, outline=g2, width=3)
+            d.rectangle([S * .54, S * .46, S * .76, S * .54], fill=g)
+        else:                                                 # a sandstone arch
+            c = (196, 140, 92, 255)
+            d.rectangle([S * .18, S * .36, S * .36, S * .84], fill=c, outline=(130, 88, 56, 255), width=3)
+            d.rectangle([S * .64, S * .36, S * .82, S * .84], fill=c, outline=(130, 88, 56, 255), width=3)
+            d.pieslice([S * .18, S * .14, S * .82, S * .74], 180, 360, fill=c, outline=(130, 88, 56, 255), width=3)
+            d.pieslice([S * .34, S * .30, S * .66, S * .74], 180, 360, fill=(0, 0, 0, 0))
+    elif biome == "tundra":                                   # a frozen pond
+        d.ellipse([S * .10, S * .46, S * .90, S * .88], fill=(176, 214, 238, 255), outline=(236, 246, 255, 255), width=4)
+        d.ellipse([S * .22, S * .56, S * .56, S * .72], fill=(214, 236, 250, 200))
+        d.line([(S * .5, S * .52), (S * .62, S * .70), (S * .74, S * .62)], fill=(246, 252, 255, 230), width=3)
+    elif biome == "sunken_coast":                             # a broken boat, planks, driftwood
+        d.polygon([(S * .14, S * .58), (S * .86, S * .52), (S * .76, S * .80), (S * .26, S * .82)], fill=(120, 82, 50, 255),
+                  outline=(70, 46, 28, 255))
+        for i in range(3):
+            d.line([(S * (.28 + .16 * i), S * .56), (S * (.30 + .16 * i), S * .80)], fill=(84, 56, 34, 255), width=3)
+        d.rectangle([S * .62, S * .22, S * .68, S * .60], fill=(150, 112, 76, 255))
+    elif biome == "swamp":                                    # a twisted tree dripping moss
+        d.polygon([(S * .44, S * .84), (S * .40, S * .52), (S * .30, S * .34), (S * .42, S * .30), (S * .50, S * .50),
+                   (S * .58, S * .30), (S * .70, S * .36), (S * .60, S * .54), (S * .58, S * .84)], fill=(62, 48, 36, 255))
+        d.ellipse([S * .18, S * .12, S * .82, S * .46], fill=(58, 82, 52, 235))
+        for i in range(5):
+            x = S * (.26 + .12 * i)
+            d.line([(x, S * .40), (x - 3, S * (.56 + .05 * (i % 2)))], fill=(104, 134, 84, 255), width=3)
+    elif biome == "volcanic_highlands":                       # cracked volcanic rock with a glowing seam
+        d.polygon([(S * .18, S * .80), (S * .26, S * .42), (S * .44, S * .24), (S * .68, S * .32), (S * .84, S * .56),
+                   (S * .80, S * .80)], fill=(48, 38, 38, 255), outline=(20, 14, 14, 255))
+        d.line([(S * .36, S * .36), (S * .46, S * .54), (S * .40, S * .70)], fill=(255, 120, 40, 255), width=4)
+        d.line([(S * .62, S * .40), (S * .58, S * .60)], fill=(255, 170, 60, 255), width=3)
+    elif biome == "cursed_ruins":                             # a broken column
+        c = (176, 176, 168, 255)
+        d.rectangle([S * .34, S * .34, S * .66, S * .84], fill=c, outline=(104, 104, 98, 255), width=3)
+        d.polygon([(S * .34, S * .34), (S * .42, S * .24), (S * .50, S * .34), (S * .58, S * .22), (S * .66, S * .34)], fill=c,
+                  outline=(104, 104, 98, 255))
+        for x in (.42, .50, .58):
+            d.line([(S * x, S * .38), (S * x, S * .82)], fill=(128, 128, 122, 255), width=2)
+        d.rectangle([S * .28, S * .80, S * .72, S * .88], fill=(150, 150, 142, 255))
+    elif biome == "abyssal_depths":                           # glowing coral
+        d.ellipse([S * .14, S * .28, S * .86, S * .90], fill=(40, 220, 210, 40))
+        for x, h, col in ((.34, .5, (230, 90, 170)), (.5, .66, (60, 230, 220)), (.66, .46, (150, 110, 240))):
+            d.line([(S * x, S * .84), (S * x, S * (.84 - h * .6))], fill=col + (255,), width=6)
+            d.line([(S * x, S * (.84 - h * .35)), (S * (x - .09), S * (.84 - h * .5))], fill=col + (255,), width=5)
+            d.line([(S * x, S * (.84 - h * .45)), (S * (x + .09), S * (.84 - h * .6))], fill=col + (255,), width=5)
+            d.ellipse([S * (x - .04), S * (.84 - h * .6 - .04), S * (x + .04), S * (.84 - h * .6 + .04)], fill=(255, 255, 255, 230))
+    elif biome == "celestial_peaks":                          # a floating crystal
+        d.ellipse([S * .24, S * .04, S * .76, S * .62], fill=(170, 190, 255, 55))
+        d.polygon([(S * .5, S * .08), (S * .66, S * .34), (S * .5, S * .60), (S * .34, S * .34)], fill=(190, 206, 255, 255),
+                  outline=(250, 252, 255, 255))
+        d.polygon([(S * .5, S * .08), (S * .66, S * .34), (S * .5, S * .34)], fill=(230, 238, 255, 255))
+        d.line([(S * .5, S * .34), (S * .5, S * .60)], fill=(130, 150, 230, 255), width=2)
+    elif biome == "jungle":                                   # a giant fern
+        for ang in (-70, -35, 0, 35, 70):
+            a = _math.radians(ang - 90)
+            d.line([(S * .5, S * .84), (S * (.5 + .38 * _math.cos(a)), S * (.84 + .74 * _math.sin(a)))],
+                   fill=(30, 130, 56, 255), width=7)
+        d.ellipse([S * .44, S * .74, S * .56, S * .86], fill=(90, 62, 40, 255))
+    elif biome == "rainbow":                                  # a prism crystal
+        cols = [(255, 110, 110), (255, 200, 90), (130, 230, 130), (110, 190, 255), (190, 130, 255)]
+        for i, col in enumerate(cols):
+            x = S * (.24 + .13 * i)
+            d.polygon([(x, S * .84), (x + S * .05, S * (.30 + .06 * (i % 3))), (x + S * .12, S * .84)], fill=col + (235,),
+                      outline=(255, 255, 255, 230))
+    elif biome == "woods":                                    # a toadstool ring
+        for i in range(5):
+            x = S * (.2 + .15 * i)
+            y = S * (.7 - .08 * (1 if i in (1, 3) else 0))
+            d.rectangle([x - 4, y - 6, x + 4, y + 8], fill=(238, 232, 214, 255))
+            d.pieslice([x - 14, y - 22, x + 14, y + 6], 180, 360, fill=(196, 56, 56, 255))
+            d.ellipse([x - 4, y - 14, x, y - 10], fill=(255, 255, 255, 255))
+    else:
+        _ex_stone(im, _EX_PAL.get(biome, _EX_PAL["village"]), r)
+
+
+def _ex_pickup_art(im, kind: str, r: random.Random) -> None:
+    """Small procedural icons for the walk-over discoveries (art keys 'disc_<kind>' override them)."""
+    S = im.width
+    d = _PILDraw.Draw(im, "RGBA")
+    if kind == "bag":
+        d.ellipse([S * .16, S * .70, S * .84, S * .90], fill=(0, 0, 0, 70))
+        d.polygon([(S * .30, S * .80), (S * .24, S * .52), (S * .40, S * .40), (S * .60, S * .40), (S * .76, S * .52),
+                   (S * .70, S * .80)], fill=(150, 104, 62, 255), outline=(80, 52, 30, 255))
+        d.rectangle([S * .40, S * .34, S * .60, S * .42], fill=(190, 140, 90, 255), outline=(80, 52, 30, 255))
+        d.line([(S * .34, S * .50), (S * .66, S * .50)], fill=(230, 200, 130, 255), width=3)
+    elif kind == "berries":
+        d.ellipse([S * .14, S * .46, S * .86, S * .86], fill=(52, 118, 62, 255), outline=(30, 80, 40, 255), width=3)
+        for _ in range(7):
+            x, y = S * r.uniform(.24, .74), S * r.uniform(.50, .76)
+            d.ellipse([x - 7, y - 7, x + 7, y + 7], fill=(206, 40, 84, 255), outline=(120, 16, 48, 255))
+            d.ellipse([x - 3, y - 4, x - 1, y - 2], fill=(255, 220, 230, 255))
+    elif kind == "camp":
+        d.ellipse([S * .12, S * .72, S * .88, S * .92], fill=(0, 0, 0, 70))
+        d.polygon([(S * .12, S * .80), (S * .42, S * .24), (S * .72, S * .80)], fill=(176, 142, 96, 255), outline=(96, 70, 40, 255))
+        d.polygon([(S * .42, S * .80), (S * .42, S * .46), (S * .56, S * .80)], fill=(60, 44, 30, 255))
+        d.polygon([(S * .72, S * .82), (S * .78, S * .66), (S * .84, S * .82)], fill=(255, 150, 40, 255))
+        d.polygon([(S * .76, S * .82), (S * .78, S * .72), (S * .82, S * .82)], fill=(255, 220, 90, 255))
+    elif kind == "monument":
+        d.ellipse([S * .24, S * .76, S * .76, S * .92], fill=(0, 0, 0, 70))
+        d.polygon([(S * .38, S * .84), (S * .42, S * .24), (S * .50, S * .12), (S * .58, S * .24), (S * .62, S * .84)],
+                  fill=(128, 134, 150, 255), outline=(66, 70, 86, 255))
+        d.line([(S * .5, S * .30), (S * .5, S * .52)], fill=(120, 230, 255, 255), width=4)
+        d.line([(S * .44, S * .40), (S * .56, S * .40)], fill=(120, 230, 255, 255), width=4)
+        d.ellipse([S * .40, S * .22, S * .60, S * .62], fill=(120, 230, 255, 40))
+    elif kind == "clearing":
+        d.ellipse([S * .10, S * .46, S * .90, S * .90], fill=(255, 244, 170, 70))
+        for _ in range(9):
+            x, y = S * r.uniform(.2, .8), S * r.uniform(.5, .84)
+            col = r.choice([(255, 120, 150), (255, 230, 90), (190, 150, 255), (255, 255, 255)])
+            d.ellipse([x - 5, y - 5, x + 5, y + 5], fill=col + (255,))
+            d.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(255, 200, 60, 255))
+
+
+def _ex_fox(im) -> None:
+    S = im.width
+    d = _PILDraw.Draw(im, "RGBA")
+    d.ellipse([S * .22, S * .74, S * .78, S * .92], fill=(0, 0, 0, 70))
+    d.polygon([(S * .70, S * .70), (S * .92, S * .50), (S * .86, S * .78)], fill=(226, 112, 36, 255))
+    d.polygon([(S * .86, S * .56), (S * .92, S * .50), (S * .88, S * .66)], fill=(255, 255, 255, 255))
+    d.ellipse([S * .22, S * .46, S * .74, S * .80], fill=(232, 120, 40, 255), outline=(150, 70, 20, 255), width=2)
+    d.ellipse([S * .14, S * .32, S * .46, S * .60], fill=(236, 128, 48, 255), outline=(150, 70, 20, 255), width=2)
+    d.polygon([(S * .16, S * .36), (S * .18, S * .16), (S * .28, S * .32)], fill=(236, 128, 48, 255))
+    d.polygon([(S * .32, S * .32), (S * .40, S * .16), (S * .44, S * .36)], fill=(236, 128, 48, 255))
+    d.ellipse([S * .20, S * .42, S * .27, S * .48], fill=(30, 20, 14, 255))
+
+
 def _ex_sprite_fallback(name: str, S: int):
     h = _zlib.crc32(name.encode())
     col = (90 + h % 120, 90 + (h >> 8) % 120, 90 + (h >> 16) % 120, 255)
@@ -9016,23 +9600,35 @@ def _ex_render(snap: dict) -> bytes:
             if kind == "grass":
                 continue
             wx, wy = snap["cx"] + tx, snap["cy"] + ty
-            art_key = {"tree": "tree", "stone": "rock", "bush": "bush"}.get(kind) \
-                or (f"chest{snap['chests'].get((tx, ty), 0)}" if kind == "chest" else "")
+            lm = (kind in ("tree", "stone") and snap["biome"] in _EX_LANDMARKS
+                  and _ex_rng(snap["seed"], wx, wy, "lm").random() < EXPLORE_LANDMARK_SHARE)
+            art_key = (f"landmark_{snap['biome']}" if lm else
+                       {"tree": "tree", "stone": "rock", "bush": "bush"}.get(kind)
+                       or (f"chest{snap['chests'].get((tx, ty), 0)}" if kind == "chest" else "")
+                       or (f"disc_{kind}" if kind in _EX_PICKUPS else ""))
             art = _ex_art.get(art_key)
             if art is not None:
-                sz = {"bush": 0.92, "chest": 0.78}.get(kind, 1.0)
+                sz = {"bush": 0.92, "chest": 0.78}.get(kind, 0.8 if kind in _EX_PICKUPS else 1.0)
                 _ex_put(canvas, _ex_fit(art, int(T * sz)), tx * T + int(T * (1 - sz) / 2), ty * T + int(T * (1 - sz) / 2))
                 continue
             t2 = _PILImage.new("RGBA", (T * SS, T * SS), (0, 0, 0, 0))
             r = _ex_rng(snap["seed"], wx, wy, kind)
-            if kind == "stone":
+            if lm:
+                _ex_landmark(t2, snap["biome"], r)
+            elif kind == "stone":
                 _ex_stone(t2, pal, r)
             elif kind == "chest":
                 _ex_chest(t2)
+            elif kind in _EX_PICKUPS:
+                _ex_pickup_art(t2, kind, r)
             else:
                 _ex_tree(t2, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
             _ex_put(canvas, t2.resize((T, T), _PILImage.LANCZOS), tx * T, ty * T)
     d = _PILDraw.Draw(canvas, "RGBA")
+    # 2a — the tiles your next shot will cover, in orange (the shape of your weapon, aimed at the target)
+    for hx_, hy_ in snap["hits"]:
+        d.rectangle([hx_ * T, hy_ * T, hx_ * T + T - 1, hy_ * T + T - 1], fill=(255, 120, 40, 70),
+                    outline=(255, 150, 60, 200), width=2)
     # 2b — a small yellow box on every tile you can step onto
     for mx, my in snap["moves"]:
         c = T * .34
@@ -9060,6 +9656,15 @@ def _ex_render(snap: dict) -> bytes:
             d.ellipse([cx + 6, cy + 6, cx + T - 6, cy + T - 6], outline=(255, 214, 0, 200), width=2)
         else:
             d.ellipse([cx + 6, cy + 6, cx + T - 6, cy + T - 6], outline=(255, 255, 255, 110), width=2)
+    # 3b — the curious fox
+    if snap.get("fox"):
+        fx_, fy_ = snap["fox"]
+        d.ellipse([fx_ * T + T * .22, fy_ * T + T * .78, fx_ * T + T * .78, fy_ * T + T * .96], fill=(0, 0, 0, 55))
+        spr = _ex_sprites.get("Red Fox")
+        if spr is None:
+            spr = _PILImage.new("RGBA", (T * SS, T * SS), (0, 0, 0, 0))
+            _ex_fox(spr)
+        _ex_pasted(canvas, spr, fx_, fy_, T, .6)
     # 4 — the hunter (a "huntress" key will slot in here once that art exists)
     hx, hy = snap["hx"], snap["hy"]
     d.ellipse([hx * T + T * .22, hy * T + T * .82, hx * T + T * .78, hy * T + T * .99], fill=(0, 0, 0, 55))
@@ -9098,7 +9703,7 @@ def _ex_render(snap: dict) -> bytes:
         bx = max(44, min(W - 44, hcx + _math.cos(ang) * R))
         by = max(26, min(H - 26, hcy + _math.sin(ang) * R))
         d.rounded_rectangle([bx - 38, by - 20, bx + 38, by + 20], radius=18, fill=(16, 16, 22, 215),
-                            outline=(255, 255, 255, 235), width=2)
+                            outline=(255, 214, 0, 255) if c.get("gold") else (255, 255, 255, 235), width=3 if c.get("gold") else 2)
         ux, uy = _math.cos(ang), _math.sin(ang)
         cx0, cy0 = bx - 15, by
         tail = (cx0 - ux * 13, cy0 - uy * 13)
@@ -9231,7 +9836,7 @@ async def explore_info_show(interaction, user_id: str) -> None:
     png = None
     if _PIL_OK:
         try:
-            png = await asyncio.to_thread(_ex_range_png, tool_range(tool))
+            png = await asyncio.to_thread(_ex_range_png, tool)
         except Exception:
             logger.exception("explore range picture failed")
     comps = build_explore_info_components(user_id, image=png is not None)
@@ -9245,49 +9850,184 @@ async def explore_info_show(interaction, user_id: str) -> None:
         await send_v2_followup(interaction, build_explore_info_components(user_id, image=False), ephemeral=True)
 
 
-def _ex_summary(st: dict) -> str:
-    """The wrap-up shown once an expedition is over (the panel never keeps a running inventory)."""
+def _ex_summary(st: dict, header: bool = True) -> str:
+    """What you caught this expedition (the panel never keeps a running inventory): the wrap-up once it is over, or the
+    recap shown before you walk away from an unfinished one."""
     bag = st.get("bag", [])
+    head = "🧭 **Expedition over** — " if header else ""
     if not bag:
-        return "🧭 **Expedition over** — you came back empty-handed."
+        return head + ("you came back empty-handed." if header else "nothing caught yet.")
     counts: dict = {}
     for b in bag:
         counts[b["name"]] = counts.get(b["name"], 0) + 1
     names = ", ".join(f"{animal_emoji(n)} {n}" + (f" ×{c}" if c > 1 else "") for n, c in counts.items())
-    return f"🧭 **Expedition over** — you caught {names} · ◈ {sum(b['value'] for b in bag):,}"
+    return head + ("you caught " if header else "so far: ") + f"{names} · ◈ {sum(b['value'] for b in bag):,}"
+
+
+EXPLORE_QUICK_AMMO = 50      # the "Buy Ammo" button buys at most this many of the cheapest compatible ammo
+
+
+def next_goal_line(user_id: str) -> str:
+    """ONE thing to look forward to, shown next to the hunting controls (never a dashboard): a quest to claim, then an
+    upgrade you are close to, then your region's collection, then the next upgrade whatever the progress."""
+    d = data[user_id]
+    n = sum(1 for key in ("quests", "weekly_quests") for q in d.get(key, []) if q.get("completed") and not q.get("claimed"))
+    if n:
+        return f"{emoji('check_mark')} **Quest complete** — claim your reward" + (f" ({n} ready)" if n > 1 else "")
+    owned = set(d.get("owned_tools", []))
+    cur_tier = TOOLS.get(d.get("tool", "Bare Hands"), {}).get("tier", 1)
+    ahead = sorted((t for t, v in TOOLS.items() if t not in owned and v["tier"] > cur_tier and v["tier"] < 100),
+                   key=lambda t: TOOLS[t]["tier"])
+    up = ""
+    if ahead:
+        t = ahead[0]
+        v = TOOLS[t]
+        have = d.get("gems", 0) if v["currency"] == "gems" else d.get("money", 0)
+        pct = int(min(99, have * 100 / max(1, v["price"])))
+        up = f"⬆️ Next upgrade: **{t}** — {pct}% saved"
+        if pct >= 50:
+            return up
+    biome = d.get("biome", "village")
+    have_n, total_n = _guide_region_progress(user_id, biome)
+    if total_n and have_n < total_n:
+        return f"📖 **{BIOME_NAMES.get(biome, biome)}** collection: {have_n}/{total_n} species found"
+    return up
+
+
+def _ex_owned_ammo(user_id: str) -> list[str]:
+    """Compatible ammo you hold, cheapest first."""
+    tool = _ex_tool(user_id)
+    inv = data[user_id].get("ammo_inv", {})
+    return sorted((n for n in get_ammo_for_tool(tool) if inv.get(n, 0) > 0), key=lambda n: AMMO[n].get("price", 0))
+
+
+def quick_equip_ammo(user_id: str) -> tuple[bool, str]:
+    """One tap: load the CHEAPEST compatible ammo you own (so expensive ammo is never burned by accident). Mutates."""
+    tool = _ex_tool(user_id)
+    opts = _ex_owned_ammo(user_id)
+    if not opts:
+        return False, f"{emoji('warning')} You don't own any ammo for the **{tool}** — tap **Buy Ammo**."
+    data[user_id]["equipped_ammo"] = opts[0]
+    mark_user_dirty(user_id)
+    return True, f"{AMMO[opts[0]].get('emoji', '')} Loaded **{opts[0]}** ({get_ammo_count(user_id, opts[0]):,} left)."
+
+
+def quick_buy_ammo(user_id: str) -> tuple[bool, str]:
+    """One tap: buy up to EXPLORE_QUICK_AMMO of the cheapest ◈ ammo the tool takes, and load it if nothing is loaded.
+    Call inside a user_transaction."""
+    d = data[user_id]
+    tool = _ex_tool(user_id)
+    names = [n for n in get_ammo_for_tool(tool) if AMMO[n].get("currency", "money") == "money"]
+    if not names:
+        return False, f"{emoji('cross_mark')} **{tool}** takes special ammo — see </shop:{COMMAND_ID.get('shop', '0')}> → Ammo."
+    name = min(names, key=lambda n: AMMO[n]["price"])
+    a = AMMO[name]
+    room = AMMO_MAX_STACK - d.get("ammo_inv", {}).get(name, 0)
+    unit = max(1, ev_price(a["price"], currency="money"))
+    qty = min(EXPLORE_QUICK_AMMO, room, d.get("money", 0) // unit)
+    if room <= 0:
+        return False, f"{emoji('cross_mark')} You're already at the stack limit for **{name}**."
+    if qty < 1:
+        return False, f"{emoji('cross_mark')} You need ◈ {unit:,} for one **{name}**."
+    total = ev_price(a["price"] * qty, currency="money")
+    if not spend_money(user_id, total, "shop ammo", f"{qty:,}× {name}"):
+        return False, f"{emoji('cross_mark')} Need ◈ {total:,} to buy {qty:,}× {name}."
+    inv = d.setdefault("ammo_inv", {})
+    inv[name] = inv.get(name, 0) + qty
+    eq = d.get("equipped_ammo")
+    if not eq or not ammo_compatible_with_tool(eq, tool) or inv.get(eq, 0) <= 0:
+        d["equipped_ammo"] = name
+    mark_user_dirty(user_id)
+    return True, f"{a.get('emoji', '')} Bought **{qty:,}× {name}** for ◈ {total:,} and loaded it."
+
+
+def _ex_heal_item(user_id: str) -> str | None:
+    """The smallest healing item that covers the missing HP, else the biggest owned."""
+    inv = data[user_id].get("healing_inv", {})
+    owned = [n for n in HEALING_ITEMS if inv.get(n, 0) > 0]
+    if not owned:
+        return None
+    hp, mx = player_hp(user_id)
+    missing = mx - hp
+    fits = sorted((n for n in owned if HEALING_ITEMS[n]["heal"] >= missing), key=lambda n: HEALING_ITEMS[n]["heal"])
+    return fits[0] if fits else max(owned, key=lambda n: HEALING_ITEMS[n]["heal"])
+
+
+def explore_heal(user_id: str) -> dict:
+    """Patch yourself up on the map (no time passes). Mutates."""
+    st = _ex_state(user_id)
+    st["confirm_new"] = False
+    refresh_health(user_id)
+    hp, mx = player_hp(user_id)
+    item = _ex_heal_item(user_id)
+    if item is None:
+        st["msg"] = f"{emoji('adhesive_bandage')} You have nothing to heal with."
+        return {"kind": "none"}
+    if hp >= mx:
+        st["msg"] = f"❤️ You're already at full health — save your **{item}**."
+        return {"kind": "none"}
+    inv = data[user_id]["healing_inv"]
+    inv[item] -= 1
+    if inv[item] <= 0:
+        del inv[item]
+    h = data[user_id]["health"]
+    h["hp"] = min(effective_max_hp(user_id), h["hp"] + HEALING_ITEMS[item]["heal"])
+    st["msg"] = f"{HEALING_ITEMS[item]['emoji']} You use a **{item}** (+{h['hp'] - hp} HP)."
+    mark_user_dirty(user_id)
+    return {"kind": "healed"}
+
+
+def _ex_blocked_dirs(st: dict) -> set:
+    """Directions that lead nowhere right now (the border, a tree, a boulder, an animal in plain sight)."""
+    out = set()
+    seen = {(a["x"], a["y"]) for a in _ex_visible(st)}
+    for key, (dx, dy) in _EX_DIRS.items():
+        nx, ny = st["x"] + dx, st["y"] + dy
+        if _ex_kind(st, nx, ny) in ("void", "tree", "stone") or (nx, ny) in seen:
+            out.add(key)
+    return out
 
 
 def build_explore_components(user_id: str, image: bool = True) -> list:
     st = _ex_state(user_id)
+    d = data[user_id]
     px, py = st["x"], st["y"]
+    refresh_health(user_id)
     hp, mx = player_hp(user_id)
     seen = _ex_visible(st)
     over = _ex_over(st)
-    tool = data[user_id].get("tool", "Bare Hands")
-    rng = tool_range(tool)
-    tgt = _ex_target(st, rng)
-    in_reach = _ex_targets(st, rng)
+    tool = _ex_tool(user_id)
+    tgt = _ex_target(st, tool)
+    in_reach = _ex_targets(st, tool)
     nearby = []
     for a in seen:
-        d = _ex_dist(a["x"], a["y"], px, py)
+        dd = _ex_dist(a["x"], a["y"], px, py)
         beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
         arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
         mood = {"flee": "bolting", "stalk": "stalking you"}.get(a.get("mood"), beh if beh != "passive" else "calm")
-        tag = "🎯 **target**" if a is tgt else ("in range" if a in in_reach else "out of range")
-        nearby.append(f"{arrow}  {animal_emoji(a['name'])} **{a['name']}** · {d} tile{'s' if d != 1 else ''} away · {mood} · {tag}")
+        if a.get("rest", 0) > 0 and a.get("mood") != "stalk":
+            mood = "resting"
+        tag = "🎯 **target**" if a is tgt else ("in reach" if a in in_reach else "out of reach")
+        gold = " ✨" if a.get("gold") else ""
+        nearby.append(f"{arrow}  {animal_emoji(a['name'])} **{a['name']}**{gold} · {dd} tile{'s' if dd != 1 else ''} away · {mood} · {tag}")
     for a in st["animals"]:
         if a["clue"] > 0 and a not in seen:
-            d = _ex_dist(a["x"], a["y"], px, py)
+            dd = _ex_dist(a["x"], a["y"], px, py)
             beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
             arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
-            label = "Rustling bush" if d <= EXPLORE_VIEW else _EX_CLUE_LABEL.get(beh, "Nearby movement")
-            nearby.append(f"{arrow}  **{label}** · roughly {max(2, 2 * round(d / 2))} tiles away")
+            label = "Rustling bush" if dd <= EXPLORE_VIEW else _EX_CLUE_LABEL.get(beh, "Nearby movement")
+            if a.get("gold"):
+                label = "✨ Golden footprints"
+            nearby.append(f"{arrow}  **{label}** · roughly {max(2, 2 * round(dd / 2))} tiles away")
     msg = "\n".join(ln for ln in st.get("msg", "").split("\n") if ln.strip())
     x0, y0, x1, y1 = _ex_bounds(st)
     steps_left = max(0, EXPLORE_MAX_STEPS - st.get("steps", 0))
     role = tool_role_info(tool)
+    ammo_why = _ex_ammo_problem(user_id)
+    reload_ts = int(d.get("hunt_cd", 0)) if d.get("hunt_cd", 0) > time.time() else 0
+    shape = SHAPE_NAMES[tool_shape(tool)[0]]
     foot = (f"{emoji('hp') or '❤️'} **{hp}/{mx}**  ·  🧭 **{steps_left}** steps left  ·  🗺 {x1 - x0 + 1}×{y1 - y0 + 1}"
-            f"  ·  🎯 range **{rng}**"
+            f"  ·  🎯 {shape}, reach **{tool_range(tool)}**"
             + (f"  ·  {role['emoji']} {tool}" if FEATURE_GEAR_ROLES else ""))
     gap = {"type": 14, "divider": False, "spacing": 2}
     blocks: list = [{"type": 10, "content": f"### {BIOME_EMOJIS.get(st['biome'], '')} Hunt — {BIOME_NAMES.get(st['biome'], st['biome'])}"}]
@@ -9301,6 +10041,16 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
         blocks += [gap, {"type": 10, "content": "\n".join(nearby)}]
     elif not over:
         blocks += [{"type": 10, "content": "-# Nothing nearby — keep wandering."}]
+    status = []
+    if ammo_why:
+        status.append(ammo_why)
+    elif reload_ts:
+        status.append(f"{emoji('cooldown')} Reloading — ready <t:{reload_ts}:R>.")
+    goal = next_goal_line(user_id)
+    if goal:
+        status.append(f"-# {goal}")
+    if status:
+        blocks += [{"type": 10, "content": "\n".join(status)}]
     blocks += [{"type": 14, "divider": True, "spacing": 2}, {"type": 10, "content": f"-# {foot}"}]
 
     def _b(label, sub, style=2, emj=None, disabled=False):
@@ -9308,24 +10058,40 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
         if emj:
             b["emoji"] = emoji_partial(emj)
         return b
+    blk = _ex_blocked_dirs(st)
+    move_row = [_b("◀", "w", disabled=over or "w" in blk), _b("▲", "n", disabled=over or "n" in blk),
+                _b("▼", "s", disabled=over or "s" in blk), _b("▶", "e", disabled=over or "e" in blk)]
+    if hp < mx * 0.6 and _ex_heal_item(user_id) and not over:
+        move_row.append(_b("Heal", "heal", 3, "adhesive_bandage"))
+    confirm = bool(st.get("confirm_new")) and not over
+    last_row = [_b("Really start new?" if confirm else "New Expedition", "new", 4 if confirm else (3 if over else 2))]
+    if ammo_why:
+        last_row.insert(0, _b("Buy Ammo", "ammo_buy", 3))
+        if _ex_owned_ammo(user_id):
+            last_row.insert(0, _b("Equip Ammo", "ammo_equip", 1))
+    last_row.append(_b("⚡ Quick Hunt", "quick"))
+    last_row.append({"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"})
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         *blocks,
         {"type": 14, "divider": False, "spacing": 1},
-        {"type": 1, "components": [_b("◀", "w", disabled=over), _b("▲", "n", disabled=over),
-                                   _b("▼", "s", disabled=over), _b("▶", "e", disabled=over)]},
-        {"type": 1, "components": [_b("Fire", "fire", 4, "target", disabled=tgt is None or over),
+        {"type": 1, "components": move_row},
+        {"type": 1, "components": [_b("Fire", "fire", 4, "target", disabled=tgt is None or over or bool(ammo_why)),
                                    _b("Target", "target", disabled=len(in_reach) < 2 or over),
                                    _b("Wait", "wait", disabled=over),
                                    _b("ℹ Info", "info")]},
-        {"type": 1, "components": [_b("New Expedition", "new", 3 if over else 2),
-                                   {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"}]},
+        {"type": 1, "components": last_row[:5]},
     ]}]
 
 
-def _ex_range_png(rng: int) -> bytes:
-    """A 7x7 field with the hunter in the middle and every tile within `rng` lit up (the numbers are the distance)."""
+def _ex_range_png(tool: str) -> bytes:
+    """A 7x7 field with the hunter in the middle: yellow = where an animal can stand and be aimed at, orange = what one
+    sample shot covers (aimed at the circled tile). Drawn from the tool's real shape, so it is exactly the hit area."""
     T, N = 64, EXPLORE_VIEW * 2 + 1
     c = EXPLORE_VIEW
+    reach = shape_reach(tool)
+    east = [p for p in reach if p[1] == 0 and p[0] > 0]
+    sample = max(east) if east else max(reach)
+    hits = shape_hits(tool, *sample)
     canvas = _PILImage.new("RGB", (T * N, T * N), (84, 140, 70))
     grass = _ex_art.get("grass")
     for ty in range(N):
@@ -9337,17 +10103,17 @@ def _ex_range_png(rng: int) -> bytes:
     d = _PILDraw.Draw(canvas, "RGBA")
     for ty in range(N):
         for tx in range(N):
-            dist = max(abs(tx - c), abs(ty - c))
+            off = (tx - c, ty - c)
             x0, y0 = tx * T, ty * T
-            if dist <= rng:
-                d.rectangle([x0, y0, x0 + T, y0 + T], fill=(255, 214, 40, 105))
+            if off in reach:
+                d.rectangle([x0, y0, x0 + T, y0 + T], fill=(255, 214, 40, 95))
             else:
                 d.rectangle([x0, y0, x0 + T, y0 + T], fill=(10, 20, 14, 95))
-            d.rectangle([x0, y0, x0 + T, y0 + T], outline=(255, 255, 255, 60), width=1)
-            if 0 < dist <= rng:
-                d.text((x0 + T / 2, y0 + T / 2), str(dist), font=_ex_font(24), fill=(255, 255, 255, 235), anchor="mm",
-                       stroke_width=3, stroke_fill=(70, 50, 0, 255))
-    d.rectangle([(c - rng) * T, (c - rng) * T, (c + rng + 1) * T, (c + rng + 1) * T], outline=(255, 214, 0, 255), width=5)
+            if off in hits:
+                d.rectangle([x0, y0, x0 + T, y0 + T], fill=(255, 110, 30, 120), outline=(255, 150, 60, 255), width=3)
+            d.rectangle([x0, y0, x0 + T, y0 + T], outline=(255, 255, 255, 50), width=1)
+    tx_, ty_ = sample[0] + c, sample[1] + c
+    d.ellipse([tx_ * T + 6, ty_ * T + 6, tx_ * T + T - 6, ty_ * T + T - 6], outline=(255, 214, 0, 255), width=5)
     hero = _ex_art.get("hunter")
     if hero is None:
         hero = _PILImage.new("RGBA", (T * 2, T * 2), (0, 0, 0, 0))
@@ -9359,33 +10125,34 @@ def _ex_range_png(rng: int) -> bytes:
 
 
 def build_explore_info_components(user_id: str, image: bool = True) -> list:
-    tool = data[user_id].get("tool", "Bare Hands")
+    tool = _ex_tool(user_id)
+    shape = tool_shape(tool)[0]
     rng = tool_range(tool)
+    cap = _ex_cap(tool)
     odds = " · ".join(f"{k} tile{'s' if k != 1 else ''} **{round(_ex_hit_chance(tool, k) * 100)}%**" for k in range(1, rng + 1))
-    by_range: dict = {}
+    by_shape: dict = {}
     for n in TOOLS:
-        by_range.setdefault(tool_range(n), []).append(n)
-    others = "\n".join(f"-# **{r} tile{'s' if r != 1 else ''}:** "
-                       + (", ".join(by_range[r]) if len(by_range[r]) <= 9 else ", ".join(by_range[r][:9]) + " …")
-                       for r in sorted(by_range))
-    blocks: list = [{"type": 10, "content": f"### 🎯 Attack range — {tool}"}]
+        by_shape.setdefault(SHAPE_NAMES[tool_shape(n)[0]], []).append(n)
+    others = "\n".join(f"-# **{k}:** " + (", ".join(v) if len(v) <= 8 else ", ".join(v[:8]) + " …") for k, v in by_shape.items())
+    blocks: list = [{"type": 10, "content": f"### 🎯 {tool} — {SHAPE_NAMES[shape]}"}]
     if image:
         blocks.append({"type": 12, "items": [{"media": {"url": "attachment://range.png"},
-                                              "description": f"The 7x7 field: you in the middle, the lit squares are in reach (range {rng})"}]})
+                                              "description": "The 7x7 field: yellow is where you can aim, orange is what one shot hits"}]})
     blocks += [
         {"type": 14, "divider": False, "spacing": 2},
-        {"type": 10, "content": f"**Range {rng} tile{'s' if rng != 1 else ''}.** You can only shoot an animal inside the **lit "
-                                f"squares** — any direction, diagonals too. The numbers are the distance.\n"
-                                f"**Hit chance:** {odds} (never below 35%)."},
+        {"type": 10, "content": f"**{shape_blurb(tool)}**\n"
+                                f"Reach **{rng}** tile{'s' if rng != 1 else ''} · up to **{cap}** animal{'s' if cap != 1 else ''} per shot.\n"
+                                f"**Hit chance** (each animal rolls on its own distance): {odds} (never below 35%)."},
         {"type": 14, "divider": True, "spacing": 2},
         {"type": 10, "content": "**On the map**\n"
-                                "- 🟡 **Yellow circle** — your target. Tap **Target** to switch between animals in reach.\n"
+                                "- 🟡 **Yellow circle** — your target. **Fire** aims your weapon at it by itself; tap **Target** to switch.\n"
+                                "- 🟧 **Orange tiles** — exactly what the next shot will hit.\n"
                                 "- 🟨 **Small yellow boxes** — tiles you can step onto.\n"
-                                "- ⚪ A faint circle means an animal is in view but out of reach: walk closer (it may move too).\n"
-                                "- 🌿 Bushes hide an animal until you're right next to it.\n"
-                                "- 🔫 **Fire** is a real hunt: it spends ammo and uses your hunt cooldown, for one animal."},
+                                "- ⚪ A faint circle: in view but out of reach — walk closer. Animals tire when they run and stop to graze.\n"
+                                "- 🌿 Bushes hide an animal until you're next to it. Walk onto 🎒 bags, 🫐 berries, ⛺ camps, 🗿 monuments, 🌼 clearings and chests.\n"
+                                "- 🔫 Every animal a shot covers costs one round and every shot (hit or miss) uses your cooldown."},
         {"type": 14, "divider": False, "spacing": 1},
-        {"type": 10, "content": f"**Every tool's reach**\n{others}"},
+        {"type": 10, "content": f"**Every tool's shape**\n{others}"},
     ]
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": blocks}]
 
@@ -11499,6 +12266,9 @@ def build_profile_components(user_id: str, display_name: str,
     _ks_line       = keepsake_line(user_id)
     if _ks_line:
         gem_disp  += f"{_ks_line}\n"            # event keepsakes (profile decorations)
+    _ex_line       = explore_keepsake_line(user_id)
+    if _ex_line:
+        gem_disp  += f"{_ex_line}\n"            # region decorations, map souvenirs and stamps
 
     viewing_note = f"-# {emoji('eyes')} You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
     tester_note  = f"-# {emoji('test_tube')} **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
@@ -11810,6 +12580,11 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
     if _sess_line:
         footer_bits.append(_sess_line)
     footer_block = "\n".join(f"-# {b}" for b in footer_bits)
+    _goal = next_goal_line(user_id)
+    if _goal:
+        footer_block += f"\n-# {_goal}"
+    if result.get("region_decor"):
+        extra_block += f"\n-# 🏆 **Region complete!** You earned the {result['region_decor']} decoration for your profile."
 
     content = (
         f"{header}\n\n"
@@ -11837,6 +12612,8 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
          "custom_id": f"nav:world:{user_id}"},
         {"type": 2, "style": 2, "label": "Menu", "emoji": emoji_partial('home'),
          "custom_id": f"nav:menu:{user_id}"},
+        *([{"type": 2, "style": 2, "label": "🧭 Explore Mode", "custom_id": f"explore:on:{user_id}"}]
+          if FEATURE_EXPLORE else []),
     ]}
 
     comps = [{"type": 10, "content": content}]
@@ -13292,7 +14069,7 @@ TUTORIAL_GUIDE: list[tuple[str, str]] = [
     )),
     ("Equip", (
         f"### {emoji('settings')} Equip your gear!\n"
-        "Purchases don't auto-equip — use `/equip` to switch tools and load ammo.\n"
+        "Buying a **tool** equips it right away. Ammo: tap **Equip Ammo** when a hunt says you're out (or use `/equip`).\n"
         "-# Vehicles reduce your hunt cooldown."
     )),
     ("Daily", (
@@ -13770,6 +14547,10 @@ def build_quests_components(user_id: str, page: int = 0) -> list:
             "custom_id": f"quests:page:{page + 1}:{user_id}",
         })
 
+    _ready = sum(1 for q in all_quests if q.get("completed") and not q.get("claimed"))
+    if _ready >= 2:
+        nav_buttons.append({"type": 2, "style": 3, "label": f"Claim All ({_ready})",
+                            "custom_id": f"quests:claimall:{user_id}"})
     components = [{"type": 10, "content": header},
                   {"type": 14, "divider": True, "spacing": 1}]
     for i, sec in enumerate(quest_sections):
@@ -13829,10 +14610,11 @@ def build_weekly_quests_components(user_id: str) -> list:
             components.append(_quest_section(q, "wquests:claim", user_id))
 
     components.append({"type": 14, "divider": True, "spacing": 1})
-    components.append({"type": 1, "components": [
-        {"type": 2, "style": 2, "label": "◀ Daily Quests",
-         "custom_id": f"wquests:godaily:{user_id}"},
-    ]})
+    _wrow = [{"type": 2, "style": 2, "label": "◀ Daily Quests", "custom_id": f"wquests:godaily:{user_id}"}]
+    _wready = sum(1 for q in weekly_all if q.get("completed") and not q.get("claimed"))
+    if _wready >= 2:
+        _wrow.append({"type": 2, "style": 3, "label": f"Claim All ({_wready})", "custom_id": f"wquests:claimall:{user_id}"})
+    components.append({"type": 1, "components": _wrow})
     components.append(ui_footer(user_id))
 
     return [{"type": 17, "accent_color": _accent(user_id),
@@ -13849,7 +14631,7 @@ def _short_num(n: int) -> str:
 
 def _idle_biome_select(user_id: str) -> dict:
     lvl    = data[user_id]["level"]
-    tier   = get_tool_tier(data[user_id].get("tool", "Bare Hands"))
+    tier   = best_tool_tier(user_id)
     camp_b = idle_camp_biome(user_id)
     opts = []
     for biome_key, lvl_req in BIOME_LEVELS:
@@ -13899,6 +14681,7 @@ def build_idle_components(user_id: str) -> list:
             f"-# {emoji('world_map')} Camp biome: {BIOME_EMOJIS[camp_b]} **{BIOME_NAMES[camp_b]}**\n"
             f"-# {emoji('idle_camp')} Haul storage: **{haul_n}/{cap}**\n"
             f"-# Balance: **◈ {d['money']:,}**"
+            + (("\n" + idle_camp_extras(user_id)) if idle_camp_extras(user_id) else "")
         )
         rows = []
         if haul_n:
@@ -13939,6 +14722,7 @@ def build_idle_components(user_id: str) -> list:
         f"-# `📈` Rate: **~{rate:.1f} catches/hr**\n"
         f"-# {emoji('money_bag')} Haul value: **◈ {haul_val:,}** — goes to your inventory on collect\n"
         f"-# Balance: **◈ {d['money']:,}**"
+        + (("\n" + idle_camp_extras(user_id)) if idle_camp_extras(user_id) else "")
     )
     btns = [
         {"type": 2, "style": 3, "label": f"Collect ({haul_n})", "emoji": emoji_partial("inventory"),
@@ -13951,6 +14735,9 @@ def build_idle_components(user_id: str) -> list:
          "emoji": emoji_partial('idle_camp'),
          "custom_id": f"idle:upgrade:{user_id}", "disabled": up_maxed},
     ]
+    if idle.get("visitor"):
+        btns.append({"type": 2, "style": 3, "label": "Welcome Visitor", "emoji": {"name": "🧳"},
+                     "custom_id": f"idle:visitor:{user_id}"})
     return [{"type": 17, "accent_color": accent, "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
@@ -18436,6 +19223,12 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_quests_components(owner_id, page))
             return
  
+        if parts[1] == "claimall":
+            if not await _claim_all_quests(interaction, owner_id, "quests"):
+                await send_ephemeral_v2(interaction, f"{emoji('warning')} Nothing to claim.", 0xE67E22)
+            await smart_update_v2(interaction, build_quests_components(owner_id, _quest_page.get(owner_id, 0)))
+            return
+
         if parts[1] == "claim":
             quest_id = parts[2]
             result   = quest_claim(owner_id, quest_id)
@@ -18482,6 +19275,16 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         await smart_update_v2(interaction, build_quests_components(owner_id, _quest_page.get(owner_id, 0)))
+        return
+
+    if parts[0] == "wquests" and parts[1] == "claimall":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        if not await _claim_all_quests(interaction, owner_id, "weekly_quests"):
+            await send_ephemeral_v2(interaction, f"{emoji('warning')} Nothing to claim.", 0xE67E22)
+        await smart_update_v2(interaction, build_weekly_quests_components(owner_id))
         return
 
     if parts[0] == "wquests" and parts[1] == "claim":
@@ -18861,19 +19664,38 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
             return
         init_user(owner_id)
+        sub = parts[1]
+        if sub == "on" and FEATURE_EXPLORE:                    # from the Quick Hunt panel: back to the map
+            async with user_transaction(owner_id):
+                data[owner_id]["explore_mode"] = True
+                _ex_state(owner_id)
+            await explore_show(interaction, owner_id)
+            return
         if not explore_enabled(owner_id):
             await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Explore Mode is off — turn it on in "
                                     f"</settings:{COMMAND_ID.get('settings', '0')}>.", 0xE67E22)
             return
-        sub = parts[1]
         if sub == "info":
             await explore_info_show(interaction, owner_id)
+            return
+        if sub == "quick":                                     # switch to the instant hunt without a trip to /settings
+            async with user_transaction(owner_id):
+                data[owner_id]["explore_mode"] = False
+            await send_ephemeral_v2(interaction, f"⚡ **Quick Hunt** is on — the Hunt button rolls an instant hunt again. "
+                                    f"Press **Explore Mode** on a hunt result to come back to the map.", 0x3498DB)
+            await smart_update_v2(interaction, build_menu_components(owner_id, interaction.user.display_name))
             return
         async with user_transaction(owner_id):
             if sub == "fire":
                 out = explore_fire(owner_id)
             elif sub == "target":
                 out = explore_target(owner_id)
+            elif sub == "heal":
+                out = explore_heal(owner_id)
+            elif sub in ("ammo_equip", "ammo_buy"):
+                ok_, text_ = quick_equip_ammo(owner_id) if sub == "ammo_equip" else quick_buy_ammo(owner_id)
+                _ex_state(owner_id)["msg"] = text_
+                out = {"kind": "ammo" if ok_ else "none"}
             elif sub == "new":
                 out = explore_new(owner_id)
             elif sub in _EX_DIRS or sub == "wait":
@@ -18904,6 +19726,18 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, comps)
         if result and result.get("ok"):
             await check_everything(interaction, owner_id)
+        return
+
+    # ── QUICK AMMO (the Equip Ammo / Buy Ammo buttons on a "needs ammo" notice) ──
+    if parts[0] == "qammo":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        init_user(owner_id)
+        async with user_transaction(owner_id):
+            ok_, text_ = quick_equip_ammo(owner_id) if parts[1] == "equip" else quick_buy_ammo(owner_id)
+        await send_ephemeral_v2(interaction, text_, 0x2ECC71 if ok_ else 0xE74C3C)
         return
 
     # ── HUNT ──────────────────────────────────
@@ -18959,7 +19793,7 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 else:
                     msg = (f"{emoji('warning')} **{result['tool_name']}** needs {atype} equipped. "
                            f"Buy some in </shop:{COMMAND_ID.get('shop','0')}> → Ammo!")
-                await send_ephemeral_v2(interaction, msg, 0xE67E22)
+                await send_ammo_help(interaction, actor, msg)
                 return
             if result.get("traveling"):
                 await send_ephemeral_v2(interaction,
@@ -19812,6 +20646,13 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         if sub == "camp":
             async with user_transaction(owner_id):
                 idle_tick(owner_id)
+            await smart_update_v2(interaction, build_idle_components(owner_id))
+            return
+
+        if sub == "visitor":
+            async with user_transaction(owner_id):
+                note = idle_visitor_collect(owner_id)
+            await send_ephemeral_v2(interaction, note, 0x2ECC71)
             await smart_update_v2(interaction, build_idle_components(owner_id))
             return
 
@@ -21856,6 +22697,11 @@ class AmmoBuyModal(_V2Modal, title="Buy Ammo"):
             if paid:
                 inv = data[self.user_id].setdefault("ammo_inv", {})
                 inv[self.ammo_name] = owned_now + qty
+                _tl = data[self.user_id].get("tool", "Bare Hands")
+                _eq = data[self.user_id].get("equipped_ammo")
+                if (tool_needs_ammo(_tl) and ammo_compatible_with_tool(self.ammo_name, _tl)
+                        and (not _eq or not ammo_compatible_with_tool(_eq, _tl) or inv.get(_eq, 0) <= 0)):
+                    data[self.user_id]["equipped_ammo"] = self.ammo_name         # nothing usable loaded: load what you bought
         if not paid:
             icon = "◈" if currency == "money" else emoji('gem')
             await send_ephemeral_v2(interaction,
@@ -22408,6 +23254,52 @@ async def balance_cmd(interaction: discord.Interaction, user: discord.User = Non
         target_id, target.display_name, viewer_id=None if target_id == viewer_id else viewer_id))
     await check_everything(interaction, viewer_id)
 
+async def send_ammo_help(interaction, user_id: str, msg: str) -> None:
+    """A 'needs ammo' notice with the fix on it: Equip Ammo (cheapest you own) and Buy Ammo (a stack of the cheapest)."""
+    row = []
+    if _ex_owned_ammo(user_id):
+        row.append({"type": 2, "style": 1, "label": "Equip Ammo", "custom_id": f"qammo:equip:{user_id}"})
+    row.append({"type": 2, "style": 3, "label": "Buy Ammo", "custom_id": f"qammo:buy:{user_id}"})
+    await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [
+        {"type": 10, "content": msg}, {"type": 1, "components": row}]}], ephemeral=True)
+
+
+async def _claim_all_quests(interaction, owner_id: str, list_key: str) -> bool:
+    """Claim every finished quest in one go and say what it all came to. Returns False if there was nothing to claim."""
+    async with user_transaction(owner_id):
+        ids = [q["id"] for q in data[owner_id].get(list_key, []) if q.get("completed") and not q.get("claimed")]
+        results = [quest_claim(owner_id, qid, list_key=list_key) for qid in ids]
+    results = [r for r in results if r.get("ok")]
+    if not results:
+        return False
+    await track_activity(owner_id, "task")
+    xp = sum(r["xp"] for r in results)
+    bits = [f"+{xp:,} XP"]
+    money = sum(r.get("money", 0) for r in results)
+    gems = sum(r.get("gems", 0) for r in results)
+    if money:
+        bits.append(f"◈{money:,}")
+    if gems:
+        bits.append(f"{emoji('gem')}{gems}")
+    loot: dict = {}
+    for r in results:
+        for k in ("crate", "item"):
+            if r.get(k):
+                loot[r[k]] = loot.get(r[k], 0) + 1
+    bits += [f"{n}× {nm}" for nm, n in loot.items()]
+    ups = sum(r.get("level_ups", 0) for r in results)
+    if ups:
+        bits.append(f"Level up{'×' + str(ups) if ups > 1 else ''}! Now level **{results[-1]['level']}**")
+    await send_ephemeral_v2(interaction, f"{emoji('check_mark')} Claimed **{len(results)}** quests! " + " · ".join(bits), 0x2ECC71)
+    for r in results:
+        if r.get("milestone_hit"):
+            await send_ephemeral_v2(interaction,
+                f"{emoji('gem')} **Weekly goal reached!** {r['milestone_hit']} daily quests completed this week — "
+                f"**+{r['milestone_gems']}** {emoji('gem')} · 1× {ITEMS['Weather Vane']['emoji']} Weather Vane.", 0x9B59B6)
+        await _hunters_path_notify(interaction, owner_id, r.get("hunters_path_result"))
+    return True
+
+
 async def explore_hunt_entry(interaction, user_id: str, *, owner: bool = True) -> bool:
     """Explore Mode swaps Hunt for the map. Returns True when it handled the interaction (the caller stops there).
     A fight / track / flight in progress shows that panel instead, exactly as a normal hunt would."""
@@ -22498,7 +23390,7 @@ async def hunt_cmd(interaction: discord.Interaction):
         else:
             msg = (f"{emoji('warning')} **{result['tool_name']}** needs {atype} equipped. "
                    f"Buy some in </shop:{COMMAND_ID.get('shop','0')}> → Ammo!")
-        await send_ephemeral_v2(interaction, msg, 0xE67E22)
+        await send_ammo_help(interaction, user_id, msg)
         return
 
     if result.get("traveling"):
