@@ -1846,6 +1846,224 @@ def test_missing_art_falls_back_to_a_drawn_stand_in_for_every_prop():
         app._ex_art.update(saved)
 
 
+# ── Halloween Land: an admin-started, week-long event region on the Explore map ──
+
+H = "halloween_land"
+
+
+@contextlib.contextmanager
+def halloween_event(on=True):
+    """Run the Halloween event for the duration of the block (or make sure none runs)."""
+    app.stop_active_event()
+    if on:
+        app.start_event("halloween", "1")
+    try:
+        yield
+    finally:
+        app.stop_active_event()
+
+
+def _hw_user(**over):
+    d = _fresh(**over)
+    d["is_tester"] = False
+    return d
+
+
+def test_halloween_is_an_admin_started_week_long_event():
+    spec = app.EVENTS["halloween"]
+    assert spec["kind"] == "buff" and spec["hours"] == 168 and spec["emoji"] == "🎃" and spec["actions"]
+    assert len(app.EVENTS) <= 25                                                 # fits the admin "start an event" dropdown
+    with halloween_event(False):
+        _hw_user()
+        assert app.halloween_open(U) is False
+        assert "Halloween Land" not in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+    with halloween_event():
+        ev = app.get_active_event()
+        assert ev["key"] == "halloween" and abs((ev["ends_ts"] - ev["started_ts"]) - 7 * 86400) < 5
+        assert app.halloween_open(U) is True
+        assert "🎃 Halloween Land" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+    assert app.halloween_open(U) is False                                        # the event is over
+
+
+def test_you_enter_halloween_land_keep_your_home_animals_and_are_sent_home_when_it_ends():
+    d = _hw_user()
+    d["biome"] = "forest"
+    with halloween_event():
+        st = app._ex_state(U)
+        assert st["biome"] == "forest"
+        app.explore_realm(U)
+        st = app._ex_state(U)
+        # (nothing explored yet, so switching needs no confirmation)
+        assert st["biome"] == H and st["home"] == "forest" and d["explore_realm"] == H
+        assert all(a["name"] in gd.BIOME_ANIMALS["forest"] for a in st["animals"])         # the pay does not change
+        assert "Halloween Land" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+        assert "Leave Halloween Land" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+        st["steps"] = 6
+        assert app.explore_realm(U)["kind"] == "confirm"                          # leaving mid-expedition asks first
+        assert app.explore_realm(U)["kind"] == "new" and app._ex_state(U)["biome"] == "forest" and d["explore_realm"] == ""
+        app.explore_realm(U)
+        assert app._ex_state(U)["biome"] == H
+    st = app._ex_state(U)                                                         # the event ended
+    assert st["biome"] == "forest" and d["explore_realm"] == ""
+    assert app.explore_realm(U)["kind"] == "none"
+
+
+def test_testers_can_visit_halloween_land_any_time():
+    d = _hw_user()
+    d["is_tester"] = True
+    with halloween_event(False):
+        assert app.halloween_open(U) is True
+        app.explore_realm(U)
+        assert app._ex_state(U)["biome"] == H
+
+
+def test_halloween_land_has_every_prop_and_a_patchwork_of_four_grounds():
+    lists = gd.EXPLORE_BIOME_PROPS[H]
+    assert set(lists) == {"tree", "stone", "bush", "landmark", "hazard"} and all(lists.values())
+    for kind, ids in lists.items():
+        for pid in ids:
+            assert pid in gd.EXPLORE_PROPS and pid in gd.EXPLORE_ART, pid
+    assert all(g in gd.EXPLORE_ART for g, _ in gd.EXPLORE_REALM_GROUND[H])
+    seen = {app._ex_ground_id(H, 5, x, y) for x in range(0, 60) for y in range(0, 60)}
+    assert seen == {g for g, _ in gd.EXPLORE_REALM_GROUND[H]}
+    assert gd.EXPLORE_PROPS["halloween_land_ghost_portal"]["eff"] == "teleport"
+    assert {"halloween_land_haunted_house", "halloween_land_crypt"} <= gd.EXPLORE_BIG_ALWAYS
+    assert set(app._ex_art_wanted(H)) >= {g for g, _ in gd.EXPLORE_REALM_GROUND[H]}
+
+
+def test_ghosts_roots_graves_and_webs_shove_you_back_some_for_hp():
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    for pid, hp in (("halloween_land_ghost", 0), ("halloween_land_witch_broom", 0), ("halloween_land_giant_spiderweb", 0),
+                    ("halloween_land_twisted_roots", 1), ("halloween_land_open_grave", 1), ("halloween_land_skeletal_hand", 1),
+                    ("halloween_land_poison_swamp_pool", 2)):
+        with terrain({(3, 1): "hazard"}), still_world(), prop_at(pid, 3, 1):
+            st = app._ex_state(U)
+            st["animals"], st["x"], st["y"], st["steps"] = [], 3, 0, 0
+            hp0 = _hp(d, d["health"]["max_hp"])
+            app.explore_move(U, "s")
+            assert (st["x"], st["y"]) == (3, 0) and hp0 - d["health"]["hp"] == hp, pid
+            assert st["steps"] == 1, pid
+
+
+def test_a_spider_nest_startles_you_when_you_walk_up_to_it_and_a_haunted_tree_just_shoves():
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    with terrain({(3, 2): "hazard"}), still_world(), prop_at("halloween_land_spider_nest", 3, 2):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"], st["steps"] = [], 3, 0, 0
+        hp0 = _hp(d)
+        app.explore_move(U, "s")                                                  # (3,1) is next to the nest: you retreat
+        assert (st["x"], st["y"]) == (3, 0) and "startles" in st["msg"] and d["health"]["hp"] == hp0
+    with terrain({(3, 1): "tree"}), still_world(), prop_at("halloween_land_haunted_tree", 3, 1):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"], st["steps"] = [], 3, 0, 0
+        out = app.explore_move(U, "s")
+        assert out["kind"] == "bump" and "shoves you back" in st["msg"] and st["steps"] == 0
+
+
+def test_the_ghost_portal_hops_you_to_a_safe_empty_tile_once():
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    with terrain({(3, 1): "landmark"}), still_world(), prop_at("halloween_land_ghost_portal", 3, 1):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"], st["steps"] = [], 3, 0, 20
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) != (3, 1) and 1 <= app._ex_dist(st["x"], st["y"], 3, 1) <= 3 and "swallows you" in st["msg"]
+        assert app._ex_kind(st, st["x"], st["y"]) == "grass"
+        st["x"], st["y"] = 3, 0
+        app.explore_move(U, "s")
+        assert (st["x"], st["y"]) == (3, 1)                                       # used up: now just a tile
+
+
+def test_candy_is_cosmetic_capped_per_day_and_earns_titles():
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    money0, gems0 = d["money"], d["gems"]
+    total = 0
+    for i in range(30):
+        got, today, titles = app._ex_give_candy(U, 5)
+        total += got
+    assert total == gd.HALLOWEEN_CANDY_DAILY_CAP and d["candy"] == gd.HALLOWEEN_CANDY_DAILY_CAP        # restarting never beats the cap
+    assert "Trick-or-Treater" in d["earned_titles"] and money0 == d["money"] and gems0 == d["gems"]
+    st = app._ex_state(U)
+    app._ex_new(U, H)                                                             # a brand-new expedition does not reset the cap
+    assert app._ex_give_candy(U, 5)[0] == 0
+    msg = app._ex_loot(U, "small_candy", "candy bucket")
+    assert "come back tomorrow" in msg
+    d["candy_day"]["d"] = "2000-01-01"                                            # a new day
+    assert app._ex_give_candy(U, 3)[0] == 3
+    d["candy"] = 99
+    assert "Candy Collector" in app._ex_give_candy(U, 5)[2] or "Candy Collector" in d["earned_titles"]
+    assert "🍬" in app.explore_keepsake_line(U)
+
+
+def test_candy_props_cauldrons_and_spooky_buildings_pay_and_stamp_once():
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    with terrain({(3, 1): "landmark"}), still_world(), prop_at("halloween_land_candy_bucket", 3, 1):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"], st["steps"] = [], 3, 0, 20
+        c0 = d.get("candy", 0)
+        app.explore_move(U, "s")
+        assert d["candy"] > c0 and "candy" in st["msg"]
+        c1 = d["candy"]
+        app.explore_move(U, "n"); app.explore_move(U, "s")
+        assert d["candy"] == c1                                                   # once per placed prop
+    with terrain({(4, 1): "landmark"}), still_world(), prop_at("halloween_land_witch_cauldron", 4, 1):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"] = [], 3, 0
+        _hp(d, 10)
+        app.explore_move(U, "s")                                                  # next to the cauldron: a friendly potion
+        assert d["health"]["hp"] == 15 and "cauldron" in st["msg"]
+    with terrain({(4, 2): "landmark"}), still_world(), prop_at("halloween_land_crypt", 4, 2, 2, 4, 2):
+        st = app._ex_state(U)
+        st["animals"], st["x"], st["y"] = [], 3, 1
+        app.explore_move(U, "s")
+        assert "halloween_land_crypt" in d["explore_stamps"] and "Crypt" in st["msg"]
+    assert gd.EXPLORE_STAMPS["scarecrow"] and gd.EXPLORE_STAMPS["ghost_reflection"]
+
+
+def test_halloween_land_draws_with_and_without_art():
+    from PIL import Image
+    d = _hw_user()
+    d["is_tester"] = True
+    app.explore_realm(U)
+    saved = dict(app._ex_art)
+    try:
+        for with_art in (False, True):
+            app._ex_art.clear()
+            if with_art:
+                for i, k in enumerate(gd.EXPLORE_ART):
+                    app._ex_art[k] = Image.new("RGBA", (128, 100), (30 + i * 5 % 200, 80, 140, 255))
+            for seed in range(6):
+                st = app._ex_state(U)
+                st["seed"], st["steps"], st["x"], st["y"], st["animals"] = seed, 20, 6 + seed, 6, []
+                _png_ok(app._ex_render(app._ex_snapshot(U)))
+    finally:
+        app._ex_art.clear()
+        app._ex_art.update(saved)
+    assert "🎃 Halloween Land" in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+
+
+def test_there_is_no_generic_tree_any_more():
+    assert not hasattr(app, "_ex_tree")
+    for biome in gd.BIOME_TOOL_TIER:                                              # no cover art in a region = no bushes there
+        has = bool(gd.EXPLORE_BIOME_PROPS[biome]["bush"])
+        kinds = {app._ex_tile(sd, x, y, biome) for sd in range(6) for x in range(19) for y in range(19)}
+        assert ("bush" in kinds) == has, biome
+    from PIL import Image
+    im = app._ex_proc_prop("tree", "volcanic_highlands", random.Random(1), app._EX_PAL["volcanic_highlands"], 144)
+    assert im.getbbox() is not None
+
+
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

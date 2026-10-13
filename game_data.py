@@ -2369,12 +2369,146 @@ EXPLORE_STAMPS = {"wildflower_clearing": "Wildflower Clearing", "rune_monument":
                   "tide_pool": "Tide Pool"}
 
 
+# ── Halloween Land (an Explore-only seasonal region): art + what every prop does ──
+EXPLORE_HALLOWEEN_ART = {
+    "halloween_land_pumpkin": "<:halloween_land_pumpkin:1559434358224322570>",
+    "halloween_land_jack_o_lantern": "<:halloween_land_jack_o_lantern:1559434349605032006>",
+    "halloween_land_pumpkin_patch": "<:halloween_land_pumpkin_patch:1559434360380465255>",
+    "halloween_land_pumpkin_stack": "<:halloween_land_pumpkin_stack:1559434362112712806>",
+    "halloween_land_ghost": "<:halloween_land_ghost:1559434327891124267>",
+    "halloween_land_ghost_pair": "<:halloween_land_ghost_pair:1559434331565334628>",
+    "halloween_land_ghost_lantern": "<:halloween_land_ghost_lantern:1559434329145479178>",
+    "halloween_land_ghost_portal": "<:halloween_land_ghost_portal:1559434332697927702>",
+    "halloween_land_haunted_tree": "<:halloween_land_haunted_tree:1559434346014711811>",
+    "halloween_land_dead_tree": "<:halloween_land_dead_tree:1559434322472206406>",
+    "halloween_land_twisted_roots": "<:halloween_land_twisted_roots:1559434374821445643>",
+    "halloween_land_hanging_bat_tree": "<:halloween_land_hanging_bat_tree:1559434340910239774>",
+    "halloween_land_scarecrow": "<:halloween_land_scarecrow:1559434367372107816>",
+    "halloween_land_witch_broom": "<:halloween_land_witch_broom:1559434375966359573>",
+    "halloween_land_witch_cauldron": "<:halloween_land_witch_cauldron:1559434377107345489>",
+    "halloween_land_witch_hat": "<:halloween_land_witch_hat:1559434379036725328>",
+    "halloween_land_gravestone": "<:halloween_land_gravestone:1559434338439798835>",
+    "halloween_land_grave_cluster": "<:halloween_land_grave_cluster:1559434337068253204>",
+    "halloween_land_open_grave": "<:halloween_land_open_grave:1559434354202255470>",
+    "halloween_land_stone_coffin": "<:halloween_land_stone_coffin:1559434373332336650>",
+    "halloween_land_graveyard_gate": "<:halloween_land_graveyard_gate:1559434339685507172>",
+    "halloween_land_broken_fence": "<:halloween_land_broken_fence:1559434312821248130>",
+    "halloween_land_crypt": "<:halloween_land_crypt:1559434317371936798>",
+    "halloween_land_mausoleum": "<:halloween_land_mausoleum:1559434351098470400>",
+    "halloween_land_haunted_house": "<:halloween_land_haunted_house:1559434342135242803>",
+    "halloween_land_witch_hut": "<:halloween_land_witch_hut:1559434381062574220>",
+    "halloween_land_abandoned_chapel": "<:halloween_land_abandoned_chapel:1559434308026892399>",
+    "halloween_land_haunted_well": "<:halloween_land_haunted_well:1559434348082499594>",
+    "halloween_land_giant_spiderweb": "<:halloween_land_giant_spiderweb:1559434334283239454>",
+    "halloween_land_spider_nest": "<:halloween_land_spider_nest:1559434371067289650>",
+    "halloween_land_bat_roost": "<:halloween_land_bat_roost:1559434310325379143>",
+    "halloween_land_raven_perch": "<:halloween_land_raven_perch:1559434365497385071>",
+    "halloween_land_cursed_monument": "<:halloween_land_cursed_monument:1559434320949682266>",
+    "halloween_land_skull_rock": "<:halloween_land_skull_rock:1559434369976893440>",
+    "halloween_land_glowing_mushrooms": "<:halloween_land_glowing_mushrooms:1559434335801839677>",
+    "halloween_land_poison_swamp_pool": "<:halloween_land_poison_swamp_pool:1559434355330519142>",
+    "halloween_land_bone_pile": "<:halloween_land_bone_pile:1559434311680397312>",
+    "halloween_land_skeletal_hand": "<:halloween_land_skeletal_hand:1559434368727126137>",
+    "halloween_land_haunted_mirror": "<:halloween_land_haunted_mirror:1559434344009830510>",
+    "halloween_land_possessed_chest": "<:halloween_land_possessed_chest:1559434357020823632>",
+    "halloween_land_candy_bucket": "<:halloween_land_candy_bucket:1559434314129608845>",
+    "halloween_land_candy_stall": "<:halloween_land_candy_stall:1559434315597750282>",
+    "halloween_land_ghost_mailbox": "<:halloween_land_ghost_mailbox:1559434330491850762>",
+    "halloween_land_pumpkin_cart": "<:halloween_land_pumpkin_cart:1559434359340015626>",
+    "halloween_land_purple_crystal": "<:halloween_land_purple_crystal:1559434364138553354>",
+    "halloween_land_fog_bank": "<:halloween_land_fog_bank:1559434325861072936>",
+    "halloween_land_cursed_fountain": "<:halloween_land_cursed_fountain:1559434319242723408>",
+    "halloween_land_moon_altar": "<:halloween_land_moon_altar:1559434352482324531>",
+    "halloween_land_haunted_grass_tile": "<:halloween_land_haunted_grass_til:1559434583601053786>",
+    "halloween_land_graveyard_stone_tile": "<:halloween_land_graveyard_stone_t:1559434581864882186>",
+    "halloween_land_pumpkin_dirt_tile": "<:halloween_land_pumpkin_dirt_tile:1559434584955953172>",
+    "halloween_land_spectral_ground_tile": "<:halloween_land_spectral_ground_t:1559434586180690111>",
+}
+EXPLORE_HALLOWEEN_PROPS = {
+    "halloween_land_pumpkin": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="pumpkin"),
+    "halloween_land_jack_o_lantern": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 3}, once=True, name="jack o lantern"),
+    "halloween_land_pumpkin_patch": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="pumpkin patch"),
+    "halloween_land_pumpkin_stack": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="pumpkin stack"),
+    "halloween_land_ghost": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="ghost"),
+    "halloween_land_ghost_pair": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="ghost pair"),
+    "halloween_land_ghost_lantern": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 3}, once=True, name="ghost lantern"),
+    "halloween_land_ghost_portal": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="teleport", par={"max_distance_tiles": 3}, once=True, name="ghost portal"),
+    "halloween_land_haunted_tree": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="haunted tree"),
+    "halloween_land_dead_tree": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="dead tree"),
+    "halloween_land_twisted_roots": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 1, "tiles": 1}, once=False, name="twisted roots"),
+    "halloween_land_hanging_bat_tree": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 2}, once=True, name="hanging bat tree"),
+    "halloween_land_scarecrow": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={"stamp": "scarecrow"}, once=True, name="scarecrow"),
+    "halloween_land_witch_broom": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="witch broom"),
+    "halloween_land_witch_cauldron": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="heal", par={"hp": 5}, once=True, name="witch cauldron"),
+    "halloween_land_witch_hat": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_candy"}, once=True, name="witch hat"),
+    "halloween_land_gravestone": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="gravestone"),
+    "halloween_land_grave_cluster": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="grave cluster"),
+    "halloween_land_open_grave": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 1, "tiles": 1}, once=False, name="open grave"),
+    "halloween_land_stone_coffin": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="stone coffin"),
+    "halloween_land_graveyard_gate": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="graveyard gate"),
+    "halloween_land_broken_fence": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="broken fence"),
+    "halloween_land_crypt": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={}, once=True, name="crypt"),
+    "halloween_land_mausoleum": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={}, once=True, name="mausoleum"),
+    "halloween_land_haunted_house": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="loot", par={"pool": "small_candy"}, once=True, name="haunted house"),
+    "halloween_land_witch_hut": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="loot", par={"pool": "small_candy"}, once=True, name="witch hut"),
+    "halloween_land_abandoned_chapel": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={}, once=True, name="abandoned chapel"),
+    "halloween_land_haunted_well": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="heal", par={"hp": 3}, once=True, name="haunted well"),
+    "halloween_land_giant_spiderweb": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="giant spiderweb"),
+    "halloween_land_spider_nest": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="push_back", par={"hp": 0, "tiles": 1}, once=False, name="spider nest"),
+    "halloween_land_bat_roost": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 2}, once=True, name="bat roost"),
+    "halloween_land_raven_perch": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 2}, once=True, name="raven perch"),
+    "halloween_land_cursed_monument": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={}, once=True, name="cursed monument"),
+    "halloween_land_skull_rock": dict(biome="halloween_land", cat="landmark", walk=False, trig="bump", eff="bump", par={}, once=False, name="skull rock"),
+    "halloween_land_glowing_mushrooms": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="heal", par={"hp": 2}, once=True, name="glowing mushrooms"),
+    "halloween_land_poison_swamp_pool": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 2, "tiles": 1}, once=False, name="poison swamp pool"),
+    "halloween_land_bone_pile": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="reveal", par={"radius_tiles": 2}, once=True, name="bone pile"),
+    "halloween_land_skeletal_hand": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="push_back", par={"hp": 1, "tiles": 1}, once=False, name="skeletal hand"),
+    "halloween_land_haunted_mirror": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={"stamp": "ghost_reflection"}, once=True, name="haunted mirror"),
+    "halloween_land_possessed_chest": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="loot", par={"pool": "small_supplies"}, once=True, name="possessed chest"),
+    "halloween_land_candy_bucket": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_candy"}, once=True, name="candy bucket"),
+    "halloween_land_candy_stall": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="loot", par={"pool": "small_candy"}, once=True, name="candy stall"),
+    "halloween_land_ghost_mailbox": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_candy"}, once=True, name="ghost mailbox"),
+    "halloween_land_pumpkin_cart": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="loot", par={"pool": "small_candy"}, once=True, name="pumpkin cart"),
+    "halloween_land_purple_crystal": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="reveal", par={"radius_tiles": 3}, once=True, name="purple crystal"),
+    "halloween_land_fog_bank": dict(biome="halloween_land", cat="landmark", walk=True, trig="enter", eff="cover", par={}, once=False, name="fog bank"),
+    "halloween_land_cursed_fountain": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="heal", par={"hp": 3}, once=True, name="cursed fountain"),
+    "halloween_land_moon_altar": dict(biome="halloween_land", cat="landmark", walk=False, trig="approach", eff="stamp", par={}, once=True, name="moon altar"),
+}
+
+HALLOWEEN_BIOME = "halloween_land"
+# an Explore-only event region: the animals are your home region's (so nothing about pay changes), the land is spooky
+# (opened by an admin starting the Halloween event, see app.EVENTS["halloween"]: 7 days)
+HALLOWEEN_CANDY_DAILY_CAP = 40                    # candy is cosmetic and capped per day, so restarting expeditions cannot farm it
+HALLOWEEN_TITLES = [(30, "Trick-or-Treater"), (100, "Candy Collector"), (250, "Pumpkin Patron")]
+EXPLORE_REALM_GROUND = {HALLOWEEN_BIOME: [("halloween_land_haunted_grass_tile", 55), ("halloween_land_pumpkin_dirt_tile", 20),
+                                          ("halloween_land_graveyard_stone_tile", 15), ("halloween_land_spectral_ground_tile", 10)]}
+EXPLORE_PROPS.update(EXPLORE_HALLOWEEN_PROPS)
+_H = "halloween_land_"
+EXPLORE_BIOME_PROPS[HALLOWEEN_BIOME] = dict(
+    tree=[_H + n for n in ("dead_tree", "haunted_tree", "pumpkin_stack", "hanging_bat_tree")],
+    stone=[_H + n for n in ("gravestone", "grave_cluster", "stone_coffin", "skull_rock", "pumpkin", "broken_fence", "graveyard_gate")],
+    bush=[_H + n for n in ("pumpkin_patch", "fog_bank")],
+    landmark=[_H + n for n in ("jack_o_lantern", "ghost_lantern", "ghost_portal", "scarecrow", "witch_cauldron", "witch_hat", "crypt",
+                               "mausoleum", "haunted_house", "witch_hut", "abandoned_chapel", "haunted_well", "bat_roost", "raven_perch",
+                               "cursed_monument", "glowing_mushrooms", "bone_pile", "haunted_mirror", "possessed_chest", "candy_bucket",
+                               "candy_stall", "ghost_mailbox", "pumpkin_cart", "purple_crystal", "cursed_fountain", "moon_altar")],
+    hazard=[_H + n for n in ("ghost", "ghost_pair", "twisted_roots", "witch_broom", "open_grave", "giant_spiderweb", "spider_nest",
+                             "poison_swamp_pool", "skeletal_hand")])
+EXPLORE_LANDMARK_PERMILLE_BY = {HALLOWEEN_BIOME: 45}
+EXPLORE_BIG_ALWAYS |= {_H + n for n in ("haunted_house", "abandoned_chapel", "mausoleum", "crypt")}
+EXPLORE_BIG_SOMETIMES |= {_H + n for n in ("dead_tree", "haunted_tree")}
+EXPLORE_STAMPS.update({"scarecrow": "Scarecrow", "ghost_reflection": "Ghost Reflection", _H + "crypt": "Crypt",
+                       _H + "mausoleum": "Mausoleum", _H + "abandoned_chapel": "Abandoned Chapel",
+                       _H + "cursed_monument": "Cursed Monument", _H + "moon_altar": "Moon Altar"})
+
+
 def _explore_art() -> dict:
     art = {"hunter": "<:hunter:1559064022240854016>",
            # chests reuse the crate art: common / uncommon / rare / epic (the rarer the crate, the better the loot)
            "chest0": EMOJI.get("common_crate", ""), "chest1": EMOJI.get("uncommon_crate", ""),
            "chest2": EMOJI.get("rare_crate", ""), "chest3": EMOJI.get("epic_crate", "")}
     art.update(EXPLORE_ASSET_ART)
+    art.update(EXPLORE_HALLOWEEN_ART)
     return art
 
 

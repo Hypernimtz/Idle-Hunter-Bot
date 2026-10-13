@@ -98,7 +98,8 @@ from game_data import (
     TRACK_DOUBT_IF_MISLED, TRACK_DOUBT_IF_TRUE, TRACK_DOUBT_LINES, TRACK_SQUALL_RISK,
     BIOME_RULES, biome_rule, biome_rule_line, ROLE_INFO, tool_role, tool_role_info, EXPLORE_ART,
     EXPLORE_PROPS, EXPLORE_BIOME_PROPS, EXPLORE_BIG_ALWAYS, EXPLORE_BIG_SOMETIMES, EXPLORE_KIND_ART, EXPLORE_STAMPS,
-    EXPLORE_GROUND, EXPLORE_GROUND_LAVA, EXPLORE_GROUND_WATER,
+    EXPLORE_GROUND, EXPLORE_GROUND_LAVA, EXPLORE_GROUND_WATER, EXPLORE_REALM_GROUND, EXPLORE_LANDMARK_PERMILLE_BY,
+    HALLOWEEN_BIOME, HALLOWEEN_CANDY_DAILY_CAP, HALLOWEEN_TITLES,
     GAMBLING_BADGES, AMMO_VARIETY_TYPES,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
@@ -384,6 +385,8 @@ FEATURE_TRACK_CLUES      = _flag("FEATURE_TRACK_CLUES")       # the scene on scr
 FEATURE_BIOME_RULES      = _flag("FEATURE_BIOME_RULES")       # one decision-changing rule per region (tracking + animal fights)
 FEATURE_GEAR_ROLES       = _flag("FEATURE_GEAR_ROLES")        # quiet / power / capture tool roles
 FEATURE_EVENT_CARRY      = _flag("FEATURE_EVENT_CARRY")       # choices in a story-event run carry into later scenes
+FEATURE_HALLOWEEN        = _flag("FEATURE_HALLOWEEN")         # the seasonal Halloween Land region on the Explore map
+HALLOWEEN_ALWAYS         = _flag("HALLOWEEN_ALWAYS", "0")     # keep Halloween Land open all year (testing)
 FEATURE_EXPLORE          = _flag("FEATURE_EXPLORE")           # on-foot map hunting (also needs the per-player setting)
 
 # Feature-gated background loops defined later in the file register themselves
@@ -469,6 +472,14 @@ EVENTS = {
 for _k, _s_ in ED.EVENT_SPECS.items():
     EVENTS[_k] = {"key": _k, "name": _s_["name"], "emoji": _s_["emoji"], "kind": _s_["kind"],
                   "hours": _s_["hours"], "blurb": _s_["blurb"], "actions": list(_s_["actions"])}
+EVENTS["halloween"] = {
+    "key": "halloween", "name": "Halloween Land", "emoji": "🎃", "kind": "buff", "hours": 168,
+    "blurb": "A spooky new region has opened on the Explore map — haunted houses, graveyards, ghosts and a whole lot of candy. "
+             "It's here for a week and then it's gone.",
+    "actions": ["🧭 Turn on **Explore Mode** in `/settings`, then press **🎃 Halloween Land** on your hunting map",
+                "🍬 Collect candy (capped per day) for cosmetic titles",
+                "👻 Ghosts, webs and graves shove you around; cauldrons, wells and fountains patch you up"],
+}
 ADMIN_404_KEY = "admin_404"
 
 _active_event: dict | None = None   # {"key","name","started_ts","ends_ts","by",…} or None
@@ -1642,6 +1653,8 @@ def explore_keepsake_line(user_id: str) -> str:
     out = " ".join(bits)
     if n:
         out += (" · " if out else "") + f"🏅 {n}/{len(EXPLORE_STAMPS)} stamps"
+    if d.get("candy"):
+        out += (" · " if out else "") + f"🍬 {d['candy']:,} candy"
     return out
 
 
@@ -8500,7 +8513,7 @@ _EX_PROP_KIND = {b: {p: k for k, ps in v.items() for p in ps} for b, v in EXPLOR
 _EX_BIG_BY_BIOME = {b: tuple(p for p in m if p in EXPLORE_BIG_ALWAYS or p in EXPLORE_BIG_SOMETIMES) for b, m in _EX_PROP_KIND.items()}
 _EX_BUMP_FLAVOR = {"obstacle__swamp__twisted_moss_tree": "A harmless rustling stirs in the moss.",
                    "obstacle__tundra__snow_pine": "Snow shakes off the branches."}
-_EX_MYSTIC = ("cursed_ruins", "rainbow", "abyssal_depths", "celestial_peaks")      # the strange regions
+_EX_MYSTIC = ("cursed_ruins", "rainbow", "abyssal_depths", "celestial_peaks", "halloween_land")      # the strange regions
 # what a clue looks like when it first appears, and the short label shown beside its arrow
 _EX_CLUE_NEW = {
     "passive":    "👣 Fresh footprints cross your path.",
@@ -8538,7 +8551,8 @@ def _ex_tile(seed: int, x: int, y: int, biome: str = "") -> str:
     if big:
         return _EX_PROP_KIND[biome][big]
     h = _zlib.crc32(f"{seed}:{x}:{y}".encode()) % 100
-    for kind, pct in (("tree", EXPLORE_TREE_PCT), ("stone", EXPLORE_STONE_PCT), ("bush", EXPLORE_BUSH_PCT)):
+    has_cover = (not biome) or bool(EXPLORE_BIOME_PROPS.get(biome, {}).get("bush"))      # no cover art in a region = no bushes
+    for kind, pct in (("tree", EXPLORE_TREE_PCT), ("stone", EXPLORE_STONE_PCT), ("bush", EXPLORE_BUSH_PCT if has_cover else 0)):
         if h < pct:
             return kind
         h -= pct
@@ -8550,7 +8564,8 @@ def _ex_tile(seed: int, x: int, y: int, biome: str = "") -> str:
         h3 = _zlib.crc32(f"{seed}:{x}:{y}:s".encode()) % 1000
         lists = EXPLORE_BIOME_PROPS.get(biome, {})
         cur = 0
-        for kind, width in (("landmark", EXPLORE_LANDMARK_PERMILLE if [p for p in lists.get("landmark", []) if p not in EXPLORE_BIG_ALWAYS] else 0),
+        for kind, width in (("landmark", EXPLORE_LANDMARK_PERMILLE_BY.get(biome, EXPLORE_LANDMARK_PERMILLE)
+                             if [p for p in lists.get("landmark", []) if p not in EXPLORE_BIG_ALWAYS] else 0),
                             ("hazard", EXPLORE_HAZARD_PERMILLE if [p for p in lists.get("hazard", []) if p not in EXPLORE_BIG_ALWAYS] else 0),
                             ("lava", EXPLORE_LAVA_PERMILLE if biome == "volcanic_highlands" else 0),
                             ("water", EXPLORE_WATER_PERMILLE.get(biome, 0))):
@@ -8691,6 +8706,43 @@ def _ex_visible(st: dict) -> list[dict]:
                   key=lambda a: _ex_dist(a["x"], a["y"], st["x"], st["y"]))
 
 
+def _ex_home(st: dict) -> str:
+    """The region whose animals live on this map (Halloween Land borrows your home region's)."""
+    return st.get("home") or st["biome"]
+
+
+def halloween_open(user_id: str) -> bool:
+    """Is Halloween Land open: only while an admin has the Halloween event running (testers, and HALLOWEEN_ALWAYS=1, always)."""
+    if not FEATURE_HALLOWEEN:
+        return False
+    if HALLOWEEN_ALWAYS or data.get(user_id, {}).get("is_tester"):
+        return True
+    return active_event_key() == "halloween"
+
+
+def _ex_biome(user_id: str) -> str:
+    """The region the player is exploring: Halloween Land while they chose it (and it is open), else their home region."""
+    d = data[user_id]
+    if d.get("explore_realm") == HALLOWEEN_BIOME:
+        if halloween_open(user_id):
+            return HALLOWEEN_BIOME
+        d["explore_realm"] = ""                      # the event is over: back to your own region
+    return d.get("biome", "village")
+
+
+def _ex_ground_id(biome: str, seed: int, wx: int, wy: int) -> str:
+    """Which ground texture lies on this tile: one per region, or a patchwork of four for Halloween Land."""
+    opts = EXPLORE_REALM_GROUND.get(biome)
+    if not opts:
+        return EXPLORE_GROUND.get(biome, "")
+    h = _zlib.crc32(f"{seed}:{wx // 3}:{wy // 3}:g".encode()) % sum(w for _, w in opts)
+    for gid, w in opts:
+        if h < w:
+            return gid
+        h -= w
+    return opts[0][0]
+
+
 def _ex_tool(user_id: str) -> str:
     return data[user_id].get("tool", "Bare Hands")
 
@@ -8809,12 +8861,12 @@ def _ex_spawn(st: dict, easy: bool = False, group: bool = True) -> bool:
     if not cands:
         return False
     x, y = random.choice(cands)
-    name = pick_biome_animal(st["biome"])
+    name = pick_biome_animal(_ex_home(st))
     if easy:
         for _ in range(30):
-            if animal_combat_stats(name, st["biome"])["behavior"] == "passive":
+            if animal_combat_stats(name, _ex_home(st))["behavior"] == "passive":
                 break
-            name = pick_biome_animal(st["biome"])
+            name = pick_biome_animal(_ex_home(st))
     a = _ex_make(st, name, x, y)
     if not easy and random.random() < EXPLORE_GOLD_CHANCE:
         a["gold"] = True
@@ -8836,7 +8888,7 @@ def _ex_new(user_id: str, biome: str) -> dict:
     it always begins with one gentle animal a short walk away."""
     st: dict = {}
     for _ in range(40):
-        st = {"biome": biome, "seed": random.randrange(1 << 30), "x": EXPLORE_START[0], "y": EXPLORE_START[1],
+        st = {"biome": biome, "home": data[user_id].get("biome", "village"), "seed": random.randrange(1 << 30), "x": EXPLORE_START[0], "y": EXPLORE_START[1],
               "animals": [], "steps": 0, "msg": "", "nid": 1, "opened": [], "bag": [], "extra": {}, "fox": None,
               "fox_done": False, "target": None, "confirm_new": False}
         full = dict(st, steps=EXPLORE_MAX_GROW * EXPLORE_GROW_EVERY)
@@ -8852,9 +8904,9 @@ def _ex_new(user_id: str, biome: str) -> dict:
 
 
 def _ex_state(user_id: str) -> dict:
-    """The player's expedition; a fresh one whenever the region changes."""
+    """The player's expedition; a fresh one whenever the region (or the realm) changes."""
     d = data[user_id]
-    biome = d.get("biome", "village")
+    biome = _ex_biome(user_id)
     st = d.get("explore")
     if not st or st.get("biome") != biome or "opened" not in st:
         st = _ex_new(user_id, biome)
@@ -8927,7 +8979,7 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
     toward = lambda x, y: (x - px) ** 2 + (y - py) ** 2
     away = lambda x, y: -((x - px) ** 2 + (y - py) ** 2)
     for a in list(st["animals"]):
-        stats = animal_combat_stats(a["name"], st["biome"])
+        stats = animal_combat_stats(a["name"], _ex_home(st))
         beh = stats["behavior"]
         d0 = _ex_dist(a["x"], a["y"], px, py)
         if a.get("cool", 0) > 0:
@@ -8964,7 +9016,7 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
     # clues: appear when something unseen is near, stay fresh while you close in, fade otherwise
     for a in st["animals"]:
         d = _ex_dist(a["x"], a["y"], px, py)
-        beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
+        beh = animal_combat_stats(a["name"], _ex_home(st))["behavior"]
         if _ex_seen(st, a):
             a["clue"], a["pd"] = 0, d
             continue
@@ -8990,6 +9042,8 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
             a["clue"] = EXPLORE_CLUE_TTL
             if a.get("gold"):
                 lines.append("✨ Golden footprints glitter somewhere ahead — a rare chance for a Perfect Catch.")
+            elif st["biome"] == HALLOWEEN_BIOME:
+                lines.append("🎃 A trail of pumpkin-scented prints winds through the fog.")
             elif st["biome"] in _EX_MYSTIC:
                 lines.append("✨ Glowing footprints fade in and out of the ground.")
             else:
@@ -9010,6 +9064,41 @@ def _ex_blocked(user_id: str) -> str:
     if is_traveling(user_id):
         return "You're in transit — you can't explore until you land."
     return ""
+
+
+def _ex_candy_titles(user_id: str) -> list:
+    d = data[user_id]
+    et = d.setdefault("earned_titles", [])
+    new = []
+    for need, title in HALLOWEEN_TITLES:
+        if d.get("candy", 0) >= need and title not in et:
+            et.append(title)
+            new.append(title)
+    return new
+
+
+def _ex_give_candy(user_id: str, n: int) -> tuple:
+    """Halloween candy: a cosmetic currency (no cash, no gems), capped per UTC day so restarting expeditions cannot farm
+    it. Returns (candy given, candy today, new titles)."""
+    d = data[user_id]
+    day = d.setdefault("candy_day", {"d": "", "n": 0})
+    if day.get("d") != today_utc():
+        day.update(d=today_utc(), n=0)
+    got = max(0, min(int(n), HALLOWEEN_CANDY_DAILY_CAP - day["n"]))
+    day["n"] += got
+    d["candy"] = d.get("candy", 0) + got
+    return got, day["n"], (_ex_candy_titles(user_id) if got else [])
+
+
+def _ex_teleport(st: dict, dist: int) -> bool:
+    """Hop to a nearby plain, empty tile you can walk to. Nothing at the destination is triggered."""
+    reach = _ex_reach(st)
+    cands = [p for p in reach if 1 <= _ex_dist(p[0], p[1], st["x"], st["y"]) <= dist and _ex_kind(st, *p) == "grass"
+             and not _ex_animal_at(st, *p)]
+    if not cands:
+        return False
+    st["x"], st["y"] = random.choice(cands)
+    return True
 
 
 def _ex_heal_hp(user_id: str, hp: int) -> int:
@@ -9048,6 +9137,14 @@ def _ex_loot(user_id: str, pool: str, what: str) -> str:
     """A small find. Pools: compatible_basic_ammo (a bag), small_supplies (ammo, a bandage or a few coins), small_cash."""
     d = data[user_id]
     roll = random.random()
+    if pool == "small_candy":
+        got, today, titles = _ex_give_candy(user_id, random.randint(2, 5))
+        if got <= 0:
+            return f"🍬 The {what} is full of candy, but you've already gathered your **{HALLOWEEN_CANDY_DAILY_CAP}** for today — come back tomorrow."
+        line = f"🍬 You find **{got} candy** in the {what}. (today {today}/{HALLOWEEN_CANDY_DAILY_CAP})"
+        if titles:
+            line += "\n🏷️ New title: " + ", ".join(f"**{t}**" for t in titles)
+        return line
     if pool == "small_cash" or (pool == "small_supplies" and roll >= 0.65):
         amt = max(1, int(crate_value_scale(d.get("level", 1)) * random.uniform(0.2, 0.6)))
         add_money(user_id, amt, f"explore {what}")
@@ -9089,7 +9186,7 @@ def _ex_apply(user_id: str, st: dict, prop: dict) -> str:
                 if n else f"✨ The {name} glows, but nothing stirs nearby.")
     elif eff == "loot":
         line = _ex_loot(user_id, par.get("pool", "small_supplies"), name)
-    elif eff == "collection":
+    elif eff in ("collection", "stamp"):
         line = _ex_stamp(user_id, par.get("stamp", prop["id"]), name)
     else:
         return ""
@@ -9105,10 +9202,12 @@ def _ex_bump(user_id: str, st: dict, kind: str, prop: dict | None) -> tuple:
         return "Deep water blocks the way.", False
     if prop is None:
         return f"A {'boulder' if kind == 'stone' else 'tree'} blocks the way.", False
-    if prop["trig"] == "bump" and prop["eff"] in ("damage", "heal", "reveal", "loot", "collection"):
+    if prop["trig"] == "bump" and prop["eff"] in ("damage", "heal", "reveal", "loot", "collection", "stamp"):
         line = _ex_apply(user_id, st, prop)
         if line:
             return line, True
+    if prop["trig"] == "bump" and prop["eff"] == "push_back":          # a bump never moves you, so it is just a shove
+        return f"The {prop['name']} waves and shoves you back — no harm done.", False
     text = f"The {prop['name']} blocks the way."
     return text + (" " + _EX_BUMP_FLAVOR[prop["id"]] if prop["id"] in _EX_BUMP_FLAVOR else ""), False
 
@@ -9147,11 +9246,18 @@ def _ex_enter(user_id: str, st: dict, kind: str, prop: dict | None, prev: tuple,
     if eff == "slide":
         n = _ex_slide(st, d, par.get("tiles", 1))
         return [f"🧊 You slide across the {prop['name']}" + ("!" if n else " — and stay put.")]
+    if eff == "teleport":
+        if prop["key"] in st.setdefault("fired", []):
+            return []
+        if _ex_teleport(st, par.get("max_distance_tiles", 3)):
+            st["fired"].append(prop["key"])
+            return [f"🌀 The {prop['name']} swallows you and spits you out a few tiles away!"]
+        return []
     line = _ex_apply(user_id, st, prop)
     return [line] if line else []
 
 
-def _ex_approach(user_id: str, st: dict) -> list:
+def _ex_approach(user_id: str, st: dict, prev: tuple | None = None) -> list:
     """Standing next to a solid prop that reacts to being approached (a monument, a spire, a canopy): it fires once."""
     lines = []
     seen_keys = set()
@@ -9163,6 +9269,12 @@ def _ex_approach(user_id: str, st: dict) -> list:
             if not p or p["walk"] or p["trig"] != "approach" or p["key"] in seen_keys:
                 continue
             seen_keys.add(p["key"])
+            if p["eff"] == "push_back":                       # a startled retreat to where you just were (only if that was not beside it)
+                if prev and prev != (st["x"], st["y"]) and _ex_dist(prev[0], prev[1], p["ax"] + (p["size"] - 1) / 2, p["ay"] + (p["size"] - 1) / 2) > 1.5 + (p["size"] - 1) / 2:
+                    st["x"], st["y"] = prev
+                    lines.append(f"🕷️ The {p['name']} startles you — you scramble back.")
+                    break
+                continue
             line = _ex_apply(user_id, st, p)
             if line:
                 lines.append(line)
@@ -9236,6 +9348,7 @@ _EX_SOUVENIRS = {
     "jungle": ("🌺", "Orchid Petal"), "swamp": ("🪷", "Bog Lily"), "volcanic_highlands": ("🌋", "Obsidian Chip"),
     "cursed_ruins": ("🏺", "Carved Tile Fragment"), "rainbow": ("🌈", "Prism Shard"),
     "abyssal_depths": ("🪸", "Glowing Coral Piece"), "celestial_peaks": ("⭐", "Starlit Pebble"),
+    "halloween_land": ("🎃", "Tiny Plastic Pumpkin"),
 }
 
 
@@ -9311,7 +9424,7 @@ def _ex_spawn_near(st: dict) -> bool:
     if not cands:
         return False
     x, y = random.choice(cands)
-    st["animals"].append(_ex_make(st, pick_biome_animal(st["biome"]), x, y))
+    st["animals"].append(_ex_make(st, pick_biome_animal(_ex_home(st)), x, y))
     return True
 
 
@@ -9327,9 +9440,9 @@ def explore_move(user_id: str, sub: str) -> dict:
         return {"kind": "over"}
     st["confirm_new"] = False
     lines: list[str] = []
+    prev = (st["x"], st["y"])
     if sub in _EX_DIRS:
         dx, dy = _EX_DIRS[sub]
-        prev = (st["x"], st["y"])
         nx, ny = prev[0] + dx, prev[1] + dy
         kind = _ex_kind(st, nx, ny)
         if kind == "void":
@@ -9352,7 +9465,7 @@ def explore_move(user_id: str, sub: str) -> dict:
                 fx["x"], fx["y"] = prev
             st["x"], st["y"] = nx, ny
             lines += _ex_enter(user_id, st, kind, prop, prev, (dx, dy))
-    lines += _ex_approach(user_id, st)
+    lines += _ex_approach(user_id, st, prev if sub in _EX_DIRS else None)
     lines += _ex_advance(user_id, st)
     if _ex_over(st):
         lines.append("🧭 **The light is fading — your expedition is over.**")
@@ -9366,15 +9479,38 @@ def explore_new(user_id: str) -> dict:
     confirms. Mutates."""
     d = data[user_id]
     st = d.get("explore")
-    if st and st.get("biome") == d.get("biome", "village") and not _ex_over(st) and st.get("steps", 0) > 0 \
+    if st and st.get("biome") == _ex_biome(user_id) and not _ex_over(st) and st.get("steps", 0) > 0 \
             and not st.get("confirm_new"):
         st["confirm_new"] = True
         st["msg"] = ("🧭 **Start a new expedition?** This one isn't over yet — "
                      + _ex_summary(st, header=False) + "\nPress **New Expedition** again to confirm, or keep exploring.")
         mark_user_dirty(user_id)
         return {"kind": "confirm"}
-    st = _ex_new(user_id, d.get("biome", "village"))
+    st = _ex_new(user_id, _ex_biome(user_id))
     st["msg"] = "🧭 A new expedition begins."
+    return {"kind": "new"}
+
+
+def explore_realm(user_id: str) -> dict:
+    """Step through into Halloween Land (or back home). Starts a fresh expedition there; mid-expedition it asks first."""
+    d = data[user_id]
+    if not halloween_open(user_id):
+        d["explore_realm"] = ""
+        _ex_state(user_id)["msg"] = "🎃 Halloween Land is closed for now."
+        return {"kind": "none"}
+    st = d.get("explore")
+    if st and not _ex_over(st) and st.get("steps", 0) > 0 and not (st.get("confirm_new") and st.get("confirm_realm")):
+        st["confirm_new"], st["confirm_realm"] = True, True
+        st["msg"] = ("🎃 **Switch realms?** This expedition isn't over yet — " + _ex_summary(st, header=False)
+                     + "\nPress the button again to confirm, or keep exploring.")
+        mark_user_dirty(user_id)
+        return {"kind": "confirm"}
+    going = d.get("explore_realm") != HALLOWEEN_BIOME
+    d["explore_realm"] = HALLOWEEN_BIOME if going else ""
+    st = _ex_new(user_id, _ex_biome(user_id))
+    st["msg"] = ("🎃 **You step through the iron gate into Halloween Land.** The air smells of candle wax. Your usual animals "
+                 "wander here, spookily — and the land is full of treats and tricks." if going
+                 else "🧭 You walk back out of Halloween Land into your own region.")
     return {"kind": "new"}
 
 
@@ -9437,7 +9573,7 @@ def explore_fire(user_id: str) -> dict:
         (hits if random.random() < _ex_hit_chance(tool, dist) else misses).append(g)
     lines: list[str] = []
     for m_ in misses:
-        beh = animal_combat_stats(m_["name"], st["biome"])["behavior"]
+        beh = animal_combat_stats(m_["name"], _ex_home(st))["behavior"]
         m_["mood"] = "stalk" if beh in ("aggressive", "predator") else "flee"
         m_["run"], m_["rest"] = 0, 0
     if misses:
@@ -9500,7 +9636,7 @@ def _ex_snapshot(user_id: str) -> dict:
     tgt = _ex_target(st, tool)
     animals, clues = [], []
     for a in st["animals"]:
-        stats = animal_combat_stats(a["name"], st["biome"])
+        stats = animal_combat_stats(a["name"], _ex_home(st))
         if a in seen:
             animals.append({"tx": a["x"] - cx, "ty": a["y"] - cy, "name": a["name"], "beh": stats["behavior"],
                             "mood": a.get("mood", "calm"), "hp": stats["hp"], "gold": bool(a.get("gold")),
@@ -9548,6 +9684,7 @@ _EX_PAL = {
     "swamp":              dict(g1=(90, 102, 58),  g2=(72, 86, 46),   tree=(52, 72, 46),   trunk=(70, 56, 40),  stone=(106, 106, 94)),
     "volcanic_highlands": dict(g1=(72, 60, 58),   g2=(58, 48, 48),   tree=(70, 44, 38),   trunk=(46, 32, 28),  stone=(120, 72, 60)),
     "cursed_ruins":       dict(g1=(114, 126, 106), g2=(98, 110, 92),  tree=(72, 88, 68),   trunk=(80, 62, 44),  stone=(154, 154, 148)),
+    "halloween_land":     dict(g1=(54, 34, 74),   g2=(42, 26, 60),   tree=(70, 44, 80),   trunk=(40, 28, 36),  stone=(112, 108, 126)),
     "rainbow":            dict(g1=(82, 172, 152), g2=(62, 152, 134), tree=(44, 132, 102), trunk=(106, 76, 52), stone=(172, 152, 202)),
     "abyssal_depths":     dict(g1=(32, 58, 94),   g2=(24, 46, 80),   tree=(34, 94, 104),  trunk=(60, 80, 110), stone=(64, 84, 114)),
     "celestial_peaks":    dict(g1=(216, 216, 238), g2=(192, 192, 222), tree=(72, 82, 134),  trunk=(84, 76, 110), stone=(152, 152, 192), pine=True),
@@ -9587,22 +9724,6 @@ def _ex_ground(pal: dict, seed: int, x: int, y: int, S: int):
         col = _ex_shade(pal["g2"], r.choice((0.85, 1.0, 1.15))) + (200,)
         d.line([(bx, by), (bx + r.randint(-4, 4), by - r.randint(7, 16))], fill=col, width=3)
     return im
-
-
-def _ex_tree(im, pal: dict, r: random.Random) -> None:
-    S = im.width
-    d = _PILDraw.Draw(im, "RGBA")
-    d.ellipse([S * .22, S * .74, S * .78, S * .93], fill=(0, 0, 0, 80))
-    d.rectangle([S * .45, S * .52, S * .55, S * .82], fill=pal["trunk"] + (255,))
-    if pal.get("pine"):
-        for i, (cy, w) in enumerate(((.62, .34), (.46, .28), (.31, .21))):
-            col = _ex_shade(pal["tree"], 0.85 + 0.12 * i) + (255,)
-            d.polygon([(S * .5, S * (cy - .24)), (S * (.5 - w), S * cy), (S * (.5 + w), S * cy)], fill=col)
-        d.polygon([(S * .5, S * .07), (S * .43, S * .20), (S * .57, S * .20)], fill=(246, 250, 255, 230))
-    else:
-        for cx, cy, rad, f in ((.5, .40, .30, .82), (.34, .52, .22, .9), (.66, .52, .22, .9), (.44, .32, .17, 1.18)):
-            d.ellipse([S * (cx - rad), S * (cy - rad), S * (cx + rad), S * (cy + rad)],
-                      fill=_ex_shade(pal["tree"], f) + (255,))
 
 
 def _ex_stone(im, pal: dict, r: random.Random) -> None:
@@ -9877,8 +9998,8 @@ def _ex_proc_prop(kind: str, biome: str, r: random.Random, pal: dict, S: int):
             _ex_landmark(im, biome, r)
         else:
             _ex_stone(im, pal, r)
-    else:
-        _ex_tree(im, {**pal, "pine": pal.get("pine") and kind == "tree"}, r)
+    else:                                                          # a tree / bush with no art for this region: a plain boulder, never a generic tree
+        _ex_stone(im, pal, r)
     return im
 
 
@@ -9894,14 +10015,14 @@ def _ex_render(snap: dict) -> bytes:
     pal = _EX_PAL.get(snap["biome"], _EX_PAL["village"])
     canvas = _PILImage.new("RGB", (T * N, T * N), pal["g1"])        # RGB: translucent shapes drawn on it BLEND (on RGBA they replace the pixel)
     cells = snap["cells"]
-    base_id = EXPLORE_GROUND.get(snap["biome"], "")
     # 1 — the ground texture is the bottom layer (lava and water have their own)
     for ty in range(N):
         for tx in range(N):
             kind = cells[ty][tx]
-            gid = EXPLORE_GROUND_LAVA if kind == "lava" else EXPLORE_GROUND_WATER if kind == "water" else base_id
-            ground = _ex_art.get(gid)
             wx, wy = snap["cx"] + tx, snap["cy"] + ty
+            gid = (EXPLORE_GROUND_LAVA if kind == "lava" else EXPLORE_GROUND_WATER if kind == "water"
+                   else _ex_ground_id(snap["biome"], snap["seed"], wx, wy))
+            ground = _ex_art.get(gid)
             if ground is not None:
                 tile = _ex_grass_tile(ground, T, None, wx, wy)
             else:
@@ -10030,6 +10151,7 @@ def _ex_render(snap: dict) -> bytes:
 def _ex_art_wanted(biome: str) -> list[str]:
     """The art keys one region's map can show: ground, its props, the discoveries, the hunter and the chests."""
     keys = {"hunter", "chest0", "chest1", "chest2", "chest3", EXPLORE_GROUND.get(biome, ""), EXPLORE_GROUND_LAVA,
+            *[g for g, _ in EXPLORE_REALM_GROUND.get(biome, [])],
             EXPLORE_GROUND_WATER, *EXPLORE_KIND_ART.values()}
     for ps in EXPLORE_BIOME_PROPS.get(biome, {}).values():
         keys.update(ps)
@@ -10156,7 +10278,7 @@ async def explore_info_show(interaction, user_id: str) -> None:
     png = None
     if _PIL_OK:
         try:
-            png = await asyncio.to_thread(_ex_range_png, tool, data[user_id].get("biome", "village"))
+            png = await asyncio.to_thread(_ex_range_png, tool, _ex_biome(user_id))
         except Exception:
             logger.exception("explore range picture failed")
     comps = build_explore_info_components(user_id, image=png is not None)
@@ -10317,12 +10439,13 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     seen = _ex_visible(st)
     over = _ex_over(st)
     tool = _ex_tool(user_id)
+    realm = st["biome"] == HALLOWEEN_BIOME
     tgt = _ex_target(st, tool)
     in_reach = _ex_targets(st, tool)
     nearby = []
     for a in seen:
         dd = _ex_dist(a["x"], a["y"], px, py)
-        beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
+        beh = animal_combat_stats(a["name"], _ex_home(st))["behavior"]
         arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
         mood = {"flee": "bolting", "stalk": "stalking you"}.get(a.get("mood"), beh if beh != "passive" else "calm")
         if a.get("rest", 0) > 0 and a.get("mood") != "stalk":
@@ -10333,7 +10456,7 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     for a in st["animals"]:
         if a["clue"] > 0 and a not in seen:
             dd = _ex_dist(a["x"], a["y"], px, py)
-            beh = animal_combat_stats(a["name"], st["biome"])["behavior"]
+            beh = animal_combat_stats(a["name"], _ex_home(st))["behavior"]
             arrow = _EX_ARROWS[_ex_sector(a["x"] - px, a["y"] - py)]
             label = "Rustling bush" if dd <= EXPLORE_VIEW else _EX_CLUE_LABEL.get(beh, "Nearby movement")
             if a.get("gold"):
@@ -10348,9 +10471,11 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     shape = SHAPE_NAMES[tool_shape(tool)[0]]
     foot = (f"{emoji('hp') or '❤️'} **{hp}/{mx}**  ·  🧭 **{steps_left}** steps left  ·  🗺 {x1 - x0 + 1}×{y1 - y0 + 1}"
             f"  ·  🎯 {shape}, reach **{tool_range(tool)}**"
+            + (f"  ·  🍬 **{d.get('candy_day', {}).get('n', 0) if d.get('candy_day', {}).get('d') == today_utc() else 0}**/{HALLOWEEN_CANDY_DAILY_CAP} today" if realm else "")
             + (f"  ·  {role['emoji']} {tool}" if FEATURE_GEAR_ROLES else ""))
     gap = {"type": 14, "divider": False, "spacing": 2}
-    blocks: list = [{"type": 10, "content": f"### {BIOME_EMOJIS.get(st['biome'], '')} Hunt — {BIOME_NAMES.get(st['biome'], st['biome'])}"}]
+    title = "🎃 Halloween Land" if realm else f"{BIOME_EMOJIS.get(st['biome'], '')} {BIOME_NAMES.get(st['biome'], st['biome'])}"
+    blocks: list = [{"type": 10, "content": f"### Hunt — {title}"}]
     if image:
         blocks.append({"type": 12, "items": [{"media": {"url": "attachment://explore.png"}, "description": "The map around you"}]})
     if msg:
@@ -10383,7 +10508,7 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
                 _b("▼", "s", disabled=over or "s" in blk), _b("▶", "e", disabled=over or "e" in blk)]
     if hp < mx * 0.6 and _ex_heal_item(user_id) and not over:
         move_row.append(_b("Heal", "heal", 3, "adhesive_bandage"))
-    confirm = bool(st.get("confirm_new")) and not over
+    confirm = bool(st.get("confirm_new")) and not st.get("confirm_realm") and not over
     last_row = [_b("Really start new?" if confirm else "New Expedition", "new", 4 if confirm else (3 if over else 2))]
     if ammo_why:
         last_row.insert(0, _b("Buy Ammo", "ammo_buy", 3))
@@ -10391,6 +10516,11 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
             last_row.insert(0, _b("Equip Ammo", "ammo_equip", 1))
     last_row.append(_b("⚡ Quick Hunt", "quick"))
     last_row.append({"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"})
+    realm_row = []
+    if halloween_open(user_id):
+        sure = bool(st.get("confirm_new") and st.get("confirm_realm"))
+        realm_row = [{"type": 1, "components": [_b("Really switch?" if sure else ("◀ Leave Halloween Land" if realm else "🎃 Halloween Land"),
+                                                   "realm", 4 if sure else (2 if realm else 1))]}]
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         *blocks,
         {"type": 14, "divider": False, "spacing": 1},
@@ -10400,6 +10530,7 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
                                    _b("Wait", "wait", disabled=over),
                                    _b("ℹ Info", "info")]},
         {"type": 1, "components": last_row[:5]},
+        *realm_row,
     ]}]
 
 
@@ -10413,7 +10544,7 @@ def _ex_range_png(tool: str, biome: str = "village") -> bytes:
     sample = max(east) if east else max(reach)
     hits = shape_hits(tool, *sample)
     canvas = _PILImage.new("RGB", (T * N, T * N), (84, 140, 70))
-    grass = _ex_art.get(EXPLORE_GROUND.get(biome, ""))
+    grass = _ex_art.get(_ex_ground_id(biome, 0, 0, 0))
     for ty in range(N):
         for tx in range(N):
             if grass is not None:
@@ -20018,6 +20149,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
                 out = explore_target(owner_id)
             elif sub == "heal":
                 out = explore_heal(owner_id)
+            elif sub == "realm":
+                out = explore_realm(owner_id)
             elif sub in ("ammo_equip", "ammo_buy"):
                 ok_, text_ = quick_equip_ammo(owner_id) if sub == "ammo_equip" else quick_buy_ammo(owner_id)
                 _ex_state(owner_id)["msg"] = text_
