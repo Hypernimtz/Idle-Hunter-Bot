@@ -64,6 +64,9 @@ KEEPSAKES = {
     "banner_scrap":      ("🏴", "Conquest Banner",     "A scrap from an outpost you held."),
     "husk_horn":         ("📯", "Colossus Horn",       "Hollow. Do not blow."),
     "camp_blanket":      ("🛏️", "Recovery Blanket",    "The camp's own. Very soft."),
+    # Season of the Newborn (the /season pass)
+    "season_shell":      ("🥚", "Hatching Shell",      "Half of the egg the bot hatched from. Still a little warm."),
+    "season_crown":      ("🐣", "Newborn Crown",       "A crown of eggshell. Fits nobody, suits everybody."),
 }
 
 # Special badges added to game_data.SPECIAL_BADGES: key -> (label, abbr, glyph, blurb)
@@ -84,6 +87,7 @@ EVENT_BADGES = {
     "event_relay":       ("Baton Bearer",     "RLY", "🚩", "Carried the beacon for the tribe."),
     "event_conquest":    ("Banner Bearer",    "CON", "🏴", "Fought for the outposts."),
     "event_rampage":     ("Colossus Breaker", "COL", "📯", "Helped bring down a Colossus husk."),
+    "season_newborn":    ("Newborn",          "NEW", "🐣", "Finished the first season: the Season of the Newborn."),
 }
 
 # ════════════════════════════════════════════════════════════════

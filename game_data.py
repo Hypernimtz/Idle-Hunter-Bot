@@ -5855,3 +5855,66 @@ BEGINNER_CHALLENGE_REWARD = {"money": 500, "heal_item": "First Aid Kit", "title"
 # reachable instead of permanently gated — see hunters_path_myths_allowed()
 # in app.py. current_step reaches 7 only once step 6 ("travel") is DONE.
 HUNTERS_PATH_MYTH_UNLOCK_STEP = 7
+
+
+# ═══════════════════════════════════════════════════════════════
+# THE SEASON PASS  ·  /season  (Season 1: the Season of the Newborn)
+# ═══════════════════════════════════════════════════════════════
+# Season XP comes from SEASON TASKS (3 daily + 3 weekly, picked per player) — they count the same things the quests count.
+# Every 250 XP is a level; every level has a FREE reward (the premium track is shown but not on sale yet). Rewards are
+# consumables and cosmetics, plus a few gems — nothing that changes what the game pays.
+SEASON_PASS = {
+    "id": 1, "key": "newborn", "name": "Season of the Newborn", "emoji": "🐣",
+    "tagline": "Idle Hunter has only just hatched. Help it find its feet.",
+    "start": "2026-11-08", "end": "2027-01-03",        # UTC dates, both inclusive
+    "grace_days": 14,                                   # rewards can still be claimed this long after the season ends
+    "levels": 50, "xp_per_level": 250, "per_page": 10,
+}
+# need: "ammo" (your tool uses ammo) · "camp" (you have hunters) · "explore" (Explore Mode is on)
+SEASON_DAILY_TASKS = [
+    dict(id="d_hunts",   stat="hunts_done",             target=20, xp=60, desc="Go on **20** hunts"),
+    dict(id="d_catch",   stat="animals_caught",         target=40, xp=60, desc="Catch **40** animals"),
+    dict(id="d_sell",    stat="animals_sold_quest",     target=30, xp=50, desc="Sell **30** animals"),
+    dict(id="d_perfect", stat="perfect_catches",        target=2,  xp=70, desc="Land **2** Perfect Catches"),
+    dict(id="d_crates",  stat="crates_opened_quest",    target=3,  xp=60, desc="Open **3** crates"),
+    dict(id="d_daily",   stat="dailies_claimed_quest",  target=1,  xp=40, desc="Claim your **/daily** reward"),
+    dict(id="d_ammo",    stat="ammo_used_quest",        target=25, xp=40, desc="Use **25** rounds of ammo", need="ammo"),
+    dict(id="d_camp",    stat="idle_collections_quest", target=1,  xp=40, desc="Collect your **camp haul**", need="camp"),
+    dict(id="d_rare",    stat="rarity_caught",          target=3,  xp=80, desc="Catch **3** rare (or better) animals", req={"rarity": "rare"}),
+    dict(id="d_explore", stat="explore_catches",        target=5,  xp=80, desc="Catch **5** animals on the **Explore map**", need="explore"),
+]
+SEASON_WEEKLY_TASKS = [
+    dict(id="w_hunts",   stat="hunts_done",             target=150, xp=250, desc="Go on **150** hunts"),
+    dict(id="w_catch",   stat="animals_caught",         target=300, xp=250, desc="Catch **300** animals"),
+    dict(id="w_sell",    stat="animals_sold_quest",     target=200, xp=200, desc="Sell **200** animals"),
+    dict(id="w_perfect", stat="perfect_catches",        target=12,  xp=300, desc="Land **12** Perfect Catches"),
+    dict(id="w_crates",  stat="crates_opened_quest",    target=15,  xp=250, desc="Open **15** crates"),
+    dict(id="w_daily",   stat="dailies_claimed_quest",  target=5,   xp=200, desc="Claim your **/daily** reward **5** times"),
+    dict(id="w_quests",  stat="quests_completed_today", target=8,   xp=250, desc="Claim **8** daily quests"),
+    dict(id="w_myth",    stat="rarity_caught",          target=1,   xp=400, desc="Defeat a **Mythical** creature", req={"rarity": "mythic"}),
+    dict(id="w_explore", stat="explore_catches",        target=25,  xp=300, desc="Catch **25** animals on the **Explore map**", need="explore"),
+]
+
+
+def _build_season_rewards() -> list:
+    """The 50 free rewards. Each level is a list of parts: ("cash", x) x = multiples of the player's own animal worth;
+    ("crate", name, n) · ("item", name, n) · ("heal", name, n) · ("gems", n) · ("title", text) · ("keepsake", key) · ("badge", key)."""
+    cycle = [[("cash", 8)], [("heal", "Bandage", 2)], [("crate", "Common Crate", 1)], [("item", "Scent Lure", 1)],
+             [("cash", 12)], [("heal", "First Aid Kit", 1)], [("crate", "Uncommon Crate", 1)], [("item", "Camp Rations", 1)]]
+    out = {n: list(cycle[(n - 1) % len(cycle)]) for n in range(1, SEASON_PASS["levels"] + 1)}
+    out.update({
+        5: [("crate", "Rare Crate", 1)],
+        10: [("gems", 10), ("title", "Hatchling")],
+        15: [("crate", "Rare Crate", 1), ("item", "Rare Bait", 1)],
+        20: [("keepsake", "season_shell"), ("cash", 20)],
+        25: [("gems", 10), ("title", "Fledgling")],
+        30: [("crate", "Epic Crate", 1)],
+        35: [("gems", 10), ("cash", 40)],
+        40: [("gems", 10), ("title", "Wildling")],
+        45: [("crate", "Epic Crate", 1), ("item", "Weather Vane", 1)],
+        50: [("badge", "season_newborn"), ("keepsake", "season_crown"), ("title", "Newborn Veteran"), ("gems", 10)],
+    })
+    return [{"level": n, "parts": out[n]} for n in sorted(out)]
+
+
+SEASON_REWARDS = _build_season_rewards()

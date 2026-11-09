@@ -2273,7 +2273,7 @@ def test_weather_follows_the_region_and_the_world_condition():
     try:
         keys = {app.weather_key("tundra") for _ in range(1)}
         assert keys <= {k for k, _ in app.EXPLORE_AMBIENT_WEATHER["tundra"]}
-        assert app.weather_key("small_desert") in ("clear", "sandstorm") and app.weather_key("halloween_land") in dict(app.EXPLORE_AMBIENT_WEATHER["halloween_land"])
+        assert app.weather_key("small_desert") in dict(app.EXPLORE_AMBIENT_WEATHER["small_desert"]) and app.weather_key("halloween_land") in dict(app.EXPLORE_AMBIENT_WEATHER["halloween_land"])
         real = app.active_world_condition
         app.active_world_condition = lambda b: {"key": "heavy_rain"} if b == "forest" else None
         try:
@@ -2286,6 +2286,464 @@ def test_weather_follows_the_region_and_the_world_condition():
         assert app.weather_line("forest") in ("",) or "over the Forest" in app.weather_line("forest")
     finally:
         app._ex_weather_force = "clear"
+
+
+
+
+# ── more weather, 10-minute rotation, sighting bounty, daily notice, Chronicle intro ──
+
+def test_the_sky_rotates_every_ten_minutes_and_there_are_many_kinds():
+    assert app.EXPLORE_WEATHER_SLOT_MIN == 10 and len(app.EXPLORE_WEATHER) >= 17
+    assert {"thunderbolt", "drizzle", "hail", "blizzard", "heatwave", "gale", "mist", "monsoon", "meteors", "bloodmoon"} <= set(app.EXPLORE_WEATHER)
+    assert all(k in app.EXPLORE_WEATHER for t in app.EXPLORE_AMBIENT_WEATHER.values() for k, _ in t)
+    real_time = app.time.time
+    app._ex_weather_force = None
+    try:
+        seen = {}
+        for slot in range(120):                                                   # 120 slots = 20 hours
+            app.time.time = lambda s=slot: s * 600 + 5
+            seen[slot] = app.weather_key("jungle")
+        assert len(set(seen.values())) >= 5                                       # it really does move around
+        app.time.time = lambda: 1000 * 600 + 599
+        a = app.weather_key("forest")
+        app.time.time = lambda: 1000 * 600 + 1
+        assert app.weather_key("forest") == a                                     # stable inside one 10-minute slot
+    finally:
+        app.time.time = real_time
+        app._ex_weather_force = "clear"
+
+
+def test_thunderbolts_scatter_animals_and_heatwaves_tire_them():
+    _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"], st["steps"], st["x"], st["y"] = [], 20, 6, 6
+        a = _calm(st, dx=2)
+        with sky("thunderbolt"):
+            real = random.random
+            random.random = lambda: 0.0
+            try:
+                lines = app._ex_advance(U, st)
+            finally:
+                random.random = real
+            assert a["mood"] == "flee" and any("thunderbolt" in ln for ln in lines)
+            assert app._ex_weather(st)["hit"] == -0.08 and app._ex_weather(st)["flee"] == 1.4
+        b = _calm(st, name="Red Fox", dx=1, mood="flee")
+        with sky("heatwave"):
+            b["run"] = 0
+            app._ex_advance(U, st)
+            app._ex_advance(U, st)
+            assert b["rest"] > 0                                                  # tired after 2 steps instead of 3
+        with sky("blizzard"):
+            assert app._ex_sight(st) == 2 and app._ex_ttl(st) == app.EXPLORE_CLUE_TTL + 3
+        with sky("monsoon"):
+            assert app._ex_sight(st) == 4 and app._ex_weather(st)["flee"] == 0.6
+        with sky("mist"):
+            assert app._ex_sight(st) == 3
+
+
+def test_a_sighting_shows_its_bounty_on_every_message_and_pays_it_once():
+    sg = {"id": "z", "biome": "forest", "creature": next(iter(gd.MYTHIC_CREATURES)), "revealed": False, "clues": 3,
+          "started_ts": time.time(), "ends_ts": time.time() + 3000, "contributors": []}
+    sg["biome"] = next(b for b, ms in gd.BIOME_MYTHS.items() if sg["creature"] in ms) if any(sg["creature"] in ms for ms in gd.BIOME_MYTHS.values()) else "forest"
+    amt = app.sighting_bounty(sg["creature"])
+    assert amt == int(gd.MYTHIC_CREATURES[sg["creature"]]["value"] * app.SIGHTING_BOUNTY_VALUE_MULT) and amt > 0
+    assert app.SIGHTING_BOUNTY_VALUE_MULT >= 4 and app.SIGHTING_BOUNTY_GEMS > 0
+    blur = app._blur_money(amt)
+    assert abs(blur - amt) <= amt * 0.06
+    assert "SIGHTING BOUNTY" in app._sighting_progress_body(sg) and f"{blur:,}" in app._sighting_progress_body(sg)
+    app._active_sighting = sg
+    try:
+        assert "bounty" in app.active_sighting_banner().lower() and f"{blur:,}" in app.active_sighting_banner()
+        assert f"{blur:,}" in app._sighting_here(sg["biome"]) and f"{blur:,}" in app.active_sighting_line()
+        sg["revealed"] = True
+        assert f"{amt:,}" in app._sighting_reveal_body(sg) and f"{amt:,}" in app.active_sighting_banner()
+        # killing it while it is on the loose pays the bounty on top, once per hunter
+        name, biome = sg["creature"], sg["biome"]
+        d = _fresh()
+        app._active_sighting = sg                                                   # (the fixture clears the live sighting)
+        d["biome"] = biome
+        c = gd.MYTHIC_CREATURES[name]
+        money0, gems0 = d["money"], d["gems"]
+        d["stats"]["myths_killed"] = 5                                               # (not the first-kill bounty)
+        out = app._myth_fight_win(U, name, c, biome, {})
+        assert out["sighting_bonus"] == amt and d["money"] - money0 >= amt + int(c["value"] * 1.6) - 1
+        assert d["gems"] - gems0 >= app.SIGHTING_BOUNTY_GEMS + 3
+        money1 = d["money"]
+        out2 = app._myth_fight_win(U, name, c, biome, {})
+        assert out2["sighting_bonus"] == 0 and d["money"] - money1 < amt            # once per hunter
+        sg["revealed"] = False
+    finally:
+        app._active_sighting = None
+
+
+def test_a_new_day_brings_one_private_daily_theme_card_that_introduces_the_chronicle():
+    d = _fresh(level=300)
+    d.pop("theme_notice_day", None)
+    d.pop("chronicle_intro_seen", None)
+    sent = []
+
+    async def fake(interaction, comps, ephemeral=False):
+        sent.append((comps, ephemeral))
+
+    class It:
+        class response:
+            @staticmethod
+            def is_done():
+                return True
+    real = app.send_v2_followup
+    app.send_v2_followup = fake
+    try:
+        run(app.maybe_notify_daily_theme(It(), U))
+        assert len(sent) == 1 and sent[0][1] is True
+        blob = json.dumps(sent[0][0], ensure_ascii=False)
+        t = app.current_theme()
+        assert "Daily Theme started" in blob and t["name"] in blob and f"ev3:theme:{U}" in blob
+        assert "Chronicle" in blob and "storybook" in blob and f"ev3:chron:open:{U}" in blob      # first card explains the Chronicle
+        run(app.maybe_notify_daily_theme(It(), U))
+        assert len(sent) == 1                                                       # once a day
+        d["theme_notice_day"] = "2000-01-01"
+        run(app.maybe_notify_daily_theme(It(), U))
+        assert len(sent) == 2 and "storybook" not in json.dumps(sent[1][0], ensure_ascii=False)   # the intro is only once
+    finally:
+        app.send_v2_followup = real
+
+
+def test_the_events_screen_explains_the_chronicle_and_drops_the_weekly_list():
+    d = _fresh(level=300)
+    app.stop_active_event()
+    blob = json.dumps(app.build_events_components(U), ensure_ascii=False)
+    assert "Chronicle" in blob and "storybook" in blob
+    assert "This week's Daily Themes" not in blob and "Saturday Monster Rampage" not in blob and "Season:" not in blob
+    assert "Today's Daily Theme" in blob
+    assert "What is the Chronicle?" in json.dumps(app.build_chronicle(U), ensure_ascii=False)
+
+
+
+
+# ── the season pass: /season view · tasks · claim · info · top ──────────────
+
+@contextlib.contextmanager
+def season_live(on=True):
+    """Pretend it is the middle of the season (or well outside it)."""
+    real = app.season_phase
+    app.season_phase = lambda now=None: "live" if on else "over"
+    try:
+        yield
+    finally:
+        app.season_phase = real
+
+
+def _sx(**over):
+    d = _fresh(level=300, **over)
+    d.pop("season", None)
+    return d
+
+
+def test_the_first_season_is_the_season_of_the_newborn_with_fifty_free_rewards():
+    S = gd.SEASON_PASS
+    assert S["id"] == 1 and S["name"] == "Season of the Newborn" and S["emoji"] == "🐣" and S["levels"] == 50 and S["per_page"] == 10
+    assert len(gd.SEASON_REWARDS) == 50 and [r["level"] for r in gd.SEASON_REWARDS] == list(range(1, 51))
+    gems = 0
+    for r in gd.SEASON_REWARDS:
+        assert r["parts"]
+        for p in r["parts"]:
+            if p[0] == "crate": assert p[1] in gd.CRATE_TIERS
+            if p[0] == "item": assert p[1] in gd.ITEMS
+            if p[0] == "heal": assert p[1] in gd.HEALING_ITEMS
+            if p[0] == "gems": gems += p[1]
+            if p[0] == "keepsake": assert p[1] in app.ED.KEEPSAKES
+            if p[0] == "badge": assert p[1] in gd.SPECIAL_BADGES
+    assert gems == 50                                                            # the whole track is worth 50 gems
+    assert ("badge", "season_newborn") in gd.SEASON_REWARDS[-1]["parts"]
+    assert all(t["stat"] and t["target"] > 0 and t["xp"] > 0 for t in gd.SEASON_DAILY_TASKS + gd.SEASON_WEEKLY_TASKS)
+    from datetime import datetime, timezone
+    ts = lambda s: datetime(*map(int, s.split("-")), 12, tzinfo=timezone.utc).timestamp()
+    assert app.season_phase(ts("2026-11-01")) == "upcoming" and app.season_phase(ts("2026-12-01")) == "live"
+    assert app.season_phase(ts("2027-01-03")) == "live" and app.season_phase(ts("2027-01-10")) == "grace"
+    assert app.season_phase(ts("2027-02-01")) == "over"
+
+
+def test_season_tasks_are_three_daily_and_three_weekly_and_stable_all_day():
+    d = _sx()
+    st = app.season_roll(U)
+    assert len(st["daily"]) == 3 and len(st["weekly"]) == 3
+    ids = [t["id"] for t in st["daily"]]
+    assert len(set(ids)) == 3 and all(t["progress"] == 0 and not t["done"] for t in st["daily"] + st["weekly"])
+    st["d_day"] = ""                                                              # "tomorrow": rolled again, but the same day gives the same set
+    again = app.season_roll(U)
+    assert [t["id"] for t in again["daily"]] == ids
+    # tasks only ask for what you can do
+    d["tool"] = "Bare Hands"
+    d["explore_mode"] = False
+    d["idle"]["stacks"] = 0
+    for day in range(40):
+        picks = app._season_pick(U, gd.SEASON_DAILY_TASKS, 3, f"x{day}")
+        assert not any(t.get("need") in ("ammo", "camp", "explore") for t in picks)
+    d["explore_mode"] = True
+    assert any(t["id"] == "d_explore" for day in range(60) for t in app._season_pick(U, gd.SEASON_DAILY_TASKS, 3, f"y{day}"))
+
+
+def test_quest_progress_feeds_season_tasks_and_levels_follow_xp():
+    d = _sx()
+    with season_live():
+        st = app.season_roll(U)
+        st["daily"] = [dict(gd.SEASON_DAILY_TASKS[0], progress=0, done=False),                  # 20 hunts, +60
+                       dict(gd.SEASON_DAILY_TASKS[8], progress=0, done=False),                  # 3 rare+, +80
+                       dict(gd.SEASON_DAILY_TASKS[5], progress=0, done=False)]
+        st["weekly"] = [dict(gd.SEASON_WEEKLY_TASKS[7], progress=0, done=False)]                # a Mythical
+        app.quest_progress(U, "hunts_done", 12)
+        assert st["daily"][0]["progress"] == 12 and st["xp"] == 0
+        app.quest_progress(U, "hunts_done", 30)                                                   # over the target: capped, paid once
+        assert st["daily"][0]["done"] and st["daily"][0]["progress"] == 20 and st["xp"] == 60
+        app.quest_progress(U, "hunts_done", 5)
+        assert st["xp"] == 60
+        app.quest_progress(U, "rarity_caught", 5, rarity="common")                                # too common to count
+        assert st["daily"][1]["progress"] == 0
+        app.quest_progress(U, "rarity_caught", 3, rarity="epic")
+        assert st["daily"][1]["done"] and st["xp"] == 140
+        app.quest_progress(U, "daily_streak_reached", 9, absolute=True)                           # running totals are ignored
+        app.quest_progress(U, "dailies_claimed_quest", 1)
+        assert st["xp"] == 180 and st["tasks_done"] == 3
+        st["xp"] = 240
+        app.quest_progress(U, "rarity_caught", 1, rarity="mythic")                                # +400 -> level 2 (and a note)
+        assert st["xp"] == 640 and app.season_level(st["xp"]) == 2
+        assert any("Season level 2" in n for n in st["notes"])
+    assert app.season_level(0) == 0 and app.season_level(249) == 0 and app.season_level(250) == 1 and app.season_level(10 ** 9) == 50
+    with season_live(False):
+        before = st["xp"]
+        st["daily"][2]["done"], st["daily"][2]["progress"] = False, 0
+        app.quest_progress(U, "dailies_claimed_quest", 1)
+        assert st["xp"] == before                                                                 # nothing counts outside the season
+
+
+def test_the_notes_show_up_once_on_the_hunt_and_explore_panels():
+    d = _sx()
+    with season_live():
+        st = app.season_roll(U)
+        st["daily"] = [dict(gd.SEASON_DAILY_TASKS[0], progress=19, done=False)]
+        app.quest_progress(U, "hunts_done", 1)
+        assert st["notes"]
+        panel = json.dumps(app.build_explore_components(U), ensure_ascii=False)
+        assert "Season task done" in panel and "+60 Season XP" in panel
+        assert "Season task done" not in json.dumps(app.build_explore_components(U), ensure_ascii=False)      # shown once
+        assert app.season_notes_pop(U) == []
+
+
+def test_claiming_pays_every_unlocked_level_once():
+    d = _sx(money=0)
+    d["gems"], d["healing_inv"], d["crate_inv"] = 0, {}, {}
+    with season_live():
+        st = app.season_state(U)
+        assert app.season_claimable(U) == [] and app.season_claim(U) == []
+        st["xp"] = 250 * 10                                                      # level 10
+        assert [r["level"] for r in app.season_claimable(U)] == list(range(1, 11))
+        lines = app.season_claim(U)
+        assert len(lines) == 10 and st["claimed"] == list(range(1, 11))
+        assert d["money"] > 0 and d["gems"] == 10 and "Hatchling" in d["earned_titles"]
+        assert d["crate_inv"].get("Rare Crate", 0) >= 1 and d["healing_inv"].get("Bandage", 0) >= 2
+        assert app.season_claim(U) == []                                         # nothing twice
+        st["xp"] = 250 * 50
+        app.season_claim(U)
+        assert "season_newborn" in d["special_badges"] and set(d["keepsakes"]) >= {"season_shell", "season_crown"}
+        assert "Newborn Veteran" in d["earned_titles"] and d["gems"] == 50
+    with season_live(False):
+        st["claimed"] = []
+        assert app.season_claim(U) == []                                         # (after the grace period it is closed)
+
+
+def test_the_pass_is_drawn_page_by_page_with_or_without_a_background():
+    from PIL import Image
+    d = _sx()
+    st = app.season_state(U)
+    st["xp"], st["claimed"] = 250 * 13, list(range(1, 8))
+    seen = []
+    for banner in (None, Image.new("RGB", (900, 500), (60, 120, 200))):
+        app._season_banner_img = banner
+        for page in range(5):
+            snap = app._season_snapshot(U, page)
+            assert set(snap["rewards"]) == set(range(page * 10 + 1, page * 10 + 11)) and snap["level"] == 13
+            png = app._season_render(snap)
+            im = _png_ok(png, (1200, 700))
+            seen.append(im.getpixel((600, 5)))
+    app._season_banner_img = None
+    # claimed levels are gold, ready ones green: the node colours on page 1
+    snap = app._season_snapshot(U, 0)
+    im = _png_ok(app._season_render(snap), (1200, 700))
+    assert im.getpixel((150, 318 - 22))[0] > 200 and im.getpixel((150, 318 - 22))[2] < 120          # level 1: claimed (gold)
+    snap2 = app._season_snapshot(U, 1)
+    im2 = _png_ok(app._season_render(snap2), (1200, 700))
+    assert im2.getpixel((150, 318 - 22))[1] > 150 and im2.getpixel((150, 318 - 22))[0] < 120         # level 11: ready (green)
+
+
+def test_the_season_view_has_paging_claim_tasks_and_a_way_back():
+    d = _sx()
+    st = app.season_state(U)
+    st["xp"] = 250 * 3
+    with season_live():
+        blob = json.dumps(app.build_season_view(U, 0, image=True), ensure_ascii=False)
+        assert "attachment://season.png" in blob and "Season of the Newborn" in blob and "Level 3/50" in blob
+        assert f"season:view:1:{U}" in blob and f"season:tasks:{U}" in blob and f"season:claim:{U}" in blob and f"nav:menu:{U}" in blob
+        assert "Claim (3)" in blob and "premium track coming soon" in blob
+        txt = json.dumps(app.build_season_view(U, 0, image=False), ensure_ascii=False)
+        assert "attachment://" not in txt and "**1**" in txt and "🟢" in txt
+        assert app.build_season_view(U, 99) and app._season_page[U] == 4
+        first = app.build_season_view(U, 0)[0]["components"]
+        nav = next(c for c in first if c.get("type") == 1)["components"]
+        assert nav[0]["disabled"] is True and nav[1]["disabled"] is False
+        st["claimed"] = [1, 2, 3]
+        assert next(b for b in next(c for c in app.build_season_view(U, 0)[0]["components"] if c.get("type") == 1)["components"]
+                    if b["label"].startswith("Claim"))["disabled"] is True
+        assert "Season Tasks" in json.dumps(app.build_season_tasks(U), ensure_ascii=False)
+        info = json.dumps(app.build_season_info(U), ensure_ascii=False)
+        assert "Premium track" in info and "Newborn Veteran" in info
+        app._season_page[U] = 2
+        assert f"season:view:2:{U}" in json.dumps(app.build_season_tasks(U))          # tasks -> back to the season view
+        assert f"season:view:2:{U}" in json.dumps(app.build_season_info(U))
+
+
+def test_season_buttons_navigate_view_to_tasks_and_back_and_claim_rewards():
+    d = _sx(money=0)
+    shown = []
+
+    async def rec(interaction, uid, page=None, *, new=False):
+        shown.append((uid, page, new))
+    real = app.season_show
+    app.season_show = rec
+    try:
+        with season_live(), tr.Harness() as h:
+            st = app.season_state(U)
+            st["xp"] = 250 * 2
+            run(app._dispatch_component(tr.FakeInteraction(U, f"season:view:1:{U}")))
+            assert shown[-1] == (U, 1, False)
+            run(app._dispatch_component(tr.FakeInteraction(U, f"season:tasks:{U}")))
+            assert "Season Tasks" in json.dumps(h.panels[-1], ensure_ascii=False)
+            run(app._dispatch_component(tr.FakeInteraction(U, f"season:info:{U}")))
+            assert "How to play it" in json.dumps(h.panels[-1], ensure_ascii=False)
+            run(app._dispatch_component(tr.FakeInteraction(U, f"season:top:{U}")))
+            assert "Season Top" in json.dumps(h.panels[-1], ensure_ascii=False)
+            run(app._dispatch_component(tr.FakeInteraction(U, f"season:claim:{U}")))
+            assert st["claimed"] == [1, 2] and d["money"] > 0 and any("claimed" in m for m in h.ephemerals)
+            run(app._dispatch_component(tr.FakeInteraction("999", f"season:claim:{U}")))           # someone else's button
+            assert st["claimed"] == [1, 2]
+            run(app._dispatch_component(tr.FakeInteraction(U, f"nav:season:{U}")))
+            assert shown[-1][0] == U
+    finally:
+        app.season_show = real
+
+
+def test_season_view_goes_out_as_a_picture_and_falls_back_to_text():
+    d = _sx()
+    sent = []
+
+    class Http:
+        async def request(self, route, *, files=None, form=None, **kw):
+            sent.append((route.method, route.path, form, files))
+
+    class Resp:
+        def is_done(self): return True
+        async def defer(self): pass
+
+    class It:
+        id, token, application_id, channel_id = 8, "tok", 99, 5
+        def __init__(self): self.response = Resp(); self.client = type("C", (), {"http": Http()})()
+
+    async def nobanner():
+        return None
+    real = app.season_fetch_banner
+    app.season_fetch_banner = nobanner
+    try:
+        with season_live():
+            run(app.season_show(It(), U, 0, new=True))
+            assert len(sent) == 1 and sent[0][0] == "POST" and "webhooks" in sent[0][1]
+            payload = json.loads(next(f["value"] for f in sent[0][2] if f["name"] == "payload_json"))
+            assert payload["attachments"] == [{"id": 0, "filename": "season.png"}] and "attachment://season.png" in json.dumps(payload["components"])
+            real_png = app._PIL_OK
+            app._PIL_OK = False
+            fell = []
+
+            async def fake(interaction, comps, ephemeral=False):
+                fell.append(comps)
+            rf = app.send_v2_followup
+            app.send_v2_followup = fake
+            try:
+                run(app.season_show(It(), U, 0, new=True))
+            finally:
+                app._PIL_OK, app.send_v2_followup = real_png, rf
+            assert fell and "attachment://" not in json.dumps(fell[0])
+    finally:
+        app.season_fetch_banner = real
+
+
+def test_season_commands_menu_entry_leaderboard_and_banner_setting():
+    grp = app.bot.tree.get_command("season")
+    assert grp is not None and {c.name for c in grp.commands} == {"view", "tasks", "claim", "info", "top"}
+    d = _sx()
+    st = app.season_state(U)
+    st["xp"] = 700
+    other = "5551"
+    app.data[other] = dict(app.data[U], is_tester=False, season={"id": 1, "xp": 5000, "claimed": [], "daily": [], "weekly": [], "notes": []})
+    app.data[other]["username"] = "Rival"
+    try:
+        top = json.dumps(app.build_season_top(U), ensure_ascii=False)
+        assert top.index("5,000 XP") < top.index("700 XP") and "You are **#2** of 2" in top
+    finally:
+        app.data.pop(other, None)
+    with season_live():
+        menu = json.dumps(app.build_menu_components(U, "Tester"), ensure_ascii=False)
+        assert '"value": "season"' in menu and "Season of the Newborn" in menu and "level 2/50" in menu
+    bot_cmds = {c.name for c in app.bot_group.commands}
+    assert "seasonbanner" in bot_cmds
+    saved = []
+    real = app._write_json_bg
+    app._write_json_bg = lambda path, payload: saved.append(payload)
+    old = app.SEASON_BANNER_URL
+    try:
+        app.SEASON_BANNER_URL = "https://example.invalid/bg.png"
+        app.save_config()
+    finally:
+        app._write_json_bg, app.SEASON_BANNER_URL = real, old
+    assert saved and saved[-1]["season_banner_url"] == "https://example.invalid/bg.png"
+    app.FEATURE_SEASON = False
+    try:
+        assert app.season_menu_line(U) == "" and '"value": "season"' not in json.dumps(app.build_menu_components(U, "T"), ensure_ascii=False)
+    finally:
+        app.FEATURE_SEASON = True
+
+
+def test_explore_catches_count_for_season_tasks_and_the_daily_card_mentions_the_season():
+    d = _armed("Longbow", 20)
+    d.pop("season", None)
+    with season_live(), terrain(), still_world():
+        st_s = app.season_roll(U)
+        st_s["daily"] = [dict(gd.SEASON_DAILY_TASKS[9], progress=0, done=False)]               # 5 Explore catches
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        real = _land()
+        try:
+            app.explore_fire(U)
+        finally:
+            random.random = real
+        assert st_s["daily"][0]["progress"] == 1
+    sent = []
+
+    async def fake(interaction, comps, ephemeral=False):
+        sent.append(json.dumps(comps, ensure_ascii=False))
+
+    class It:
+        class response:
+            @staticmethod
+            def is_done(): return True
+    rf = app.send_v2_followup
+    app.send_v2_followup = fake
+    try:
+        d["theme_notice_day"] = "2000-01-01"
+        with season_live():
+            run(app.maybe_notify_daily_theme(It(), U))
+        assert "Season of the Newborn" in sent[0] and "season tasks" in sent[0]
+    finally:
+        app.send_v2_followup = rf
 
 
 

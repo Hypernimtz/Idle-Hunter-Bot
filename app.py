@@ -100,6 +100,7 @@ from game_data import (
     EXPLORE_PROPS, EXPLORE_BIOME_PROPS, EXPLORE_BIG_ALWAYS, EXPLORE_BIG_SOMETIMES, EXPLORE_KIND_ART, EXPLORE_STAMPS,
     EXPLORE_GROUND, EXPLORE_GROUND_LAVA, EXPLORE_GROUND_WATER, EXPLORE_REALM_GROUND, EXPLORE_LANDMARK_PERMILLE_BY,
     HALLOWEEN_BIOME, HALLOWEEN_CANDY_DAILY_CAP, HALLOWEEN_TITLES,
+    SEASON_PASS, SEASON_DAILY_TASKS, SEASON_WEEKLY_TASKS, SEASON_REWARDS,
     GAMBLING_BADGES, AMMO_VARIETY_TYPES,
     TROPHY_HEAL_COOLDOWN_S, TEMP_BOOST_MAX_MINUTES,
     GIFT_BOX_COIN_CHANCE, GIFT_BOX_COIN_X,
@@ -734,6 +735,26 @@ SIGHTING_REPEAT_CHANCE         = 0.04   # after you have met it once, later enco
 SIGHTING_CLUES_PER_PLAYER_MAX  = 25     # one player can supply at most half the clues, so it takes two hunters
 SIGHTING_REWARD_MIN_HUNTS      = 3      # hunts gathering clues to earn the participation reward
 SIGHTING_REWARD_ITEM           = "Scent Lure"
+SIGHTING_BOUNTY_VALUE_MULT     = 4.0    # killing the sighted creature while it is on the loose pays this many x its value ON TOP of its bounty
+SIGHTING_BOUNTY_GEMS           = 15     # ...plus these gems; once per hunter per sighting
+
+
+def sighting_bounty(creature: str) -> int:
+    """The extra bounty on a sighted creature (paid once per hunter, on their first kill of it while the sighting runs)."""
+    return int(MYTHIC_CREATURES.get(creature, {}).get("value", 0) * SIGHTING_BOUNTY_VALUE_MULT)
+
+
+def _blur_money(n: int) -> int:
+    """Round to two significant digits — enough to show the stakes without naming the creature by its price."""
+    if n < 100:
+        return n
+    digits = len(str(int(n))) - 2
+    return int(round(n, -digits))
+
+
+def sighting_bounty_text(sg: dict, exact: bool = False) -> str:
+    amt = sighting_bounty(sg["creature"])
+    return (f"◈ {amt:,}" if exact else f"≈ ◈ {_blur_money(amt):,}") + f" + {emoji('gem')} {SIGHTING_BOUNTY_GEMS}"
 
 def get_active_sighting() -> dict | None:
     global _active_sighting, _last_sighting_end
@@ -774,9 +795,10 @@ def _sighting_here(biome: str) -> str:
     if not sg or sg.get("biome") != biome:
         return ""
     if sg.get("revealed"):
-        return f"{creature_emoji(sg['creature'])} **{sg['creature']}** sighted — ends <t:{int(sg['ends_ts'])}:R>"
+        return (f"{creature_emoji(sg['creature'])} **{sg['creature']}** sighted · bounty +{sighting_bounty_text(sg, True)} "
+                f"— ends <t:{int(sg['ends_ts'])}:R>")
     return (f"Unknown creature reported · clues {sg.get('clues',0)}/{SIGHTING_CLUE_GOAL} "
-            f"· ends <t:{int(sg['ends_ts'])}:R>")
+            f"· bounty {sighting_bounty_text(sg)} · ends <t:{int(sg['ends_ts'])}:R>")
 
 def active_sighting_banner() -> str:
     sg = get_active_sighting()
@@ -786,10 +808,12 @@ def active_sighting_banner() -> str:
     if sg.get("revealed"):
         ico = creature_emoji(sg["creature"])
         return (f"{emoji('siren')} **GLOBAL SIGHTING — {ico} {sg['creature']}**\n"
-                f"-# Confirmed in {where}. Elevated encounter chance until <t:{int(sg['ends_ts'])}:R>.")
+                f"-# Confirmed in {where}. Elevated encounter chance until <t:{int(sg['ends_ts'])}:R>. "
+                f"Sighting bounty: **{sighting_bounty_text(sg, True)}** on top of the normal bounty.")
     return (f"{emoji('siren')} **GLOBAL SIGHTING**\n"
             f"-# Something big reported in {where}. Identity unknown — "
-            f"hunt there to gather clues (**{sg.get('clues',0)}/{SIGHTING_CLUE_GOAL}**).")
+            f"hunt there to gather clues (**{sg.get('clues',0)}/{SIGHTING_CLUE_GOAL}**). "
+            f"Bounty for the first kill: **{sighting_bounty_text(sg)}**.")
 
 def active_sighting_line() -> str:
     """Single-line flattened version of active_sighting_banner(), for contexts
@@ -804,9 +828,9 @@ def active_sighting_line() -> str:
     if sg.get("revealed"):
         ico = creature_emoji(sg["creature"])
         return (f"{emoji('siren')} **GLOBAL SIGHTING** — {ico} {sg['creature']} confirmed in {where}, "
-                f"ends <t:{int(sg['ends_ts'])}:R>")
+                f"bounty +{sighting_bounty_text(sg, True)}, ends <t:{int(sg['ends_ts'])}:R>")
     return (f"{emoji('siren')} **GLOBAL SIGHTING** — something big in {where}, "
-            f"clues {sg.get('clues',0)}/{SIGHTING_CLUE_GOAL}")
+            f"clues {sg.get('clues',0)}/{SIGHTING_CLUE_GOAL}, bounty {sighting_bounty_text(sg)}")
 
 def _sighting_add_clues(user_id: str, biome: str) -> None:
     """One hunt's contribution to the active sighting. Call inside run_hunt."""
@@ -1184,9 +1208,6 @@ def _events_idle_panel(user_id: str) -> list:
     (the daily theme, which is separate from the /daily reward and quests) and how to join in."""
     t = current_theme()
     today_wd = datetime.now(timezone.utc).weekday()
-    week = "\n".join(
-        (f"**{ev_icon(d)} {d['name']}** ← today" if i == today_wd else f"{ev_icon(d)} {d['name']}")
-        for i, d in ED.DAILY_THEMES.items())
     how = "\n".join(f"- {x}" for x in _THEME_HOWTO.get(t["key"], []))
     head = (
         f"# {emoji('earth')} Events\n"
@@ -1201,16 +1222,12 @@ def _events_idle_panel(user_id: str) -> list:
         f"### How to take part today\n{how}\n"
         f"-# {t['limit']}"
     )
-    season = (
-        f"## {emoji('book')} Season: {ED.SEASON['title']}\n"
-        f"*{ED.SEASON['tagline']}*\n"
-        f"-# Each event is one chapter of this story. Read what you've unlocked so far in the **Chronicle**.\n\n"
-        f"### This week's Daily Themes\n{week}"
-    )
+    chron = (f"{CHRONICLE_INTRO}\n"
+             f"-# Seasonal rewards, tasks and the pass: </season view:{COMMAND_ID.get('season', '0')}>")
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": head[:3900]},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 10, "content": season[:3900]},
+        {"type": 10, "content": chron[:3900]},
         {"type": 14, "divider": True, "spacing": 1},
         _ev3_nav_row(user_id),
     ]}]
@@ -2720,7 +2737,9 @@ def build_chronicle(uid: str, key: str = "") -> list:
     _ev3_chron_view[uid] = key
     chron = data.get(uid, {}).get("chronicle", {})
     if key == "prologue":
-        body = f"## {ED.SEASON['title']}\n*{ED.SEASON['tagline']}*\n\n{ED.SEASON['prologue']}"
+        body = (f"## {ED.SEASON['title']}\n*{ED.SEASON['tagline']}*\n\n{ED.SEASON['prologue']}"
+                "\n\n-# **What is the Chronicle?** The storybook of the Wilds: every event you play unlocks its chapter here, "
+                "plus keepsakes, titles and badges. Use the menu below to turn to a chapter.")
         cast = "\n".join(f"**{n}** — {t}" for n, t in ED.CAST.items())
         body += f"\n\n### Who's who\n{cast}"
     elif key == "epilogue":
@@ -3790,7 +3809,8 @@ def save_config():
             "warned":   list(_maintenance_warned),
             "since":    maintenance_since,
         },
-        "updates": UPDATE
+        "updates": UPDATE,
+        "season_banner_url": globals().get("SEASON_BANNER_URL", ""),
     })
 
 def load_config() -> dict:
@@ -8711,39 +8731,56 @@ def _ex_in_view(st: dict, a: dict) -> bool:
 
 # ── Explore weather: what the sky over a region is doing right now ─────────────────────────────────────────────
 # A live world condition (Heavy Rain, Aurora, Clear Skies) shapes the sky of its region; otherwise each region has its own
-# ambient weather that changes every EXPLORE_WEATHER_SLOT_H hours. It is drawn on the map and nudges Explore a little:
+# ambient weather that changes every EXPLORE_WEATHER_SLOT_MIN minutes. It is drawn on the map and nudges Explore a little:
 #   flee (x animals' chance to bolt) · hit (added to your hit chance) · sight (animals further than this are hidden) · clue (steps
 #   a clue lasts longer). It never changes what a catch pays.
-EXPLORE_WEATHER_SLOT_H = 3
+EXPLORE_WEATHER_SLOT_MIN = 10          # the sky of every region is re-rolled this often
 EXPLORE_WEATHER = {
-    "clear":     dict(emoji="☀️", name="Clear", blurb=""),
-    "sunbeams":  dict(emoji="🌤️", name="Clear Skies", blurb="Sunbeams through the haze. Nothing in your way."),
-    "rain":      dict(emoji="🌧️", name="Rain", blurb="Animals hunker down and bolt less, but wet gear costs you a little aim (-3%).",
-                      flee=0.7, hit=-0.03),
-    "storm":     dict(emoji="⛈️", name="Thunderstorm", blurb="Thunder spooks them (they bolt more) and the wind ruins your aim (-6%).",
-                      flee=1.25, hit=-0.06),
-    "fog":       dict(emoji="🌫️", name="Fog", blurb="You can only make out animals within 2 tiles.", sight=2),
-    "snow":      dict(emoji="❄️", name="Snowfall", blurb="Tracks stay fresh in the snow: clues last 2 steps longer.", clue=2),
-    "sandstorm": dict(emoji="🏜️", name="Sandstorm", blurb="You can only make out animals within 3 tiles, and grit costs you a little aim (-4%).",
-                      sight=3, hit=-0.04),
-    "ash":       dict(emoji="🌋", name="Ashfall", blurb="Falling ash costs you a little aim (-4%).", hit=-0.04),
-    "aurora":    dict(emoji="✨", name="Aurora", blurb="Lights dance in the sky. Pretty, and harmless."),
+    "clear":       dict(emoji="☀️", name="Clear", blurb=""),
+    "sunbeams":    dict(emoji="🌤️", name="Clear Skies", blurb="Sunbeams through the haze. Nothing in your way."),
+    "drizzle":     dict(emoji="🌦️", name="Drizzle", blurb="A light rain: animals bolt a little less.", flee=0.85),
+    "rain":        dict(emoji="🌧️", name="Rain", blurb="Animals hunker down and bolt less, but wet gear costs you a little aim (-3%).",
+                        flee=0.7, hit=-0.03),
+    "monsoon":     dict(emoji="🌊", name="Monsoon", blurb="Sheets of rain: animals barely move, you can only make out animals within 4 tiles "
+                        "and aim suffers (-5%).", flee=0.6, hit=-0.05, sight=4),
+    "storm":       dict(emoji="⛈️", name="Thunderstorm", blurb="Thunder spooks them (they bolt more) and the wind ruins your aim (-6%).",
+                        flee=1.25, hit=-0.06),
+    "thunderbolt": dict(emoji="⚡", name="Thunderbolt Storm", blurb="Lightning cracks down all around: animals bolt much more, now and then a bolt "
+                        "scatters the ones near you, and your aim suffers (-8%).", flee=1.4, hit=-0.08, strike=0.12),
+    "hail":        dict(emoji="🌨️", name="Hailstorm", blurb="Hail rattles down: animals bolt a bit more and your aim suffers (-5%).",
+                        flee=1.1, hit=-0.05),
+    "gale":        dict(emoji="💨", name="Gale", blurb="A howling wind carries your scent: animals bolt more (+15%) and your aim suffers (-4%).",
+                        flee=1.15, hit=-0.04),
+    "fog":         dict(emoji="🌫️", name="Fog", blurb="You can only make out animals within 2 tiles.", sight=2),
+    "mist":        dict(emoji="🌁", name="Mist", blurb="You can only make out animals within 3 tiles.", sight=3),
+    "snow":        dict(emoji="❄️", name="Snowfall", blurb="Tracks stay fresh in the snow: clues last 2 steps longer.", clue=2),
+    "blizzard":    dict(emoji="🌬️", name="Blizzard", blurb="Whiteout: you can only make out animals within 2 tiles and aim suffers (-5%), "
+                        "but tracks last 3 steps longer.", sight=2, hit=-0.05, clue=3),
+    "sandstorm":   dict(emoji="🏜️", name="Sandstorm", blurb="You can only make out animals within 3 tiles, and grit costs you a little aim (-4%).",
+                        sight=3, hit=-0.04),
+    "heatwave":    dict(emoji="🔥", name="Heatwave", blurb="Scorching heat: animals tire a step sooner when they run, but you tire too (aim -2%).",
+                        tire=1, hit=-0.02),
+    "ash":         dict(emoji="🌋", name="Ashfall", blurb="Falling ash costs you a little aim (-4%).", hit=-0.04),
+    "aurora":      dict(emoji="✨", name="Aurora", blurb="Lights dance in the sky. Pretty, and harmless."),
+    "meteors":     dict(emoji="☄️", name="Meteor Shower", blurb="Shooting stars streak overhead. Pretty, and harmless."),
+    "bloodmoon":   dict(emoji="🌕", name="Blood Moon", blurb="A red moon: animals are bolder and bolt less (-20%), but your aim suffers (-3%).",
+                        flee=0.8, hit=-0.03),
 }
 EXPLORE_AMBIENT_WEATHER = {
-    "village": [("clear", 50), ("rain", 25), ("fog", 15), ("storm", 10)],
-    "forest": [("clear", 40), ("rain", 30), ("fog", 20), ("storm", 10)],
-    "woods": [("clear", 35), ("snow", 25), ("fog", 25), ("rain", 15)],
-    "small_desert": [("clear", 70), ("sandstorm", 30)],
-    "sunken_coast": [("clear", 35), ("rain", 25), ("fog", 25), ("storm", 15)],
-    "tundra": [("clear", 30), ("snow", 50), ("fog", 20)],
-    "jungle": [("clear", 30), ("rain", 45), ("storm", 15), ("fog", 10)],
-    "swamp": [("clear", 25), ("fog", 40), ("rain", 25), ("storm", 10)],
-    "volcanic_highlands": [("clear", 50), ("ash", 40), ("storm", 10)],
-    "cursed_ruins": [("clear", 30), ("fog", 50), ("storm", 20)],
-    "rainbow": [("clear", 50), ("rain", 40), ("sunbeams", 10)],
-    "abyssal_depths": [("clear", 70), ("fog", 30)],
-    "celestial_peaks": [("clear", 40), ("snow", 30), ("aurora", 20), ("fog", 10)],
-    "halloween_land": [("fog", 45), ("clear", 25), ("storm", 15), ("rain", 15)],
+    "village": [("clear", 28), ("sunbeams", 6), ("drizzle", 14), ("rain", 14), ("mist", 8), ("fog", 6), ("gale", 6), ("storm", 8), ("thunderbolt", 5), ("hail", 5)],
+    "forest": [("clear", 24), ("drizzle", 14), ("rain", 18), ("mist", 14), ("fog", 8), ("storm", 8), ("thunderbolt", 6), ("gale", 5), ("hail", 3)],
+    "woods": [("clear", 22), ("snow", 22), ("mist", 14), ("fog", 12), ("drizzle", 8), ("rain", 6), ("blizzard", 8), ("gale", 5), ("hail", 3)],
+    "small_desert": [("clear", 34), ("sunbeams", 10), ("heatwave", 22), ("sandstorm", 22), ("gale", 8), ("meteors", 4)],
+    "sunken_coast": [("clear", 22), ("drizzle", 12), ("rain", 16), ("fog", 12), ("mist", 8), ("storm", 12), ("thunderbolt", 8), ("gale", 8), ("monsoon", 2)],
+    "tundra": [("clear", 20), ("snow", 34), ("blizzard", 16), ("fog", 10), ("mist", 6), ("hail", 6), ("aurora", 8)],
+    "jungle": [("clear", 18), ("drizzle", 12), ("rain", 26), ("monsoon", 12), ("storm", 12), ("thunderbolt", 8), ("mist", 8), ("heatwave", 4)],
+    "swamp": [("clear", 16), ("fog", 28), ("mist", 14), ("drizzle", 10), ("rain", 14), ("storm", 8), ("thunderbolt", 6), ("heatwave", 4)],
+    "volcanic_highlands": [("clear", 28), ("ash", 36), ("heatwave", 16), ("storm", 8), ("thunderbolt", 8), ("gale", 4)],
+    "cursed_ruins": [("clear", 20), ("fog", 30), ("mist", 14), ("storm", 14), ("thunderbolt", 10), ("bloodmoon", 8), ("gale", 4)],
+    "rainbow": [("clear", 30), ("sunbeams", 12), ("drizzle", 18), ("rain", 22), ("monsoon", 6), ("storm", 6), ("meteors", 6)],
+    "abyssal_depths": [("clear", 50), ("mist", 22), ("fog", 14), ("storm", 8), ("thunderbolt", 6)],
+    "celestial_peaks": [("clear", 28), ("snow", 22), ("blizzard", 10), ("aurora", 16), ("meteors", 12), ("mist", 6), ("gale", 6)],
+    "halloween_land": [("fog", 30), ("mist", 14), ("clear", 14), ("bloodmoon", 14), ("storm", 10), ("thunderbolt", 8), ("drizzle", 6), ("rain", 4)],
 }
 _WORLD_CONDITION_SKY = {"heavy_rain": "rain", "aurora": "aurora", "clear_skies": "sunbeams"}
 _ex_weather_force: str | None = None            # tests / admins can pin the sky
@@ -8757,7 +8794,7 @@ def weather_key(biome: str, home: str | None = None) -> str:
     if c and c.get("key") in _WORLD_CONDITION_SKY:
         return _WORLD_CONDITION_SKY[c["key"]]
     table = EXPLORE_AMBIENT_WEATHER.get(biome) or [("clear", 1)]
-    slot = int(time.time() // (EXPLORE_WEATHER_SLOT_H * 3600))
+    slot = int(time.time() // (EXPLORE_WEATHER_SLOT_MIN * 60))
     h = _zlib.crc32(f"{biome}:{slot}".encode()) % sum(w for _, w in table)
     for key, w in table:
         if h < w:
@@ -9091,7 +9128,7 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
             if not resting:
                 _ex_step(st, a, away)
                 a["run"] = a.get("run", 0) + 1
-                if a["run"] >= EXPLORE_FLEE_RUN:             # out of breath: it stops for a moment — your chance
+                if a["run"] >= max(1, EXPLORE_FLEE_RUN - wx.get("tire", 0)):     # out of breath: it stops for a moment — your chance
                     a["run"], a["rest"] = 0, EXPLORE_REST_STEPS
                     if _ex_seen(st, a):
                         lines.append(f"🌿 The **{a['name']}** {_EX_REST_LINE.get(beh, 'stops to catch its breath.')}")
@@ -9109,6 +9146,15 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
                 _ex_step(st, a, lambda x, y: random.random())
         if a.get("mood") == "flee" and _ex_dist(a["x"], a["y"], px, py) > 8:
             a["mood"] = "calm"
+    if wx.get("strike") and random.random() < wx["strike"]:               # a thunderbolt scatters whatever is near you
+        scared = [a for a in st["animals"] if _ex_dist(a["x"], a["y"], px, py) <= 4 and a.get("mood") != "stalk"]
+        for a in scared:
+            a["mood"], a["run"], a["rest"] = "flee", 0, 0
+        seen_ = [a for a in scared if _ex_seen(st, a)]
+        if seen_:
+            lines.append(f"⚡ A thunderbolt cracks down — the **{seen_[0]['name']}** bolts!")
+        elif scared:
+            lines.append("⚡ A thunderbolt cracks down nearby — something crashes away through the brush.")
     if len(st["animals"]) < EXPLORE_MAX_ANIMALS and random.random() < 0.25:
         _ex_spawn(st)
     # clues: appear when something unseen is near, stay fresh while you close in, fade otherwise
@@ -9704,6 +9750,8 @@ def explore_fire(user_id: str) -> dict:
         _ex_spend_ammo(user_id, len(misses))
         d["hunt_cd"] = time.time() + hunt_cooldown_s(user_id)
     st["target"] = None
+    if res and res.get("catches"):
+        season_progress(user_id, "explore_catches", len(res["catches"]))
     for c in (res or {}).get("catches", []):
         st.setdefault("bag", []).append({"name": c["animal"], "value": c["sell_value"], "perfect": bool(c.get("is_rare"))})
         lines.append(f"{emoji('target')} **You caught {animal_emoji(c['animal'])} {c['animal']}!** "
@@ -10114,19 +10162,63 @@ def _ex_weather_fx(canvas, snap: dict, T: int, N: int):
     layer = _PILImage.new("RGBA", (W, H), (0, 0, 0, 0))
     d = _PILDraw.Draw(layer)                                    # on an empty RGBA layer drawing simply fills it in
     veil = lambda col: layer.paste(col, (0, 0, W, H))
-    if key in ("rain", "storm"):
-        heavy = key == "storm"
-        veil((18, 34, 70, 70 if heavy else 42))
-        for _ in range(240 if heavy else 130):
+    if key in ("drizzle", "rain", "storm", "thunderbolt", "monsoon"):
+        heavy = key in ("storm", "thunderbolt", "monsoon")
+        veil((18, 34, 70, {"drizzle": 22, "rain": 42, "storm": 70, "thunderbolt": 84, "monsoon": 92}[key]))
+        for _ in range({"drizzle": 55, "rain": 130, "storm": 240, "thunderbolt": 280, "monsoon": 420}[key]):
             x, y, ln = r.randint(0, W + 40), r.randint(-30, H), r.randint(16, 30)
-            d.line([(x, y), (x - ln * .35, y + ln)], fill=(196, 214, 255, 175), width=2)
-        if heavy and snap.get("wstep", 0) % 3 == 0:             # lightning
-            veil((255, 255, 255, 46))
-            x = r.randint(W // 5, W * 4 // 5)
-            pts = [(x, 0)]
-            for i in range(1, 7):
-                pts.append((pts[-1][0] + r.randint(-26, 26), i * H // 7))
-            d.line(pts, fill=(255, 255, 230, 240), width=4)
+            d.line([(x, y), (x - ln * .35, y + ln)], fill=(196, 214, 255, 120 if key == "drizzle" else 175), width=1 if key == "drizzle" else 2)
+        if (key == "storm" and snap.get("wstep", 0) % 3 == 0) or key == "thunderbolt":     # lightning
+            veil((255, 255, 255, 46 if key == "storm" else 60))
+            for _ in range(1 if key == "storm" else 2):
+                x = r.randint(W // 6, W * 5 // 6)
+                pts = [(x, 0)]
+                for i in range(1, 7):
+                    pts.append((pts[-1][0] + r.randint(-30, 30), i * H // 7))
+                d.line(pts, fill=(255, 255, 230, 240), width=5)
+                d.line(pts, fill=(255, 255, 255, 255), width=2)
+    elif key == "hail":
+        veil((120, 140, 170, 36))
+        for _ in range(110):
+            x, y, rad = r.randint(0, W), r.randint(0, H), r.choice((2, 3, 3, 4))
+            d.ellipse([x - rad, y - rad, x + rad, y + rad], fill=(240, 247, 255, 235), outline=(170, 190, 215, 255))
+    elif key == "gale":
+        veil((200, 205, 190, 22))
+        for _ in range(70):
+            x, y, ln = r.randint(-60, W), r.randint(0, H), r.randint(40, 110)
+            d.line([(x, y), (x + ln, y + r.randint(-6, 6))], fill=(236, 240, 228, 150), width=2)
+        for _ in range(16):                                     # whirling leaves
+            x, y = r.randint(0, W), r.randint(0, H)
+            d.ellipse([x - 4, y - 2, x + 4, y + 2], fill=(150, 170, 70, 230))
+    elif key == "mist":
+        veil((226, 232, 238, 36))
+        for _ in range(6):
+            cx, cy, rx, ry = r.randint(0, W), r.randint(0, H), r.randint(W // 6, W // 3), r.randint(H // 14, H // 8)
+            d.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=(236, 240, 245, 34))
+    elif key == "blizzard":
+        veil((236, 242, 255, 74))
+        for _ in range(240):
+            x, y, ln = r.randint(-40, W), r.randint(0, H), r.randint(10, 30)
+            d.line([(x, y), (x - ln, y + ln * .35)], fill=(255, 255, 255, 220), width=2)
+    elif key == "heatwave":
+        veil((255, 150, 60, 34))
+        for i in range(0, H, 22):                               # shimmering air
+            pts = [(x, i + int(5 * _math.sin(x / 40 + i / 20 + snap.get("wstep", 0))))
+                   for x in range(0, W + 1, 16)]
+            d.line(pts, fill=(255, 220, 160, 70), width=2)
+    elif key == "meteors":
+        veil((8, 12, 36, 44))
+        for _ in range(60):
+            x, y = r.randint(0, W), r.randint(0, H)
+            d.ellipse([x - 1, y - 1, x + 1, y + 1], fill=(255, 255, 240, 220))
+        for _ in range(3):
+            x, y = r.randint(W // 3, W), r.randint(0, H // 2)
+            d.line([(x, y), (x - 90, y + 50)], fill=(255, 245, 200, 230), width=3)
+            d.line([(x, y), (x - 40, y + 22)], fill=(255, 255, 255, 255), width=2)
+    elif key == "bloodmoon":
+        veil((90, 10, 20, 70))
+        d.ellipse([W - 150, 24, W - 54, 120], fill=(214, 40, 44, 220), outline=(255, 120, 110, 255), width=3)
+        d.ellipse([W - 150, 24, W - 54, 120], fill=None)
     elif key == "fog":
         veil((226, 232, 238, 70))
         for _ in range(9):
@@ -10167,7 +10259,7 @@ def _ex_weather_fx(canvas, snap: dict, T: int, N: int):
             for tx in range(N):
                 if max(abs(tx - snap["hx"]), abs(ty - snap["hy"])) > sight:
                     d.rectangle([tx * T, ty * T, tx * T + T, ty * T + T],
-                                fill=(226, 232, 238, 120) if key == "fog" else (212, 164, 98, 110))
+                                fill=(212, 164, 98, 110) if key == "sandstorm" else (226, 232, 238, 120))
     base = canvas.convert("RGBA")
     base.alpha_composite(layer)
     return base.convert("RGB")
@@ -10662,6 +10754,7 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
         status.append(ammo_why)
     elif reload_ts:
         status.append(f"{emoji('cooldown')} Reloading — ready <t:{reload_ts}:R>.")
+    status += [f"-# {_sn}" for _sn in season_notes_pop(user_id)]
     goal = next_goal_line(user_id)
     if goal:
         status.append(f"-# {goal}")
@@ -10780,10 +10873,11 @@ def build_explore_info_components(user_id: str, image: bool = True) -> list:
                                 "- ✨ glowing coral, crystals and arches show where animals are; some landmarks give a small find or a discovery stamp. "
                                 "Each one only pays out once."},
         {"type": 10, "content": "**Weather**\n"
-                                "- 🌧️ rain: animals bolt less, your aim −3% · ⛈️ storm: they bolt more, aim −6%\n"
-                                "- 🌫️ fog: you only see animals within 2 tiles · 🏜️ sandstorm: within 3, aim −4% · 🌋 ashfall: aim −4%\n"
-                                "- ❄️ snow: clues last 2 steps longer · ✨ aurora and 🌤️ clear skies are just pretty\n"
-                                "-# The sky changes every few hours and follows the region. It never changes what a catch pays."},
+                                "- 🌦️🌧️🌊 drizzle / rain / monsoon: animals bolt less (aim −3% to −5%) · ⛈️⚡ storms: they bolt more, aim −6% to −8%, a thunderbolt can scatter them\n"
+                                "- 🌫️🌁 fog / mist: you only see animals within 2 / 3 tiles · 🏜️ sandstorm: within 3, aim −4% · 🌬️ blizzard: within 2, tracks last longer\n"
+                                "- ❄️ snow: tracks last 2 steps longer · 🔥 heatwave: animals tire sooner · 🌨️ hail, 💨 gale, 🌋 ashfall, 🌕 blood moon: small aim changes\n"
+                                "- ✨ aurora, ☄️ meteor shower and 🌤️ clear skies are just pretty\n"
+                                "-# The sky of each region changes every 10 minutes. It never changes what a catch pays."},
         {"type": 14, "divider": False, "spacing": 1},
         {"type": 10, "content": f"**Every tool's shape**\n{others}"},
     ]
@@ -11806,6 +11900,14 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
     else:
         bounty    = random.randint(*myth_repeat_bounty_range(name))
         gems_gain = random.randint(*MYTH_REPEAT_GEMS_RANGE)
+    sighting_bonus = 0
+    _sg = get_active_sighting()
+    if (_sg and _sg.get("revealed") and _sg.get("creature") == name and _sg.get("biome") == biome
+            and user_id not in _sg.setdefault("bounty_claimed", [])):
+        _sg["bounty_claimed"].append(user_id)                 # the world's sighting bounty: once per hunter per sighting
+        sighting_bonus = sighting_bounty(name)
+        bounty += sighting_bonus
+        gems_gain += SIGHTING_BOUNTY_GEMS
     xp_gain = int(c.get("xp", 0) * MYTH_XP_MULT)
     add_money(user_id, bounty, "myth kill")
     add_gems(user_id, gems_gain, "myth kill")
@@ -11851,7 +11953,7 @@ def _myth_fight_win(user_id: str, name: str, c: dict, biome: str, b: dict) -> di
             "trophy_count": trophy_count, "is_new_discovery": is_new_discovery,
             "level_ups": level_ups, "level": data[user_id]["level"],
             "balance": data[user_id]["money"], "php": php_left, "healed": healed,
-            "is_first_kill": is_first_kill, "first_title": first_title,
+            "is_first_kill": is_first_kill, "first_title": first_title, "sighting_bonus": sighting_bonus,
             "share_id": _sid}
 
 def _myth_fight_lose(user_id: str, name: str, c: dict) -> dict:
@@ -12702,6 +12804,9 @@ def build_menu_components(user_id: str, display_name: str) -> list:
     if get_active_event():
         now_bits.append(event_banner_line())
     now_bits.append(daily_theme_line())
+    _season_line = season_menu_line(user_id)
+    if _season_line:
+        now_bits.append(_season_line)
     stacks = d.get("idle", {}).get("stacks", 0)
     if stacks:
         idle_haul = idle_pending_preview(user_id)
@@ -12738,6 +12843,8 @@ def build_menu_components(user_id: str, display_name: str) -> list:
             {"label": "Crafting",       "emoji": emoji_partial("crystal_rare"),  "value": "craft",       "description": "Fuse shards into crystals & buy crates"},
             {"label": "Leaderboard",    "emoji": emoji_partial("leaderboard"),    "value": "leaderboard", "description": "View global leaderboards"},
             {"label": "Events",         "emoji": emoji_partial('earth'),                  "value": "events",      "description": "View ongoing global events"},
+            *([{"label": "Season",       "emoji": {"name": "🐣"},                       "value": "season",      "description": "The season pass: tasks, levels and free rewards"}]
+              if FEATURE_SEASON else []),
             {"label": "Gamble",         "emoji": emoji_partial("dice"),           "value": "gamble",      "description": "Try your luck at mini-games"},
             {"label": "Lottery",        "emoji": emoji_partial("lottery_ticket"), "value": "lottery",     "description": "Buy tickets for the daily lottery"},
             {"label": f"Mail{mail_indicator}", "emoji": emoji_partial("mail"),    "value": "mail",        "description": "Check your mailbox"},
@@ -13219,6 +13326,8 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
     _sky = weather_line(result.get("biome", d.get("biome", "village")))
     if _sky:
         footer_block += f"\n-# {_sky}"
+    for _sn in season_notes_pop(user_id):
+        footer_block += f"\n-# {_sn}"
     if result.get("region_decor"):
         extra_block += f"\n-# 🏆 **Region complete!** You earned the {result['region_decor']} decoration for your profile."
 
@@ -13404,6 +13513,8 @@ def build_myth_outcome_components(user_id: str, outcome: dict) -> list:
             f"{first_line}"
             f"-# **+ ◈ {outcome['bounty']:,}** · **+ {emoji('gem')} {outcome.get('gems', 0):,}** · "
             f"**+ {outcome['xp']:,} XP**"
+            + (f"\n-# {emoji('siren')} **Sighting bounty** included: ◈ {outcome['sighting_bonus']:,} + {emoji('gem')} {SIGHTING_BOUNTY_GEMS}"
+               if outcome.get("sighting_bonus") else "") +
             f"{trophy_block}\n"
             f"-# Balance: **◈ {outcome['balance']:,}**{lvl}"
         )
@@ -16237,6 +16348,10 @@ def quest_progress(user_id: str, stat: str, amount: int = 1, *, absolute: bool =
         tool_tier  – tier of current tool (for tool_tier_hunts)
         crate_name – name of opened crate (for crate_tier_opened)
     """
+    try:
+        season_progress(user_id, stat, amount, absolute=absolute, **ctx)       # the season pass counts what quests count
+    except Exception:
+        logger.exception("season progress failed")
     quest_rolls_if_needed(user_id)
     d = data[user_id]
     newly_completed = []
@@ -18626,6 +18741,11 @@ async def _navigate(interaction: discord.Interaction, user_id: str,
         await smart_update_v2(interaction, build_events_components(user_id))
     elif panel == "settings":
         await smart_update_v2(interaction, build_settings_components(user_id))
+    elif panel == "season":
+        if FEATURE_SEASON:
+            await season_show(interaction, user_id)
+        else:
+            await smart_update_v2(interaction, build_menu_components(user_id, dn))
     elif panel == "market":
         await smart_update_v2(interaction, build_market_components(user_id))
     elif panel == "vote":
@@ -18788,6 +18908,7 @@ async def _common_init(interaction: discord.Interaction, *, auto_defer: bool = T
         except Exception:
             pass
 
+    await maybe_notify_daily_theme(interaction, user_id)
     await maybe_notify_event_start(interaction, user_id)
     return user_id
 
@@ -18816,6 +18937,45 @@ async def maybe_notify_event_start(interaction: discord.Interaction, user_id: st
         await send_ephemeral_v2(interaction, "\n".join(lines), 0xF1C40F)
     except Exception:
         pass
+
+
+CHRONICLE_INTRO = (
+    "📖 **New to the Chronicle?** It is the storybook of the Wilds. Every limited-time event is one chapter of the same story — "
+    "play an event and its pages unlock, along with **keepsakes** (profile decorations), titles and badges. "
+    "Open it any time from `/events` → **Chronicle**.")
+
+
+async def maybe_notify_daily_theme(interaction: discord.Interaction, user_id: str) -> None:
+    """The first time a player uses the bot each (UTC) day: a private card saying which Daily Theme has started and how to
+    take part. Once per day; new players in the tutorial are left alone. The very first card also introduces the Chronicle."""
+    d = data.get(user_id)
+    if not d or d.get("theme_notice_day") == today_utc() or not interaction.response.is_done():
+        return
+    if onboarding_active(user_id):
+        return
+    d["theme_notice_day"] = today_utc()
+    mark_user_dirty(user_id)
+    t = current_theme()
+    how = "\n".join(f"- {x}" for x in _THEME_HOWTO.get(t["key"], []))
+    body = f"## {ev_icon(t)} Daily Theme started: {t['name']}\n{t['blurb']}\n\n"
+    if how:
+        body += f"**How to take part today**\n{how}\n\n"
+    body += f"-# {t['limit']} · a new theme starts every day at 00:00 UTC."
+    if FEATURE_SEASON and season_phase() == "live":
+        body += f"\n{SEASON_PASS['emoji']} **{SEASON_PASS['name']}** — today's season tasks are ready: </season tasks:{COMMAND_ID.get('season', '0')}>"
+    btns = [{"type": 2, "style": 1, "label": "Open Daily Theme", "emoji": emoji_partial("calendar"),
+             "custom_id": f"ev3:theme:{user_id}"}]
+    blocks = [{"type": 10, "content": body[:3900]}]
+    if not d.get("chronicle_intro_seen"):
+        d["chronicle_intro_seen"] = True
+        blocks += [{"type": 14, "divider": True, "spacing": 1}, {"type": 10, "content": CHRONICLE_INTRO}]
+        btns.append({"type": 2, "style": 2, "label": "Chronicle", "emoji": emoji_partial("book"),
+                     "custom_id": f"ev3:chron:open:{user_id}"})
+    try:
+        await send_v2_followup(interaction, [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False,
+                                              "components": blocks + [{"type": 1, "components": btns}]}], ephemeral=True)
+    except Exception:
+        logger.exception("daily theme notice failed")
 
 
 async def _modal_gate(interaction: discord.Interaction, user_id: str | None = None) -> bool:
@@ -20223,6 +20383,28 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
         return
 
     # ── SETTINGS / TUTORIAL GUIDE ─────────────
+    if parts[0] == "season":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        init_user(owner_id)
+        if not FEATURE_SEASON:
+            await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} The season pass is switched off right now.", 0xE74C3C)
+            return
+        sub = parts[1]
+        if sub == "view":
+            await season_show(interaction, owner_id, int(parts[2]) if len(parts) > 3 and parts[2].lstrip("-").isdigit() else None)
+        elif sub == "tasks":
+            await smart_update_v2(interaction, build_season_tasks(owner_id))
+        elif sub == "claim":
+            await _season_claim_and_show(interaction, owner_id, new=False)
+        elif sub == "info":
+            await smart_update_v2(interaction, build_season_info(owner_id))
+        elif sub == "top":
+            await smart_update_v2(interaction, build_season_top(owner_id))
+        return
+
     if parts[0] == "settings":
         owner_id = parts[-1]
         if str(interaction.user.id) != owner_id:
@@ -24177,6 +24359,662 @@ async def achievements_cmd(interaction: discord.Interaction):
     if not user_id: return
     _ach_page[user_id] = 0
     await send_v2_followup(interaction, build_progression_hub(user_id))
+
+# ═══════════════════════════════════════════════════════════════
+# SEASON PASS  ·  /season view · tasks · claim · info · top
+# ═══════════════════════════════════════════════════════════════
+# Season 1 is the Season of the Newborn (data: game_data.SEASON_PASS). Players earn SEASON XP by finishing season
+# tasks (3 daily + 3 weekly, which count the same things quests count); every 250 XP is a level and every level has a free
+# reward. The pass is drawn as a zigzag track with Pillow, on a background image the owner supplies (SEASON_BANNER_URL).
+# The premium track is shown as "coming soon" — nothing is sold yet.
+
+FEATURE_SEASON = _flag("FEATURE_SEASON")
+SEASON_BANNER_URL = os.getenv("SEASON_BANNER_URL", "") or _cfg.get("season_banner_url", "")
+SEASON_BANNER_CACHE = "season_banner_cache.png"
+_season_banner_img = None            # the decoded background, once fetched
+_season_banner_src = ""              # the URL it came from
+_season_page: dict[str, int] = {}
+SEASON_NOTES_MAX = 6
+
+
+def _season_date(key: str) -> datetime:
+    y, m, d = (int(x) for x in SEASON_PASS[key].split("-"))
+    return datetime(y, m, d, tzinfo=timezone.utc)
+
+
+def season_phase(now: float | None = None) -> str:
+    """upcoming · live · grace (over, but rewards can still be claimed) · over."""
+    t = datetime.fromtimestamp(now if now is not None else time.time(), timezone.utc)
+    start, end = _season_date("start"), _season_date("end") + timedelta(days=1)
+    if t < start:
+        return "upcoming"
+    if t < end:
+        return "live"
+    if t < end + timedelta(days=SEASON_PASS["grace_days"]):
+        return "grace"
+    return "over"
+
+
+def season_end_ts() -> int:
+    return int((_season_date("end") + timedelta(days=1)).timestamp())
+
+
+def season_state(user_id: str) -> dict:
+    d = data[user_id]
+    st = d.get("season")
+    if not isinstance(st, dict) or st.get("id") != SEASON_PASS["id"]:
+        st = d["season"] = {"id": SEASON_PASS["id"], "xp": 0, "claimed": [], "daily": [], "weekly": [],
+                            "d_day": "", "w_week": "", "notes": [], "tasks_done": 0}
+        mark_user_dirty(user_id)
+    return st
+
+
+def season_level(xp: int) -> int:
+    return min(SEASON_PASS["levels"], max(0, int(xp)) // SEASON_PASS["xp_per_level"])
+
+
+def _season_eligible(user_id: str, t: dict) -> bool:
+    need = t.get("need")
+    if need == "ammo":
+        return tool_needs_ammo(data[user_id].get("tool", "Bare Hands"))
+    if need == "camp":
+        return data[user_id].get("idle", {}).get("stacks", 0) > 0
+    if need == "explore":
+        return explore_enabled(user_id)
+    return True
+
+
+def _season_pick(user_id: str, pool: list, k: int, salt: str) -> list:
+    """The same picks all day / all week for the same player (stable across restarts)."""
+    ok = [t for t in pool if _season_eligible(user_id, t)]
+    rng = random.Random(_zlib.crc32(f"{user_id}:{salt}".encode()))
+    rng.shuffle(ok)
+    return [dict(t, progress=0, done=False) for t in ok[:k]]
+
+
+def _week_key() -> str:
+    y, w, _ = datetime.now(timezone.utc).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def season_roll(user_id: str) -> dict:
+    """Make sure today's three daily tasks and this week's three weekly tasks exist."""
+    st = season_state(user_id)
+    today = today_utc()
+    if st["d_day"] != today:
+        st["d_day"] = today
+        st["daily"] = _season_pick(user_id, SEASON_DAILY_TASKS, 3, "d" + today)
+        mark_user_dirty(user_id)
+    wk = _week_key()
+    if st["w_week"] != wk:
+        st["w_week"] = wk
+        st["weekly"] = _season_pick(user_id, SEASON_WEEKLY_TASKS, 3, "w" + wk)
+        mark_user_dirty(user_id)
+    return st
+
+
+def season_progress(user_id: str, stat: str, amount: int = 1, *, absolute: bool = False, **ctx) -> None:
+    """Called from quest_progress (and the Explore shot): advance every open season task that counts `stat`."""
+    if absolute or not FEATURE_SEASON or season_phase() != "live" or user_id not in data:
+        return
+    st = season_roll(user_id)
+    for t in st["daily"] + st["weekly"]:
+        if t["done"] or t["stat"] != stat:
+            continue
+        req = t.get("req", {})
+        if "rarity" in req:
+            order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"]
+            if order.index(ctx.get("rarity", "common")) < order.index(req["rarity"]):
+                continue
+        t["progress"] = min(t["target"], t["progress"] + max(0, int(amount)))
+        if t["progress"] >= t["target"]:
+            t["done"] = True
+            _season_award(user_id, st, t)
+    mark_user_dirty(user_id)
+
+
+def _season_award(user_id: str, st: dict, t: dict) -> None:
+    before = season_level(st["xp"])
+    st["xp"] += t["xp"]
+    st["tasks_done"] = st.get("tasks_done", 0) + 1
+    after = season_level(st["xp"])
+    note = f"{SEASON_PASS['emoji']} Season task done: {t['desc']} · **+{t['xp']} Season XP**"
+    if after > before:
+        note += f" · **Season level {after}!**" + (" Rewards are waiting in `/season view`." if after > len(st["claimed"]) else "")
+    st["notes"] = (st.get("notes", []) + [note])[-SEASON_NOTES_MAX:]
+    analytics(user_id, "season_task", task=t["id"], xp=t["xp"], level=after)
+
+
+def season_notes_pop(user_id: str) -> list:
+    """The 'task done / level up' lines gathered since the player last looked — shown once, on the next hunt or Explore panel."""
+    st = data.get(user_id, {}).get("season")
+    if not isinstance(st, dict) or not st.get("notes"):
+        return []
+    notes, st["notes"] = st["notes"], []
+    mark_user_dirty(user_id)
+    return notes
+
+
+def season_claimable(user_id: str) -> list:
+    st = season_state(user_id)
+    lvl = season_level(st["xp"])
+    return [r for r in SEASON_REWARDS if r["level"] <= lvl and r["level"] not in st["claimed"]]
+
+
+def season_part_text(part: tuple, scale: int | None = None) -> str:
+    k = part[0]
+    if k == "cash":
+        return f"◈ {int((scale or 0) * part[1]):,}" if scale else f"◈ {part[1]}× animal"
+    if k == "gems":
+        return f"{part[1]} gems"
+    if k == "crate":
+        return part[1] if part[2] == 1 else f"{part[2]}× {part[1]}"
+    if k in ("item", "heal"):
+        return part[1] if part[2] == 1 else f"{part[2]}× {part[1]}"
+    if k == "title":
+        return f'"{part[1]}" title'
+    if k == "keepsake":
+        return ED.KEEPSAKES.get(part[1], ("", part[1]))[1]
+    if k == "badge":
+        return SPECIAL_BADGES.get(part[1], {}).get("label", part[1]) + " badge"
+    return str(part[1])
+
+
+def season_reward_text(parts: list, user_id: str | None = None) -> str:
+    scale = crate_value_scale(data[user_id].get("level", 1)) if user_id in data else None
+    return " + ".join(season_part_text(p, scale) for p in parts)
+
+
+def _season_grant_part(user_id: str, part: tuple) -> str:
+    d = data[user_id]
+    k = part[0]
+    if k == "cash":
+        amt = max(1, int(crate_value_scale(d.get("level", 1)) * part[1]))
+        add_money(user_id, amt, "season reward")
+        return f"◈ {amt:,}"
+    if k == "gems":
+        add_gems(user_id, part[1], "season reward")
+        return f"{emoji('gem')} {part[1]}"
+    if k == "crate":
+        ci = d.setdefault("crate_inv", {})
+        ci[part[1]] = ci.get(part[1], 0) + part[2]
+        return f"{part[2]}× {part[1]}"
+    if k == "item":
+        add_item(user_id, part[1], part[2])
+        return f"{part[2]}× {part[1]}"
+    if k == "heal":
+        hi = d.setdefault("healing_inv", {})
+        hi[part[1]] = min(HEALING_BUY_CAP, hi.get(part[1], 0) + part[2])
+        return f"{part[2]}× {part[1]}"
+    if k == "title":
+        et = d.setdefault("earned_titles", [])
+        if part[1] not in et:
+            et.append(part[1])
+        return f'the title **"{part[1]}"**'
+    if k == "keepsake":
+        _grant_keepsake(user_id, part[1])
+        return f"the **{ED.KEEPSAKES[part[1]][1]}** keepsake {ED.KEEPSAKES[part[1]][0]}"
+    if k == "badge":
+        _grant_special_badge(user_id, part[1])
+        return f"the **{SPECIAL_BADGES.get(part[1], {}).get('label', part[1])}** badge"
+    return ""
+
+
+def season_claim(user_id: str) -> list:
+    """Hand out every unlocked, unclaimed free reward. Returns one line per level. Call inside a user_transaction."""
+    if season_phase() in ("upcoming", "over"):
+        return []
+    st = season_state(user_id)
+    lines = []
+    for r in season_claimable(user_id):
+        got = [g for g in (_season_grant_part(user_id, p) for p in r["parts"]) if g]
+        st["claimed"].append(r["level"])
+        lines.append(f"**Level {r['level']}** — " + ", ".join(got))
+    if lines:
+        mark_user_dirty(user_id)
+        analytics(user_id, "season_claim", levels=len(lines))
+    return lines
+
+
+def season_menu_line(user_id: str) -> str:
+    if not FEATURE_SEASON or season_phase() not in ("live", "grace"):
+        return ""
+    st = season_state(user_id)
+    n = len(season_claimable(user_id))
+    return (f"{SEASON_PASS['emoji']} **{SEASON_PASS['name']}** · level {season_level(st['xp'])}/{SEASON_PASS['levels']}"
+            + (f" · **{n}** reward{'s' if n != 1 else ''} to claim" if n else ""))
+
+
+# ── drawing the pass ─────────────────────────────────────────────────────────
+
+_SEASON_CRATE_COL = {"Common Crate": (176, 128, 84), "Uncommon Crate": (96, 190, 110), "Rare Crate": (84, 150, 240),
+                     "Epic Crate": (170, 96, 230), "Legendary Crate": (250, 190, 60), "Mythic Crate": (240, 80, 130)}
+
+
+def _season_icon(d, kind: str, name: str, cx: int, cy: int, dim: bool) -> None:
+    """A small pixel-ish icon for a reward, drawn from shapes (so it needs no art and never fails to load)."""
+    a = 110 if dim else 255
+    if kind == "cash":
+        d.ellipse([cx - 24, cy - 24, cx + 24, cy + 24], fill=(250, 200, 50, a), outline=(160, 110, 10, a), width=3)
+        d.ellipse([cx - 14, cy - 14, cx + 14, cy + 14], outline=(255, 235, 140, a), width=3)
+    elif kind == "gems":
+        d.polygon([(cx, cy - 26), (cx + 24, cy - 6), (cx, cy + 26), (cx - 24, cy - 6)], fill=(70, 160, 255, a), outline=(200, 235, 255, a))
+        d.polygon([(cx, cy - 26), (cx + 24, cy - 6), (cx, cy - 6)], fill=(150, 205, 255, a))
+    elif kind == "crate":
+        col = _SEASON_CRATE_COL.get(name, (176, 128, 84))
+        d.rectangle([cx - 26, cy - 16, cx + 26, cy + 24], fill=col + (a,), outline=(30, 20, 10, a), width=3)
+        d.rectangle([cx - 28, cy - 24, cx + 28, cy - 10], fill=tuple(min(255, c + 30) for c in col) + (a,), outline=(30, 20, 10, a), width=3)
+        d.rectangle([cx - 5, cy - 24, cx + 5, cy + 24], fill=(250, 220, 120, a))
+    elif kind == "item":
+        pts = []
+        for i in range(10):
+            ang = -_math.pi / 2 + i * _math.pi / 5
+            rad = 26 if i % 2 == 0 else 11
+            pts.append((cx + rad * _math.cos(ang), cy + rad * _math.sin(ang)))
+        d.polygon(pts, fill=(255, 214, 70, a), outline=(160, 110, 10, a))
+    elif kind == "heal":
+        d.rounded_rectangle([cx - 24, cy - 24, cx + 24, cy + 24], radius=8, fill=(250, 250, 250, a), outline=(180, 180, 190, a), width=3)
+        d.rectangle([cx - 5, cy - 16, cx + 5, cy + 16], fill=(224, 56, 56, a))
+        d.rectangle([cx - 16, cy - 5, cx + 16, cy + 5], fill=(224, 56, 56, a))
+    elif kind == "title":
+        d.rounded_rectangle([cx - 28, cy - 16, cx + 28, cy + 16], radius=6, fill=(240, 226, 190, a), outline=(140, 110, 60, a), width=3)
+        for off in (-6, 4):
+            d.line([(cx - 18, cy + off), (cx + 18, cy + off)], fill=(140, 110, 60, a), width=2)
+    elif kind == "keepsake":
+        d.ellipse([cx - 20, cy - 26, cx + 20, cy + 24], fill=(250, 240, 214, a), outline=(180, 160, 110, a), width=3)
+        for ox, oy in ((-8, -6), (6, 6), (-2, 12)):
+            d.ellipse([cx + ox - 4, cy + oy - 4, cx + ox + 4, cy + oy + 4], fill=(214, 190, 140, a))
+    elif kind == "badge":
+        d.polygon([(cx - 18, cy + 10), (cx - 8, cy + 30), (cx, cy + 16)], fill=(220, 70, 70, a))
+        d.polygon([(cx + 18, cy + 10), (cx + 8, cy + 30), (cx, cy + 16)], fill=(70, 110, 220, a))
+        d.ellipse([cx - 22, cy - 26, cx + 22, cy + 18], fill=(250, 200, 50, a), outline=(160, 110, 10, a), width=3)
+        d.ellipse([cx - 12, cy - 16, cx + 12, cy + 8], outline=(255, 240, 160, a), width=3)
+    else:
+        d.ellipse([cx - 20, cy - 20, cx + 20, cy + 20], fill=(200, 200, 220, a))
+
+
+def _season_wrap(text: str, width: int = 17) -> list:
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + (1 if cur else 0) > width and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return lines[:3]
+
+
+def _season_render(snap: dict) -> bytes:
+    """One page of the pass: ten levels on a zigzag (left to right, then back right to left), a reward card on every level.
+    Gold = claimed, green = ready to claim, grey = still to earn. `snap` is plain data; the background comes from the
+    owner's banner image when there is one."""
+    W, H = 1200, 700
+    bg = snap.get("banner")
+    if bg is not None:
+        f = max(W / bg.width, H / bg.height)
+        im = bg.convert("RGB").resize((int(bg.width * f) + 1, int(bg.height * f) + 1), _PILImage.LANCZOS)
+        left, top = (im.width - W) // 2, (im.height - H) // 2
+        canvas = im.crop((left, top, left + W, top + H))
+        canvas = _PILImage.blend(canvas, _PILImage.new("RGB", (W, H), (14, 10, 26)), 0.62)         # keep the cards readable
+    else:
+        canvas = _PILImage.new("RGB", (W, H), (26, 20, 44))
+        gd_ = _PILDraw.Draw(canvas)
+        for y in range(H):
+            t = y / H
+            gd_.line([(0, y), (W, y)], fill=(int(24 + 18 * t), int(18 + 10 * t), int(42 + 26 * t)))
+    canvas = canvas.convert("RGBA")
+    layer = _PILImage.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = _PILDraw.Draw(layer)
+    lvl, page, per = snap["level"], snap["page"], SEASON_PASS["per_page"]
+    first = page * per + 1
+    d.rounded_rectangle([10, 10, W - 10, H - 10], radius=26, outline=(170, 150, 255, 150), width=3)
+    d.text((40, 30), f"{snap['name']}", font=_ex_font(34), fill=(255, 255, 255, 255), anchor="lm")
+    d.text((40, 66), f"FREE TRACK  -  levels {first}-{first + per - 1}", font=_ex_font(20), fill=(206, 196, 255, 255), anchor="lm")
+    d.rounded_rectangle([W - 330, 24, W - 36, 78], radius=14, fill=(255, 255, 255, 22), outline=(170, 150, 255, 120), width=2)
+    d.text((W - 183, 51), "PREMIUM - coming soon", font=_ex_font(20), fill=(206, 196, 255, 215), anchor="mm")
+    xs = [150 + 225 * i for i in range(5)]
+    ya, yb = 318, 470
+    pos = {}
+    for i in range(5):
+        pos[first + i] = (xs[i], ya)
+        pos[first + 5 + i] = (xs[4 - i], yb)
+    order = [first + i for i in range(per)]
+    # the path: a thick track with a gold fill up to your level
+    def seg(a_, b_, col):
+        d.line([a_, b_], fill=col, width=12)
+    track, done = (70, 62, 110, 255), (250, 200, 60, 255)
+    for k in range(per - 1):
+        a_n, b_n = order[k], order[k + 1]
+        col = done if b_n <= lvl else track
+        if k == 4:                                              # the U-turn on the right
+            xr = xs[4] + 82
+            seg(pos[a_n], (xr, ya), col)
+            seg((xr, ya), (xr, yb), col)
+            seg((xr, yb), pos[b_n], col)
+            for p_ in ((xr, ya), (xr, yb)):
+                d.ellipse([p_[0] - 6, p_[1] - 6, p_[0] + 6, p_[1] + 6], fill=col)
+        else:
+            seg(pos[a_n], pos[b_n], col)
+    for n in order:
+        x, y = pos[n]
+        r = snap["rewards"][n]
+        claimed, ready = n in snap["claimed"], (n <= lvl and n not in snap["claimed"])
+        above = n in order[:5]
+        cy = y - 30 - 85 if above else y + 30 + 85            # card centre: above the top row, below the bottom row
+        edge = (250, 200, 60, 255) if claimed else (90, 230, 130, 255) if ready else (150, 136, 210, 150)
+        d.rounded_rectangle([x - 95, cy - 85, x + 95, cy + 85], radius=20, fill=(255, 255, 255, 30 if n > lvl else 44), outline=edge,
+                            width=4 if ready else 3)
+        _season_icon(d, r["kind"], r["name"], x, cy - 28, n > lvl)
+        for li, ln in enumerate(_season_wrap(r["label"])):
+            d.text((x, cy + 30 + li * 20), ln, font=_ex_font(17), fill=(255, 255, 255, 255 if n <= lvl else 170), anchor="mm")
+        # the level node
+        d.ellipse([x - 30, y - 30, x + 30, y + 30], fill=(250, 200, 60, 255) if claimed else (60, 190, 100, 255) if ready else (36, 30, 66, 255),
+                  outline=(255, 255, 255, 235) if n <= lvl else (150, 136, 210, 220), width=4)
+        if claimed:
+            d.line([(x - 12, y + 1), (x - 3, y + 11), (x + 14, y - 10)], fill=(60, 40, 0, 255), width=6)
+        else:
+            d.text((x, y), str(n), font=_ex_font(26), fill=(255, 255, 255, 255 if n <= lvl else 190), anchor="mm")
+    if page < snap["pages"] - 1:
+        d.polygon([(W - 52, H - 70), (W - 52, H - 34), (W - 24, H - 52)], fill=(206, 196, 255, 220))
+    canvas.alpha_composite(layer)
+    buf = _io.BytesIO()
+    canvas.convert("RGB").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _season_card_label(user_id: str, r: dict) -> dict:
+    parts = r["parts"]
+    kind = parts[0][0]
+    name = parts[0][1] if kind in ("crate", "item", "heal") else ""
+    text = season_reward_text(parts, user_id)
+    if len(parts) > 1:                                      # a milestone with several rewards: keep the card short
+        text = f"{season_part_text(parts[0], crate_value_scale(data[user_id].get('level', 1)))} +{len(parts) - 1} more"
+    # the picture's built-in font has no ◈ / × / dashes, so the card says it in plain ASCII (the coin icon already says "money")
+    text = text.replace("◈ ", "").replace("×", "x").replace("–", "-").replace("—", "-")
+    return {"kind": kind, "name": name, "label": text}
+
+
+def _season_snapshot(user_id: str, page: int) -> dict:
+    st = season_state(user_id)
+    per = SEASON_PASS["per_page"]
+    first = page * per + 1
+    rewards = {r["level"]: _season_card_label(user_id, r) for r in SEASON_REWARDS if first <= r["level"] < first + per}
+    return {"name": SEASON_PASS["name"], "level": season_level(st["xp"]), "page": page,
+            "pages": SEASON_PASS["levels"] // per, "claimed": set(st["claimed"]), "rewards": rewards, "banner": _season_banner_img}
+
+
+async def season_fetch_banner() -> None:
+    """Download the owner's background image once (and keep a copy on disk in case the link later expires)."""
+    global _season_banner_img, _season_banner_src
+    url = SEASON_BANNER_URL
+    if not _PIL_OK:
+        return
+    if _season_banner_img is not None and _season_banner_src == url:
+        return
+    if url:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+                async with s.get(url) as r:
+                    if r.status == 200:
+                        raw = await r.read()
+                        _season_banner_img = _PILImage.open(_io.BytesIO(raw)).convert("RGB")
+                        _season_banner_src = url
+                        try:
+                            with open(SEASON_BANNER_CACHE, "wb") as f:
+                                f.write(raw)
+                        except OSError:
+                            pass
+                        return
+        except Exception:
+            logger.warning("season banner download failed")
+    if _season_banner_img is None:
+        try:
+            _season_banner_img = _PILImage.open(SEASON_BANNER_CACHE).convert("RGB")
+            _season_banner_src = url
+        except Exception:
+            _season_banner_img = None
+
+
+# ── the panels ───────────────────────────────────────────────────────────────
+
+def _season_head(user_id: str) -> str:
+    st = season_state(user_id)
+    lvl = season_level(st["xp"])
+    per = SEASON_PASS["xp_per_level"]
+    ph_ = season_phase()
+    if lvl >= SEASON_PASS["levels"]:
+        bar_line = f"**Level {lvl}/{SEASON_PASS['levels']}** — maxed out! 🎉"
+    else:
+        bar, pct = ui_progress(st["xp"] - lvl * per, per)
+        bar_line = f"**Level {lvl}/{SEASON_PASS['levels']}** · {st['xp'] - lvl * per}/{per} XP to level {lvl + 1}\n{bar} {pct}"
+    when = {"live": f"ends <t:{season_end_ts()}:R>", "upcoming": "starts soon",
+            "grace": f"ended — claim your rewards before <t:{season_end_ts() + SEASON_PASS['grace_days'] * 86400}:R>",
+            "over": "is over"}[ph_]
+    return (f"### {SEASON_PASS['emoji']} {SEASON_PASS['name']}\n-# {SEASON_PASS['tagline']} · {when}\n"
+            f"{bar_line}\n-# Total Season XP: **{st['xp']:,}**")
+
+
+def _season_resolve_page(user_id: str, page: int | None) -> int:
+    pages = SEASON_PASS["levels"] // SEASON_PASS["per_page"]
+    if page is None:
+        page = _season_page.get(user_id)
+        if page is None:                                    # open on the page your next reward is on
+            page = min(pages - 1, season_level(season_state(user_id)["xp"]) // SEASON_PASS["per_page"])
+    page = max(0, min(pages - 1, int(page)))
+    _season_page[user_id] = page
+    return page
+
+
+def build_season_view(user_id: str, page: int | None = None, image: bool = True) -> list:
+    season_roll(user_id)
+    pages = SEASON_PASS["levels"] // SEASON_PASS["per_page"]
+    page = _season_resolve_page(user_id, page)
+    ready = len(season_claimable(user_id))
+    first = page * SEASON_PASS["per_page"] + 1
+    blocks: list = [{"type": 10, "content": _season_head(user_id)}]
+    if image:
+        blocks.append({"type": 12, "items": [{"media": {"url": "attachment://season.png"},
+                                              "description": f"Season pass levels {first} to {first + 9}"}]})
+    else:                                                   # text fallback (no Pillow / upload failed)
+        rows = []
+        for r in SEASON_REWARDS:
+            if first <= r["level"] < first + 10:
+                mark = "✅" if r["level"] in season_state(user_id)["claimed"] else "🟢" if r["level"] <= season_level(season_state(user_id)["xp"]) else "⬜"
+                rows.append(f"{mark} **{r['level']}** — {season_reward_text(r['parts'], user_id)}")
+        blocks.append({"type": 10, "content": "\n".join(rows)})
+    blocks.append({"type": 10, "content": f"-# Page {page + 1}/{pages} · free track · 🔒 premium track coming soon"})
+    nav = [{"type": 2, "style": 2, "label": "◀", "custom_id": f"season:view:{page - 1}:{user_id}", "disabled": page == 0},
+           {"type": 2, "style": 2, "label": "▶", "custom_id": f"season:view:{page + 1}:{user_id}", "disabled": page >= pages - 1},
+           {"type": 2, "style": 3 if ready else 2, "label": f"Claim ({ready})" if ready else "Claim", "disabled": not ready,
+            "custom_id": f"season:claim:{user_id}"},
+           {"type": 2, "style": 1, "label": "Tasks", "emoji": emoji_partial("quests"), "custom_id": f"season:tasks:{user_id}"},
+           {"type": 2, "style": 2, "label": "Info", "custom_id": f"season:info:{user_id}"}]
+    return [{"type": 17, "accent_color": 0xB59BFF, "spoiler": False, "components": [
+        *blocks, {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": nav},
+        {"type": 1, "components": [{"type": 2, "style": 2, "label": "Top", "custom_id": f"season:top:{user_id}"},
+                                   {"type": 2, "style": 2, "label": "◀ Menu", "custom_id": f"nav:menu:{user_id}"}]},
+    ]}]
+
+
+def _next_monday_ts() -> int:
+    now = datetime.now(timezone.utc)
+    nxt = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(nxt.timestamp())
+
+
+def build_season_tasks(user_id: str) -> list:
+    st = season_roll(user_id)
+
+    def line(t):
+        bar, pct = ui_progress(t["progress"], t["target"])
+        return (f"{'✅' if t['done'] else '▫️'} {t['desc']}\n"
+                f"-# {bar} {t['progress']:,}/{t['target']:,} · **+{t['xp']} Season XP**" + (" · done" if t["done"] else ""))
+    daily = "\n".join(line(t) for t in st["daily"]) or "-# Nothing for you today."
+    weekly = "\n".join(line(t) for t in st["weekly"]) or "-# Nothing for you this week."
+    notes = "\n".join(f"-# {n}" for n in st.get("notes", [])[-3:])
+    body = (f"### {SEASON_PASS['emoji']} Season Tasks\n"
+            f"-# Finish tasks to earn **Season XP** — every {SEASON_PASS['xp_per_level']} XP is a level with a free reward. "
+            f"You are level **{season_level(st['xp'])}** ({st['xp']:,} XP).")
+    live = season_phase() == "live"
+    return [{"type": 17, "accent_color": 0xB59BFF, "spoiler": False, "components": [
+        {"type": 10, "content": body},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": f"**Daily** · new ones <t:{next_midnight_ts()}:R>\n{daily}"},
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 10, "content": f"**Weekly** · new ones <t:{_next_monday_ts()}:R>\n{weekly}"},
+        *([{"type": 14, "divider": True, "spacing": 1}, {"type": 10, "content": f"**Just now**\n{notes}"}] if notes else []),
+        *([] if live else [{"type": 10, "content": "-# The season isn't running right now, so tasks aren't counting."}]),
+        {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Season", "custom_id": f"season:view:{_season_page.get(user_id, 0)}:{user_id}"},
+                                   {"type": 2, "style": 2, "label": "Info", "custom_id": f"season:info:{user_id}"}]},
+    ]}]
+
+
+def build_season_info(user_id: str) -> list:
+    S = SEASON_PASS
+    body = (f"### {S['emoji']} {S['name']} — Season {S['id']}\n*{S['tagline']}*\n\n"
+            f"A season is a few weeks long. Do your normal hunting, finish **season tasks** for **Season XP**, and climb the track — "
+            f"**{S['levels']} levels**, a free reward on every one. Rewards are crates, items, healing, a few gems, titles and "
+            f"keepsakes for your profile; nothing here changes what the game pays.\n\n"
+            f"**How to play it**\n"
+            f"- `/season tasks` — 3 daily and 3 weekly tasks (they count what quests count).\n"
+            f"- `/season view` — the pass, ten levels a page. **Claim** collects everything you've unlocked.\n"
+            f"- `/season top` — who is furthest along.\n"
+            f"- Every {S['xp_per_level']} Season XP is a level. The finish line (level {S['levels']}) gives the **Newborn** badge, the "
+            f"**Newborn Crown** keepsake and the title **Newborn Veteran**.\n\n"
+            f"**Premium track:** coming soon. Everything on the free track is yours either way.\n"
+            f"-# Runs <t:{int(_season_date('start').timestamp())}:D> → <t:{season_end_ts() - 1}:D> (UTC). Rewards can be claimed for "
+            f"{S['grace_days']} days after it ends.")
+    return [{"type": 17, "accent_color": 0xB59BFF, "spoiler": False, "components": [
+        {"type": 10, "content": body[:3900]}, {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Season", "custom_id": f"season:view:{_season_page.get(user_id, 0)}:{user_id}"},
+                                   {"type": 2, "style": 1, "label": "Tasks", "custom_id": f"season:tasks:{user_id}"}]},
+    ]}]
+
+
+def build_season_top(user_id: str) -> list:
+    rows = []
+    for uid, dd in data.items():
+        st = dd.get("season")
+        if dd.get("is_tester") or not isinstance(st, dict) or st.get("id") != SEASON_PASS["id"] or st.get("xp", 0) <= 0:
+            continue
+        rows.append((st["xp"], uid))
+    rows.sort(reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [f"{medals[i] if i < 3 else f'`{i + 1}.`'} **{get_username(uid)}** — level {season_level(xp)} · {xp:,} XP"
+             for i, (xp, uid) in enumerate(rows[:10])]
+    mine = next((i + 1 for i, (_, uid) in enumerate(rows) if uid == user_id), None)
+    body = (f"### {SEASON_PASS['emoji']} Season Top\n" + ("\n".join(lines) if lines else "-# Nobody has earned any Season XP yet — be the first!")
+            + (f"\n\n-# You are **#{mine}** of {len(rows)}." if mine else ""))
+    return [{"type": 17, "accent_color": 0xB59BFF, "spoiler": False, "components": [
+        {"type": 10, "content": body}, {"type": 14, "divider": True, "spacing": 1},
+        {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Season", "custom_id": f"season:view:{_season_page.get(user_id, 0)}:{user_id}"}]},
+    ]}]
+
+
+async def season_show(interaction, user_id: str, page: int | None = None, *, new: bool = False) -> None:
+    """Send / update the season view with its picture (text-only fallback when the picture can't be made)."""
+    season_roll(user_id)
+    page = _season_resolve_page(user_id, page)
+    png = None
+    if _PIL_OK:
+        try:
+            await season_fetch_banner()
+            png = await asyncio.to_thread(_season_render, _season_snapshot(user_id, page))
+        except Exception:
+            logger.exception("season picture failed")
+    comps = build_season_view(user_id, page, image=png is not None)
+    if png is None:
+        if new:
+            await send_v2_followup(interaction, comps)
+        else:
+            await smart_update_v2(interaction, comps)
+        return
+    try:
+        await _send_png_panel(interaction, comps, png, "season.png", new=new)
+    except discord.HTTPException:
+        logger.exception("season picture upload failed")
+        plain = build_season_view(user_id, page, image=False)
+        if new:
+            await send_v2_followup(interaction, plain)
+        else:
+            await smart_update_v2(interaction, plain)
+
+
+async def _season_claim_and_show(interaction, user_id: str, *, new: bool) -> None:
+    async with user_transaction(user_id):
+        lines = season_claim(user_id)
+    if lines:
+        await send_ephemeral_v2(interaction, f"{SEASON_PASS['emoji']} **Season rewards claimed!**\n" + "\n".join(lines), 0x2ECC71)
+    else:
+        await send_ephemeral_v2(interaction, f"{emoji('warning')} Nothing to claim right now — finish tasks to earn Season XP.", 0xE67E22)
+    await season_show(interaction, user_id, None, new=new)
+
+
+season_group = app_commands.Group(
+    name="season", description="The season pass — levels, tasks and free rewards",
+    allowed_contexts=app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True),
+    allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
+)
+
+
+async def _season_cmd_gate(interaction) -> str | None:
+    user_id = await _common_init(interaction)
+    if not user_id:
+        return None
+    if not FEATURE_SEASON:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} The season pass is switched off right now.", 0xE74C3C)
+        return None
+    init_user(user_id)
+    return user_id
+
+
+@season_group.command(name="view", description="See the season pass: your level and the free rewards, ten levels a page")
+@app_commands.describe(page="Which page of the pass (1-5); leave 0 to open on your next reward")
+async def season_view_cmd(interaction: discord.Interaction, page: app_commands.Range[int, 0, 5] = 0):
+    user_id = await _season_cmd_gate(interaction)
+    if not user_id:
+        return
+    await season_show(interaction, user_id, None if not page else page - 1, new=True)
+
+
+@season_group.command(name="tasks", description="Your daily and weekly season tasks — they earn Season XP")
+async def season_tasks_cmd(interaction: discord.Interaction):
+    user_id = await _season_cmd_gate(interaction)
+    if not user_id:
+        return
+    await send_v2_followup(interaction, build_season_tasks(user_id))
+
+
+@season_group.command(name="claim", description="Claim every season reward you've unlocked")
+async def season_claim_cmd(interaction: discord.Interaction):
+    user_id = await _season_cmd_gate(interaction)
+    if not user_id:
+        return
+    await _season_claim_and_show(interaction, user_id, new=True)
+
+
+@season_group.command(name="info", description="What the season is, how Season XP works and what's coming")
+async def season_info_cmd(interaction: discord.Interaction):
+    user_id = await _season_cmd_gate(interaction)
+    if not user_id:
+        return
+    await send_v2_followup(interaction, build_season_info(user_id))
+
+
+@season_group.command(name="top", description="The hunters furthest along this season")
+async def season_top_cmd(interaction: discord.Interaction):
+    user_id = await _season_cmd_gate(interaction)
+    if not user_id:
+        return
+    await send_v2_followup(interaction, build_season_top(user_id))
+
+
+bot.tree.add_command(season_group)
+
 
 @bot.tree.command(name="cleardm", description="Delete the bot's old messages from your DMs")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -28565,6 +29403,23 @@ bot_group = app_commands.Group(
     allowed_installs=app_commands.AppInstallationType(guild=True, user=True),
 )
 
+@bot_group.command(name="seasonbanner", description="Set the season pass background image (a direct image link)")
+@app_commands.check(is_admin)
+@app_commands.describe(url="A direct link to the image (e.g. a Discord attachment link). Empty clears it.")
+async def season_banner_cmd(interaction: discord.Interaction, url: str = ""):
+    global SEASON_BANNER_URL, _season_banner_img, _season_banner_src
+    SEASON_BANNER_URL = url.strip()
+    _season_banner_img, _season_banner_src = None, ""
+    save_config()
+    await interaction.response.defer(ephemeral=True)
+    await season_fetch_banner()
+    ok = _season_banner_img is not None
+    await send_ephemeral_v2(interaction, (f"{emoji('check_mark')} Season background set ({_season_banner_img.width}×{_season_banner_img.height})."
+                                          if ok else f"{emoji('warning')} Saved, but I couldn't load that image — the pass will use the plain background."
+                                          if SEASON_BANNER_URL else f"{emoji('check_mark')} Season background cleared."),
+                            0x2ECC71 if ok or not SEASON_BANNER_URL else 0xE67E22)
+
+
 @bot_group.command(name="devmail", description="Sets the developer mail message")
 @app_commands.check(is_admin)
 @app_commands.describe(message="The developer mail message")
@@ -30197,7 +31052,8 @@ def _sighting_progress_body(sg: dict) -> str:
     return announce_card(
         "sighting", "❓", "UNKNOWN CREATURE SIGHTED", subtitle=where,
         flavor=f"Something enormous is moving through {where}. Its identity is still unknown.",
-        actions=[f"{emoji('bow')} Hunt in {where} to uncover clues"],
+        actions=[f"{emoji('bow')} Hunt in {where} to uncover clues",
+                 f"{emoji('money_bag')} **SIGHTING BOUNTY:** {sighting_bounty_text(sg)} for the first kill, on top of the normal bounty"],
         progress_label="Clues discovered",
         progress_current=clues, progress_target=SIGHTING_CLUE_GOAL,
         extra=extra,
@@ -30227,6 +31083,7 @@ def _sighting_reveal_body(sg: dict) -> str:
         f"◈ {myth_repeat_bounty_range(name)[0]:,}–{myth_repeat_bounty_range(name)[1]:,}\n"
         f"{emoji('gem')} {MYTH_REPEAT_GEMS_RANGE[0]}–{MYTH_REPEAT_GEMS_RANGE[1]}\n"
         f"-# Your first-ever mythic kill pays ◈ {myth_first_kill_bounty(name):,} + {emoji('gem')} {MYTH_FIRST_KILL_GEMS}\n"
+        f"{emoji('siren')} **SIGHTING BOUNTY** (your first kill of it before it leaves): **+ {sighting_bounty_text(sg, True)}**\n"
         f"{emoji('trophy')} {c.get('drop', 'Unique Trophy')}\n\n"
         f"{emoji('crossed_swords')} Hunters in **{where}** may now encounter it.\n"
         f"`⏳` Available for the next {window_h}h."
