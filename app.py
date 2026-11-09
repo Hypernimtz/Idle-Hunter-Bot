@@ -20274,6 +20274,17 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_season_tasks(owner_id))
         elif sub == "claim":
             await _season_claim_and_show(interaction, owner_id, new=False)
+        elif sub == "taskclaim":
+            async with user_transaction(owner_id):
+                lines, xp_, lv0, lv1 = season_task_claim(owner_id)
+            if lines:
+                msg = f"{SEASON_PASS['emoji']} **Season tasks claimed!**\n" + "\n".join(lines) + f"\n\n**Total: +{xp_:,} Season XP**"
+                if lv1 > lv0:
+                    msg += f"\n🎉 **Season level {lv1}!** Collect your rewards in `/season view`."
+                await send_ephemeral_v2(interaction, msg, 0x2ECC71)
+            else:
+                await send_ephemeral_v2(interaction, f"{emoji('warning')} No finished tasks to claim yet.", 0xE67E22)
+            await smart_update_v2(interaction, build_season_tasks(owner_id))
         elif sub == "info":
             await smart_update_v2(interaction, build_season_info(owner_id))
         elif sub == "top":
@@ -24317,11 +24328,13 @@ def season_roll(user_id: str) -> dict:
     st = season_state(user_id)
     today = today_utc()
     if st["d_day"] != today:
+        _season_autocollect(user_id, st, st["daily"])
         st["d_day"] = today
         st["daily"] = _season_pick(user_id, SEASON_DAILY_TASKS, 3, "d" + today)
         mark_user_dirty(user_id)
     wk = _week_key()
     if st["w_week"] != wk:
+        _season_autocollect(user_id, st, st["weekly"])
         st["w_week"] = wk
         st["weekly"] = _season_pick(user_id, SEASON_WEEKLY_TASKS, 3, "w" + wk)
         mark_user_dirty(user_id)
@@ -24343,21 +24356,51 @@ def season_progress(user_id: str, stat: str, amount: int = 1, *, absolute: bool 
                 continue
         t["progress"] = min(t["target"], t["progress"] + max(0, int(amount)))
         if t["progress"] >= t["target"]:
-            t["done"] = True
-            _season_award(user_id, st, t)
+            t["done"], t["claimed"] = True, False
+            st["notes"] = (st.get("notes", []) + [f"{SEASON_PASS['emoji']} Season task complete: {t['desc']} · "
+                                                  f"claim **+{t['xp']} Season XP** in </season tasks:{COMMAND_ID.get('season', '0')}>"])[-SEASON_NOTES_MAX:]
     mark_user_dirty(user_id)
 
 
-def _season_award(user_id: str, st: dict, t: dict) -> None:
+def _season_award(user_id: str, st: dict, t: dict) -> tuple:
+    """Pay one finished task's Season XP. Returns (level before, level after)."""
     before = season_level(st["xp"])
     st["xp"] += t["xp"]
     st["tasks_done"] = st.get("tasks_done", 0) + 1
+    t["claimed"] = True
     after = season_level(st["xp"])
-    note = f"{SEASON_PASS['emoji']} Season task done: {t['desc']} · **+{t['xp']} Season XP**"
-    if after > before:
-        note += f" · **Season level {after}!**" + (" Rewards are waiting in `/season view`." if after > len(st["claimed"]) else "")
-    st["notes"] = (st.get("notes", []) + [note])[-SEASON_NOTES_MAX:]
     analytics(user_id, "season_task", task=t["id"], xp=t["xp"], level=after)
+    return before, after
+
+
+def _season_unclaimed(st: dict) -> list:
+    """Finished tasks still waiting for the player's Claim. (A done task with no `claimed` field was paid under the old rules.)"""
+    return [t for t in st["daily"] + st["weekly"] if t["done"] and not t.get("claimed", True)]
+
+
+def _season_autocollect(user_id: str, st: dict, old_tasks: list) -> None:
+    """A day/week rolled over with finished tasks never claimed: pay them rather than lose them."""
+    lost = [t for t in old_tasks if t.get("done") and not t.get("claimed", True)]
+    for t in lost:
+        _season_award(user_id, st, t)
+    if lost:
+        st["notes"] = (st.get("notes", []) + [f"{SEASON_PASS['emoji']} {len(lost)} finished season task(s) you hadn't claimed were "
+                                              f"collected for you: **+{sum(t['xp'] for t in lost)} Season XP**"])[-SEASON_NOTES_MAX:]
+
+
+def season_task_claim(user_id: str) -> tuple:
+    """Pay every finished, unclaimed task. Returns (lines, total_xp, level_before, level_after). Call inside a user_transaction."""
+    st = season_roll(user_id)
+    todo = _season_unclaimed(st)
+    if not todo or season_phase() in ("upcoming", "over"):
+        return [], 0, season_level(st["xp"]), season_level(st["xp"])
+    first = season_level(st["xp"])
+    lines = []
+    for t in todo:
+        _season_award(user_id, st, t)
+        lines.append(f"✅ {t['desc']} · **+{t['xp']} Season XP**")
+    mark_user_dirty(user_id)
+    return lines, sum(t["xp"] for t in todo), first, season_level(st["xp"])
 
 
 def season_notes_pop(user_id: str) -> list:
@@ -24784,8 +24827,11 @@ def build_season_tasks(user_id: str) -> list:
 
     def line(t):
         bar, pct = ui_progress(t["progress"], t["target"])
-        return (f"{'✅' if t['done'] else '▫️'} {t['desc']}\n"
-                f"-# {bar} {t['progress']:,}/{t['target']:,} · **+{t['xp']} Season XP**" + (" · done" if t["done"] else ""))
+        waiting = t["done"] and not t.get("claimed", True)
+        mark = "🎁" if waiting else "✅" if t["done"] else "▫️"
+        tail = " · **ready to claim!**" if waiting else " · claimed" if t["done"] else ""
+        return (f"{mark} {t['desc']}\n"
+                f"-# {bar} {t['progress']:,}/{t['target']:,} · **+{t['xp']} Season XP**{tail}")
     daily = "\n".join(line(t) for t in st["daily"]) or "-# Nothing for you today."
     weekly = "\n".join(line(t) for t in st["weekly"]) or "-# Nothing for you this week."
     notes = "\n".join(f"-# {n}" for n in st.get("notes", [])[-3:])
@@ -24793,16 +24839,20 @@ def build_season_tasks(user_id: str) -> list:
             f"-# Finish tasks to earn **Season XP** — every {SEASON_PASS['xp_per_level']} XP is a level with a free reward. "
             f"You are level **{season_level(st['xp'])}** ({st['xp']:,} XP).")
     live = season_phase() == "live"
+    waiting_xp = sum(t["xp"] for t in _season_unclaimed(st))
     return [{"type": 17, "accent_color": 0xB59BFF, "spoiler": False, "components": [
         {"type": 10, "content": body},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 10, "content": f"**Daily** · new ones <t:{next_midnight_ts()}:R>\n{daily}"},
+        {"type": 10, "content": f"### Daily\n-# new ones <t:{next_midnight_ts()}:R>\n{daily}"},
         {"type": 14, "divider": True, "spacing": 1},
-        {"type": 10, "content": f"**Weekly** · new ones <t:{_next_monday_ts()}:R>\n{weekly}"},
+        {"type": 10, "content": f"### Weekly\n-# new ones <t:{_next_monday_ts()}:R>\n{weekly}"},
         *([{"type": 14, "divider": True, "spacing": 1}, {"type": 10, "content": f"**Just now**\n{notes}"}] if notes else []),
         *([] if live else [{"type": 10, "content": "-# The season isn't running right now, so tasks aren't counting."}]),
         {"type": 14, "divider": True, "spacing": 1},
         {"type": 1, "components": [{"type": 2, "style": 2, "label": "◀ Season", "custom_id": f"season:view:{_season_page.get(user_id, 0)}:{user_id}"},
+                                   {"type": 2, "style": 3 if waiting_xp else 2, "disabled": not waiting_xp,
+                                    "label": f"Claim tasks (+{waiting_xp} XP)" if waiting_xp else "Claim tasks",
+                                    "custom_id": f"season:taskclaim:{user_id}"},
                                    {"type": 2, "style": 2, "label": "Info", "custom_id": f"season:info:{user_id}"}]},
     ]}]
 
@@ -24814,7 +24864,7 @@ def build_season_info(user_id: str) -> list:
             f"**{S['levels']} levels**, a free reward on every one. Rewards are crates, items, healing, a few gems, titles and "
             f"keepsakes for your profile; nothing here changes what the game pays.\n\n"
             f"**How to play it**\n"
-            f"- `/season tasks` — 3 daily and 3 weekly tasks (they count what quests count).\n"
+            f"- `/season tasks` — 3 daily and 3 weekly tasks (they count what quests count). Finish one, then press **Claim tasks** to get its Season XP.\n"
             f"- `/season view` — the pass, ten levels a page. **Claim** collects everything you've unlocked.\n"
             f"- `/season top` — who is furthest along.\n"
             f"- Every {S['xp_per_level']} Season XP is a level. The finish line (level {S['levels']}) gives the **Newborn** badge, the "

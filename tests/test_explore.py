@@ -2521,26 +2521,30 @@ def test_quest_progress_feeds_season_tasks_and_levels_follow_xp():
         app.quest_progress(U, "hunts_done", 12)
         assert st["daily"][0]["progress"] == 12 and st["xp"] == 0
         app.quest_progress(U, "hunts_done", 30)                                                   # over the target: capped, paid once
-        assert st["daily"][0]["done"] and st["daily"][0]["progress"] == 20 and st["xp"] == 60
+        assert st["daily"][0]["done"] and st["daily"][0]["progress"] == 20 and st["xp"] == 0       # finished, but not paid until claimed
         app.quest_progress(U, "hunts_done", 5)
-        assert st["xp"] == 60
+        assert st["xp"] == 0
         app.quest_progress(U, "rarity_caught", 5, rarity="common")                                # too common to count
         assert st["daily"][1]["progress"] == 0
         app.quest_progress(U, "rarity_caught", 3, rarity="epic")
-        assert st["daily"][1]["done"] and st["xp"] == 140
+        assert st["daily"][1]["done"] and st["xp"] == 0
         app.quest_progress(U, "daily_streak_reached", 9, absolute=True)                           # running totals are ignored
         app.quest_progress(U, "dailies_claimed_quest", 1)
-        assert st["xp"] == 180 and st["tasks_done"] == 3
+        assert st["xp"] == 0
+        lines, xp_, lv0, lv1 = app.season_task_claim(U)                                           # the Claim button pays all three
+        assert xp_ == 180 and len(lines) == 3 and st["xp"] == 180 and st["tasks_done"] == 3 and lv1 == 0
+        assert app.season_task_claim(U)[0] == []                                                  # once only
         st["xp"] = 240
-        app.quest_progress(U, "rarity_caught", 1, rarity="mythic")                                # +400 -> level 2 (and a note)
-        assert st["xp"] == 640 and app.season_level(st["xp"]) == 2
-        assert any("Season level 2" in n for n in st["notes"])
+        app.quest_progress(U, "rarity_caught", 1, rarity="mythic")                                # +400 -> level 2 once claimed
+        assert st["xp"] == 240
+        lines, xp_, lv0, lv1 = app.season_task_claim(U)
+        assert st["xp"] == 640 and app.season_level(st["xp"]) == 2 and (lv0, lv1) == (0, 2)
     assert app.season_level(0) == 0 and app.season_level(249) == 0 and app.season_level(250) == 1 and app.season_level(10 ** 9) == 50
     with season_live(False):
         before = st["xp"]
         st["daily"][2]["done"], st["daily"][2]["progress"] = False, 0
         app.quest_progress(U, "dailies_claimed_quest", 1)
-        assert st["xp"] == before                                                                 # nothing counts outside the season
+        assert st["xp"] == before and not st["daily"][2]["done"]                                  # nothing counts outside the season
 
 
 def test_the_notes_show_up_once_on_the_hunt_and_explore_panels():
@@ -2551,8 +2555,8 @@ def test_the_notes_show_up_once_on_the_hunt_and_explore_panels():
         app.quest_progress(U, "hunts_done", 1)
         assert st["notes"]
         panel = json.dumps(app.build_explore_components(U), ensure_ascii=False)
-        assert "Season task done" in panel and "+60 Season XP" in panel
-        assert "Season task done" not in json.dumps(app.build_explore_components(U), ensure_ascii=False)      # shown once
+        assert "Season task complete" in panel and "+60 Season XP" in panel
+        assert "Season task complete" not in json.dumps(app.build_explore_components(U), ensure_ascii=False)      # shown once
         assert app.season_notes_pop(U) == []
 
 
@@ -2781,6 +2785,24 @@ def test_explore_catches_count_for_season_tasks_and_the_daily_card_mentions_the_
 
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
+
+def test_season_tasks_panel_has_headings_a_claim_button_and_nothing_is_lost_at_rollover():
+    d = _sx()
+    with season_live(), tr.Harness() as h:
+        st = app.season_roll(U)
+        st["daily"] = [dict(gd.SEASON_DAILY_TASKS[0], progress=19, done=False)]
+        app.quest_progress(U, "hunts_done", 1)
+        blob = json.dumps(app.build_season_tasks(U), ensure_ascii=False)
+        assert "### Daily" in blob and "### Weekly" in blob and "ready to claim" in blob
+        assert f"season:taskclaim:{U}" in blob and "Claim tasks (+60 XP)" in blob
+        run(app._dispatch_component(tr.FakeInteraction(U, f"season:taskclaim:{U}")))
+        assert any("Season tasks claimed" in m and "+60" in m for m in h.ephemerals) and st["xp"] == 60
+        assert "Claim tasks (+" not in json.dumps(h.panels[-1], ensure_ascii=False)
+        # an unclaimed finished task is paid, not lost, when the day rolls over
+        st["daily"] = [dict(gd.SEASON_DAILY_TASKS[0], progress=20, done=True, claimed=False)]
+        st["d_day"] = ""
+        app.season_roll(U)
+        assert st["xp"] == 120 and any("collected for you" in n for n in st["notes"])
 
 
 if __name__ == "__main__":

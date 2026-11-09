@@ -248,5 +248,10 @@
     "key": "2026-11-09-season-emoji",
     "title": "Season pass: more money, more items, real item art",
     "message": "The `/season view` pass now shows the game's own icons on every reward card, and the rewards got a boost:\n- **Much more money** — 17 levels pay cash now (up from ~13), and each is 2–6× bigger than before (it still scales with your own animal worth).\n- **More items** — Rare Bait, Weather Vane, Signal Flare, Smoke Bomb, Trail Map, Ammo Pouch, Haul Wagon, Hunter's Stim, Iron Plating, Bloodhound Scent, Gift Box, Forge Coal, Lucky Hammer and more are spread through the track.\n- Already unlocked levels keep what they showed — unclaimed levels now pay the new rewards."
+  },
+  {
+    "key": "2026-11-09-season-task-claim",
+    "title": "Season tasks now need a Claim",
+    "message": "Finishing a **season task** no longer pays on its own — open `/season tasks` and press **Claim tasks** to collect the Season XP. You get a note when a task is ready, a confirmation (with any level-up) when you claim, and a task you forget is collected for you when the day or week rolls over. The Daily and Weekly lists now have their own headings."
   }
 ]
