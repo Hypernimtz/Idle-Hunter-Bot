@@ -5899,17 +5899,34 @@ SEASON_WEEKLY_TASKS = [
 def _build_season_rewards() -> list:
     """The 50 free rewards. Each level is a list of parts: ("cash", x) x = multiples of the player's own animal worth;
     ("crate", name, n) · ("item", name, n) · ("heal", name, n) · ("gems", n) · ("title", text) · ("keepsake", key) · ("badge", key)."""
-    cycle = [[("cash", 8)], [("heal", "Bandage", 2)], [("crate", "Common Crate", 1)], [("item", "Scent Lure", 1)],
-             [("cash", 12)], [("heal", "First Aid Kit", 1)], [("crate", "Uncommon Crate", 1)], [("item", "Camp Rations", 1)]]
-    out = {n: list(cycle[(n - 1) % len(cycle)]) for n in range(1, SEASON_PASS["levels"] + 1)}
+    items = ["Scent Lure", "Camp Rations", "Rare Bait", "Weather Vane", "Signal Flare", "Smoke Bomb", "Trail Map", "Ammo Pouch",
+             "Haul Wagon", "Hunter's Stim", "Iron Plating", "Bloodhound Scent", "Gift Box", "Forge Coal", "Danger Whistle", "Lucky Hammer"]
+    out = {}
+    k = 0                                                         # which consumable comes next
+    for n in range(1, SEASON_PASS["levels"] + 1):
+        r = n % 4
+        if r == 1:                                                # money, growing every cycle (x = the player's own animal worth)
+            out[n] = [("cash", 15 + n)]
+        elif r == 2:
+            out[n] = [("item", items[k % len(items)], 2 if items[k % len(items)] in ("Scent Lure", "Camp Rations", "Smoke Bomb", "Ammo Pouch") else 1)]
+            k += 1
+        elif r == 3:
+            tier = ("Common Crate", "Uncommon Crate") if n < 15 else ("Uncommon Crate", "Rare Crate") if n < 30 else ("Rare Crate", "Epic Crate")
+            out[n] = [("crate", tier[(n // 4) % 2], 1)] if (n // 4) % 2 == 0 else [("cash", 25 + n)]       # crate / money alternate
+        else:
+            if n % 8 == 0:
+                out[n] = [("item", items[k % len(items)], 1)]
+                k += 1
+            else:
+                out[n] = [("heal", "Bandage", 3) if (n // 4) % 2 else ("heal", "First Aid Kit", 1)]
     out.update({
         5: [("crate", "Rare Crate", 1)],
         10: [("gems", 10), ("title", "Hatchling")],
         15: [("crate", "Rare Crate", 1), ("item", "Rare Bait", 1)],
-        20: [("keepsake", "season_shell"), ("cash", 20)],
+        20: [("keepsake", "season_shell"), ("cash", 60)],
         25: [("gems", 10), ("title", "Fledgling")],
         30: [("crate", "Epic Crate", 1)],
-        35: [("gems", 10), ("cash", 40)],
+        35: [("gems", 10), ("cash", 100)],
         40: [("gems", 10), ("title", "Wildling")],
         45: [("crate", "Epic Crate", 1), ("item", "Weather Vane", 1)],
         50: [("badge", "season_newborn"), ("keepsake", "season_crown"), ("title", "Newborn Veteran"), ("gems", 10)],
