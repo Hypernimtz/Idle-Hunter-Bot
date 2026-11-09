@@ -7744,9 +7744,14 @@ def run_hunt(user_id: str, guided: bool = False, forced_animal: "str | list | No
         if is_first_rare:
             data[user_id]["stats"]["first_rare_ts"] = int(now)
 
-        _pm = EXPLORE_REWARD_MULT if forced_animal else 1       # Explore shots pay much more (see EXPLORE_REWARD_MULT)
+        if forced_animal:                                       # Explore: paid per tool point, shared out over what one shot hit
+            _n = max(1, len(_forced))
+            _pm = (EXPLORE_REWARD_MULT * TOOLS.get(tool_name, {}).get("multi_catch", 1)
+                   * (1 + EXPLORE_MULTI_GAIN * (_n - 1)) / _n)
+        else:
+            _pm = 1
         pay_val, pay_xp = int(sell_value * _pm), int(xp_earned * _pm)
-        catches.append({"animal": animal, "sell_value": pay_val,
+        catches.append({"animal": animal, "sell_value": pay_val, "explore_mult": round(_pm, 1) if forced_animal else 1,
                         "xp_earned": pay_xp, "is_rare": is_rare,
                         "is_new_species": is_new_species,
                         "is_personal_best": is_personal_best,
@@ -8495,8 +8500,12 @@ EXPLORE_GOLD_PERFECT  = 0.35  # ...this much more
 EXPLORE_FOX_CHANCE    = 0.012 # per step, once per expedition: a curious fox follows you and leaves a stash
 EXPLORE_FOX_FOLLOW    = 5
 EXPLORE_EASY_DIST     = (4, 5)   # the first animal of an expedition is a gentle one this far away
-EXPLORE_REWARD_MULT   = 10    # money AND XP multiplier on an animal caught in Explore: you catch far fewer per minute
-                              # than with the Hunt button (one shot, one animal, plus the walking), so each one pays a lot more
+EXPLORE_REWARD_MULT   = 14    # money AND XP multiplier per catch in Explore, PER POINT of the tool's multi_catch. Classic Hunt pays
+                              # multi_catch animals per click; Explore pays one shot at a time and needs attention, so it pays
+                              # about 2x what the same minutes of Classic Hunt pay (measured with tests/sim_explore_income.py:
+                              # an Explore minute yields ~2.4 catches whatever the tool, a Classic minute ~17 x multi_catch)
+EXPLORE_MULTI_GAIN    = 0.5   # a shot that covers several animals pays each a bit less, but the shot as a whole more:
+                              # total = one catch's pay x (1 + this x (animals hit - 1))
 EXPLORE_CHEST_TIERS   = ("common", "uncommon", "rare", "epic")        # drawn with the matching crate art
 EXPLORE_CHEST_WEIGHTS = (62, 26, 10, 2)
 EXPLORE_CHEST_LOOT_X  = (1.0, 1.25, 1.5, 2.0)                       # loot multiplier per tier (still small, still capped)
@@ -9608,7 +9617,7 @@ def explore_fire(user_id: str) -> dict:
     for c in (res or {}).get("catches", []):
         st.setdefault("bag", []).append({"name": c["animal"], "value": c["sell_value"], "perfect": bool(c.get("is_rare"))})
         lines.append(f"{emoji('target')} **You caught {animal_emoji(c['animal'])} {c['animal']}!** "
-                     f"◈ {c['sell_value']:,} · +{c['xp_earned']:,} XP · ×{EXPLORE_REWARD_MULT} Explore bonus"
+                     f"◈ {c['sell_value']:,} · +{c['xp_earned']:,} XP · ×{c.get('explore_mult', 1):g} Explore bonus"
                      + (" · ✨ Perfect Catch" if c.get("is_rare") else "")
                      + (" · 🆕 **NEW SPECIES!**" if c.get("is_new_species") else ""))
     if res and res.get("region_decor"):

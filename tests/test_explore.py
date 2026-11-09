@@ -2064,6 +2064,44 @@ def test_there_is_no_generic_tree_any_more():
 
 
 
+def test_explore_pays_about_twice_classic_per_minute_through_a_per_tool_multiplier():
+    assert app.EXPLORE_REWARD_MULT == 14 and app.EXPLORE_MULTI_GAIN == 0.5
+    # one animal, a 2-catch tool (Longbow): 14 x 2
+    d = _armed("Longbow", 20)
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        c = out["result"]["catches"][0]
+        assert c["explore_mult"] == 28.0 and "×28" in st["msg"]
+    base = int(gd.ANIMAL_DATA[COMMON]["value"])
+    assert c["sell_value"] >= base * 28 * 0.9                                   # (boosts and Perfect Catches only add to it)
+    # a cone that takes two animals (Shotgun, 3 catches): the shot pays 14 x 3 x 1.5 in all, shared out
+    _armed("Shotgun", 20)
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        _calm(st, name=COMMON, dx=1)
+        _calm(st, name=gd.BIOME_ANIMALS["village"][1], dx=2)
+        real = _land()
+        try:
+            out = app.explore_fire(U)
+        finally:
+            random.random = real
+        mults = [c["explore_mult"] for c in out["result"]["catches"]]
+        assert mults == [31.5, 31.5] and sum(mults) == 63.0                     # 63 = 14 x 3 x 1.5
+    # classic hunts are untouched
+    d = _fresh(level=300)
+    d["hunt_cd"] = 0
+    r = app.run_hunt(U)
+    assert all(c["explore_mult"] == 1 for c in r["catches"])
+
+
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
 

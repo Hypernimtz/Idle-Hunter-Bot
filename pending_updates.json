@@ -223,5 +223,10 @@
     "key": "2026-10-12-explore-world",
     "title": "Explore: every region has its own look, landmarks and hazards",
     "message": "**The Explore map got real art and a living world.**\n\n**Every region has its own ground, trees, boulders and scenery** (maples in the village, oaks and mossy boulders in the forest, palms and giant ferns in the jungle, cacti and sandstone arches in the desert, ice, mangroves, coral, crystals...). Some trees, the volcano, boat wrecks and floating crystal islands are **big (2x2)**.\n\n**Scenery does things on its own** (no extra buttons):\n- Ice and frozen arches **slide** you one more tile. Snowdrifts, steam vents and vents on the sea floor **throw you back** and cost a little HP; mud just holds you up.\n- Prickly cacti and hot volcanic rock **hurt a little** when you bump them; molten lava costs 5 HP. None of it can knock you out. Water can't be crossed.\n- Reeds, ferns, anemones and bushes **hide animals** until you're next to them.\n- Glowing coral, arches and crystals **show where animals are**, and many landmarks give a small find, a heal or a **discovery stamp**. Each one pays out once per expedition.\n- New discoveries to stumble on: wildflower clearings, golden pawprint trails that reveal nearby animals, and gatherings of animals that move in close.\n\nStamps and souvenirs show on your profile. The **Info** button explains the terrain."
+  },
+  {
+    "key": "2026-11-08-explore-pay",
+    "title": "Explore now pays about double what Classic Hunt does per minute",
+    "message": "Exploring takes attention and thought, so it now pays properly for your time.\n\n- Every catch on the Explore map now pays **14x per point of your tool's multi-catch** (money and XP). A Longbow catch pays x28, a Shotgun x42, a Cosmic RPG x84.\n- A shot that hits several animals pays the whole shot more (x1.5 for two animals, x2 for three...), split between them.\n- Over a few minutes that works out to **roughly 2x the money and XP** of the same time pressing Hunt in Classic mode, whichever tool you carry (before, better tools earned far less per minute in Explore than in Classic).\n- Classic Hunt is unchanged."
   }
 ]
