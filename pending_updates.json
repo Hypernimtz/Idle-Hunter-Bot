@@ -243,5 +243,10 @@
     "key": "2026-11-08-no-text-commands",
     "title": "Text commands (ih ...) have been removed",
     "message": "Discord is retiring prefix commands, so the old `ih hunt` style text commands are gone. Use the **slash commands** (`/hunt`, `/daily`, `/balance`, ...) or the buttons instead. Nothing else changes."
+  },
+  {
+    "key": "2026-11-09-season-emoji",
+    "title": "Season pass uses the real item art",
+    "message": "The `/season view` pass now shows the game's own icons — coins, gems, crates, bandages, kits and items — on every reward card instead of plain shapes."
   }
 ]

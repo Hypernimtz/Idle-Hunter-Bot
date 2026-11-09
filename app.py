@@ -24572,6 +24572,7 @@ def _season_render(snap: dict) -> bytes:
                 d.ellipse([p_[0] - 6, p_[1] - 6, p_[0] + 6, p_[1] + 6], fill=col)
         else:
             seg(pos[a_n], pos[b_n], col)
+    pics = []
     for n in order:
         x, y = pos[n]
         r = snap["rewards"][n]
@@ -24581,7 +24582,14 @@ def _season_render(snap: dict) -> bytes:
         edge = (250, 200, 60, 255) if claimed else (90, 230, 130, 255) if ready else (150, 136, 210, 150)
         d.rounded_rectangle([x - 95, cy - 85, x + 95, cy + 85], radius=20, fill=(255, 255, 255, 30 if n > lvl else 44), outline=edge,
                             width=4 if ready else 3)
-        _season_icon(d, r["kind"], r["name"], x, cy - 28, n > lvl)
+        pic = (snap.get("icons") or {}).get(n)
+        if pic is not None:
+            ic = pic.resize((64, 64), _PILImage.LANCZOS)
+            if n > lvl:
+                ic.putalpha(ic.getchannel("A").point(lambda v: int(v * 0.45)))
+            pics.append((ic, (x - 32, cy - 28 - 32)))
+        else:
+            _season_icon(d, r["kind"], r["name"], x, cy - 28, n > lvl)
         for li, ln in enumerate(_season_wrap(r["label"])):
             d.text((x, cy + 30 + li * 20), ln, font=_ex_font(17), fill=(255, 255, 255, 255 if n <= lvl else 170), anchor="mm")
         # the level node
@@ -24594,6 +24602,8 @@ def _season_render(snap: dict) -> bytes:
     if page < snap["pages"] - 1:
         d.polygon([(W - 52, H - 70), (W - 52, H - 34), (W - 24, H - 52)], fill=(206, 196, 255, 220))
     canvas.alpha_composite(layer)
+    for ic, xy in pics:                                         # the real emoji go on top of the cards
+        canvas.alpha_composite(ic, xy)
     buf = _io.BytesIO()
     canvas.convert("RGB").save(buf, "PNG")
     return buf.getvalue()
@@ -24608,7 +24618,56 @@ def _season_card_label(user_id: str, r: dict) -> dict:
         text = f"{season_part_text(parts[0], crate_value_scale(data[user_id].get('level', 1)))} +{len(parts) - 1} more"
     # the picture's built-in font has no ◈ / × / dashes, so the card says it in plain ASCII (the coin icon already says "money")
     text = text.replace("◈ ", "").replace("×", "x").replace("–", "-").replace("—", "-")
-    return {"kind": kind, "name": name, "label": text}
+    return {"kind": kind, "name": name, "label": text, "emoji": _season_reward_emoji(parts[0])}
+
+
+def _season_reward_emoji(part: tuple) -> str:
+    """The bot's OWN emoji for a reward (the `<:name:id>` string), or '' when the reward has none (the card then draws a shape)."""
+    k = part[0]
+    if k == "cash":
+        return emoji("coin_sample")
+    if k == "gems":
+        return emoji("gem")
+    if k == "crate":
+        return CRATE_TIERS.get(part[1], {}).get("emoji", "")
+    if k == "item":
+        return ITEMS.get(part[1], {}).get("emoji", "")
+    if k == "heal":
+        return HEALING_ITEMS.get(part[1], {}).get("emoji", "")
+    if k == "badge":
+        return emoji(SPECIAL_BADGES.get(part[1], {}).get("emoji", ""))
+    return ""
+
+
+_season_emoji_cache: dict = {}
+
+
+async def season_fetch_icons(snap: dict) -> None:
+    """Download the custom-emoji pictures the page needs (once each, kept in memory); snap["icons"] = {level: Image}."""
+    icons = {}
+    urls = {}
+    for n, r in snap["rewards"].items():
+        e = r.get("emoji") or ""
+        url = _emoji_cdn_url(e, size=96) if e.startswith("<") else None
+        if url:
+            urls[n] = url
+    need = [u for u in set(urls.values()) if u not in _season_emoji_cache]
+    if need:
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as sess:
+                for u in need:
+                    try:
+                        async with sess.get(u) as resp:
+                            if resp.status == 200:
+                                _season_emoji_cache[u] = _PILImage.open(_io.BytesIO(await resp.read())).convert("RGBA")
+                    except Exception:
+                        logger.warning("season emoji download failed")
+        except Exception:
+            logger.warning("season emoji session failed")
+    for n, u in urls.items():
+        if u in _season_emoji_cache:
+            icons[n] = _season_emoji_cache[u]
+    snap["icons"] = icons
 
 
 def _season_snapshot(user_id: str, page: int) -> dict:
@@ -24798,7 +24857,9 @@ async def season_show(interaction, user_id: str, page: int | None = None, *, new
     if _PIL_OK:
         try:
             await season_fetch_banner()
-            png = await asyncio.to_thread(_season_render, _season_snapshot(user_id, page))
+            snap_ = _season_snapshot(user_id, page)
+            await season_fetch_icons(snap_)
+            png = await asyncio.to_thread(_season_render, snap_)
         except Exception:
             logger.exception("season picture failed")
     comps = build_season_view(user_id, page, image=png is not None)

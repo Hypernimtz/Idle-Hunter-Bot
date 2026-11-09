@@ -2450,6 +2450,22 @@ def test_there_are_no_text_commands_any_more():
     assert app.bot.tree.get_command("hunt") is not None                          # slash commands are all there is
 
 
+def test_season_cards_use_the_bots_own_emoji():
+    """Crates, gems, coins (and items once the bot has adopted their emoji) are drawn with the real custom emoji, not a shape."""
+    assert app._season_reward_emoji(("crate", "Rare Crate", 1)).startswith("<:")
+    assert app._season_reward_emoji(("gems", 10)).startswith("<:")
+    assert app._season_reward_emoji(("cash", 8)).startswith("<:")
+    assert app._season_reward_emoji(("title", "Hatchling")) == ""
+    _sx()
+    with season_live():
+        snap = app._season_snapshot(U, 0)
+    assert all("emoji" in r for r in snap["rewards"].values())
+    plain = app._season_render(dict(snap, icons={}))
+    pic = app._PILImage.new("RGBA", (96, 96), (255, 0, 0, 255))
+    with_icons = app._season_render(dict(snap, icons={n: pic for n in snap["rewards"]}))
+    assert plain != with_icons
+
+
 def test_the_first_season_is_the_season_of_the_newborn_with_fifty_free_rewards():
     S = gd.SEASON_PASS
     assert S["id"] == 1 and S["name"] == "Season of the Newborn" and S["emoji"] == "🐣" and S["levels"] == 50 and S["per_page"] == 10
@@ -2662,6 +2678,10 @@ def test_season_view_goes_out_as_a_picture_and_falls_back_to_text():
         return None
     real = app.season_fetch_banner
     app.season_fetch_banner = nobanner
+    async def noicons(snap):
+        snap["icons"] = {}
+    real_icons = app.season_fetch_icons
+    app.season_fetch_icons = noicons
     try:
         with season_live():
             run(app.season_show(It(), U, 0, new=True))
@@ -2683,6 +2703,7 @@ def test_season_view_goes_out_as_a_picture_and_falls_back_to_text():
             assert fell and "attachment://" not in json.dumps(fell[0])
     finally:
         app.season_fetch_banner = real
+        app.season_fetch_icons = real_icons
 
 
 def test_season_commands_menu_entry_leaderboard_and_banner_setting():
