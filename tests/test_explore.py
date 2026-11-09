@@ -2440,6 +2440,16 @@ def _sx(**over):
     return d
 
 
+def test_there_are_no_text_commands_any_more():
+    """The "ih ..." prefix commands are gone: no message handler, no adapter, no message-content intent."""
+    assert not hasattr(app, "handle_prefix_message") and not hasattr(app, "MessageInteraction") and not hasattr(app, "_msg_send")
+    assert not hasattr(app, "_is_msg") and not hasattr(app, "PREFIX_ALIASES")
+    assert app.bot.intents.message_content is False
+    import inspect
+    assert inspect.ismethod(app.bot.on_message)                                  # discord.py's own, not ours
+    assert app.bot.tree.get_command("hunt") is not None                          # slash commands are all there is
+
+
 def test_the_first_season_is_the_season_of_the_newborn_with_fifty_free_rewards():
     S = gd.SEASON_PASS
     assert S["id"] == 1 and S["name"] == "Season of the Newborn" and S["emoji"] == "🐣" and S["levels"] == 50 and S["per_page"] == 10
@@ -2460,8 +2470,8 @@ def test_the_first_season_is_the_season_of_the_newborn_with_fifty_free_rewards()
     from datetime import datetime, timezone
     ts = lambda s: datetime(*map(int, s.split("-")), 12, tzinfo=timezone.utc).timestamp()
     assert app.season_phase(ts("2026-11-01")) == "upcoming" and app.season_phase(ts("2026-12-01")) == "live"
-    assert app.season_phase(ts("2027-01-03")) == "live" and app.season_phase(ts("2027-01-10")) == "grace"
-    assert app.season_phase(ts("2027-02-01")) == "over"
+    assert app.season_phase(ts("2027-11-07")) == "live" and app.season_phase(ts("2027-11-14")) == "grace"
+    assert app.season_phase(ts("2027-12-31")) == "over"
 
 
 def test_season_tasks_are_three_daily_and_three_weekly_and_stable_all_day():

@@ -238,5 +238,10 @@
     "key": "2026-11-08-season-newborn",
     "title": "Season 1 is here: the Season of the Newborn (+ more weather, bigger sighting bounties)",
     "message": "**🐣 Season of the Newborn has started!** The bot only just hatched — help it grow up.\n\n- **`/season tasks`** — 3 daily and 3 weekly tasks (they count what your quests count) that earn **Season XP**.\n- **`/season view`** — the pass: **50 levels**, ten per page on a zigzag track, a **free reward on every level** (crates, items, healing, a few gems, titles and keepsakes; the finish line gives the **Newborn** badge, the **Newborn Crown** and the title **Newborn Veteran**). Every 250 Season XP is a level. Press **Claim** (or use `/season claim`) to collect.\n- `/season info` explains it all and `/season top` shows who is furthest along. A **Premium** track is coming later; the free track is yours regardless.\n- You can also open it from **Menu → More… → Season**.\n\n**Also new**\n- **More weather on the Explore map** — thunderbolt storms, hail, blizzards, heatwaves, gales, mist, monsoons, meteor showers and blood moons — and the sky of every region now changes **every 10 minutes**.\n- **Unknown-creature sightings** now show their **bounty** right in the announcement, and it is bigger: the first hunter to kill the creature while it's on the loose gets an extra **4× its value** plus 15 gems on top of the normal bounty.\n- **A card on your first move each day** tells you which **Daily Theme** has started and how to take part.\n- **The Chronicle** (the storybook of event chapters, keepsakes and titles) is now explained on the Events screen and the first daily card, and the old weekly-theme list is gone from it."
+  },
+  {
+    "key": "2026-11-08-no-text-commands",
+    "title": "Text commands (ih ...) have been removed",
+    "message": "Discord is retiring prefix commands, so the old `ih hunt` style text commands are gone. Use the **slash commands** (`/hunt`, `/daily`, `/balance`, ...) or the buttons instead. Nothing else changes."
   }
 ]

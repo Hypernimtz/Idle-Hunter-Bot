@@ -5866,7 +5866,7 @@ HUNTERS_PATH_MYTH_UNLOCK_STEP = 7
 SEASON_PASS = {
     "id": 1, "key": "newborn", "name": "Season of the Newborn", "emoji": "🐣",
     "tagline": "Idle Hunter has only just hatched. Help it find its feet.",
-    "start": "2026-11-08", "end": "2027-01-03",        # UTC dates, both inclusive
+    "start": "2026-11-08", "end": "2027-11-07",        # UTC dates, both inclusive (a year for now: edit these two to reschedule)
     "grace_days": 14,                                   # rewards can still be claimed this long after the season ends
     "levels": 50, "xp_per_level": 250, "per_page": 10,
 }

@@ -204,15 +204,12 @@ INSTANCE_ID = f"{_socket.gethostname()}:{os.getpid()}:{secrets.token_hex(3)}"
 print(f"🥾 Idle Hunter process starting — INSTANCE_ID={INSTANCE_ID}")
 
 intents = discord.Intents.default()
-# Text commands ("ih hunt") need the privileged message_content intent. Enabled in the dev
-# portal; past 100 servers Discord requires approval. DMs with the bot (Intents.default()
-# includes dm_messages) and threads work too. A server where the bot is only USER-installed
-# sends the bot no messages at all — Discord's rule — so there only the slash commands work.
+# Slash commands only. (The old "ih hunt" text commands were removed; nothing needs the message_content intent.)
 # `members` stays on — server leaderboards read guild.members.
-intents.message_content = True
+intents.message_content = False        # nothing reads message text any more (Discord is retiring prefix commands)
 intents.members = True
 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or("ih "), intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)       # slash commands only: there are no text commands any more
 
 # ── staff-only commands ──────────────────────────────────────────────────────
 # With STAFF_GUILD_ID set (token.env), the admin command groups are registered to that one
@@ -291,8 +288,6 @@ IDLE_STACK_MULTIPLIER = 2
 _CATCHABLE_ANIMALS = {a for lst in BIOME_ANIMALS.values() for a in lst}
 
 HUNT_COOLDOWN         = 3
-PREFIX_COOLDOWN       = 1.2     # seconds between a player's text commands (silently ignored inside it)
-PREFIX_EPHEMERAL_TTL  = 20      # "private" replies to text commands vanish after this long
 MYTH_ENCOUNTER_BASE   = 0.005   # base per-hunt chance to meet a cryptid (before luck / event)
 MYTH_ENCOUNTER_LUCK   = 0.02    # extra chance approached asymptotically with luck
 MYTH_ENCOUNTER_MAX    = 0.05    # hard cap after luck + event multiplier
@@ -6869,104 +6864,7 @@ async def _http_retry(interaction, route, payload: dict, tries: int = 3):
                            type(e).__name__, attempt + 1, tries - 1)
             await asyncio.sleep(0.4 * (attempt + 1))
 
-class PrefixUnsupported(Exception):
-    """A command tried to do something only a real interaction can (open a modal…)."""
-
-def _is_msg(interaction) -> bool:
-    return bool(getattr(interaction, "is_prefix", False))
-
-async def _msg_delete_later(channel_id: int, message_id: int, delay: float) -> None:
-    await asyncio.sleep(delay)
-    try:
-        await bot.http.request(Route("DELETE", "/channels/{channel_id}/messages/{message_id}",
-                                     channel_id=channel_id, message_id=message_id))
-    except Exception:
-        pass
-
-async def _msg_send(interaction, components: list | None = None, *, ephemeral: bool = False,
-                    content: str | None = None) -> dict | None:
-    """Post a command's reply into the channel as a reply to the player's text message.
-    There is no such thing as an ephemeral message for a text command, so anything that
-    would have been private disappears again after PREFIX_EPHEMERAL_TTL seconds."""
-    payload: dict = {"allowed_mentions": {"parse": [], "replied_user": False},
-                     "message_reference": {"message_id": str(interaction.id), "fail_if_not_exists": False}}
-    if components is not None:
-        _clean_components(components)
-        payload["flags"] = V2_FLAGS
-        payload["components"] = components
-    else:
-        payload["content"] = (content or "")[:2000]
-    try:
-        msg = await bot.http.request(
-            Route("POST", "/channels/{channel_id}/messages", channel_id=interaction.channel_id), json=payload)
-    except Exception as e:
-        logger.warning("text-command reply failed: %s", e)
-        return None
-    if ephemeral and msg:
-        asyncio.ensure_future(_msg_delete_later(interaction.channel_id, int(msg["id"]), PREFIX_EPHEMERAL_TTL))
-    return msg
-
-class _MsgResponse:
-    def __init__(self, interaction):
-        self._i, self.done = interaction, False
-    def is_done(self) -> bool:
-        return self.done
-    async def defer(self, **k):
-        if not self.done:
-            self.done = True
-            asyncio.ensure_future(self._typing())
-    async def _typing(self):
-        try:
-            await bot.http.send_typing(self._i.channel_id)
-        except Exception:
-            pass
-    async def send_message(self, content=None, *, ephemeral=False, embed=None, view=None, **k):
-        self.done = True
-        await _msg_send(self._i, ephemeral=ephemeral, content=content or "")
-    async def send_modal(self, modal):
-        raise PrefixUnsupported("modal")
-    async def edit_message(self, *a, **k):
-        raise PrefixUnsupported("edit")
-
-class _MsgFollowup:
-    def __init__(self, interaction):
-        self._i = interaction
-    async def send(self, content=None, *, ephemeral=False, file=None, **k):
-        if file is not None:
-            return await self._i.channel.send(content=content, file=file)
-        return await _msg_send(self._i, ephemeral=ephemeral, content=content or "")
-
-class MessageInteraction:
-    """Duck-types discord.Interaction for a command typed as text ("ih hunt"), so the very
-    same command functions run for both. Replies go to the channel (see _msg_send)."""
-    is_prefix = True
-    def __init__(self, message: discord.Message, command=None):
-        self.trigger = message
-        self.id = message.id
-        self.type = discord.InteractionType.application_command
-        self.user = message.author
-        self.guild = message.guild
-        self.guild_id = message.guild.id if message.guild else None
-        self.channel = message.channel
-        self.channel_id = message.channel.id
-        self.client = bot
-        self.application_id = bot.application_id
-        self.token = ""
-        self.message = None
-        self.locale = None
-        self.command = command
-        self.data = {"name": (command.qualified_name.split(" ")[0] if command else ""), "options": []}
-        self.namespace = SimpleNamespace()
-        self.response = _MsgResponse(self)
-        self.followup = _MsgFollowup(self)
-
 async def _raw(interaction: discord.Interaction, payload: dict):
-    if _is_msg(interaction):
-        d = payload.get("data") or {}
-        if payload.get("type") == 4:
-            interaction.response.done = True
-            await _msg_send(interaction, d.get("components"), ephemeral=bool(d.get("flags", 0) & 64))
-        return
     try:
         _clean_components((payload.get("data") or {}).get("components"))
     except Exception:
@@ -6996,9 +6894,6 @@ async def _raw(interaction: discord.Interaction, payload: dict):
                        INSTANCE_ID, payload.get("type"))
 
 async def update_v2(interaction: discord.Interaction, components: list):
-    if _is_msg(interaction):
-        await _msg_send(interaction, components)
-        return
     _clean_components(components)
     await _raw(interaction, {
         "type": 7,
@@ -7006,9 +6901,6 @@ async def update_v2(interaction: discord.Interaction, components: list):
     })
 
 async def edit_v2(interaction: discord.Interaction, components: list):
-    if _is_msg(interaction):
-        await _msg_send(interaction, components)
-        return
     _clean_components(components)
     route = Route(
         "PATCH",
@@ -7028,9 +6920,6 @@ async def smart_update_v2(interaction, components):
     # if it fails: the interaction can already be acked (a swallowed defer error,
     # or a second bot instance that beat us to it) in ways ``is_done()`` doesn't
     # see, and vice versa.
-    if _is_msg(interaction):
-        await _msg_send(interaction, components)
-        return
     primary, fallback = (
         (edit_v2, update_v2) if interaction.response.is_done()
         else (update_v2, edit_v2)
@@ -7045,10 +6934,6 @@ async def smart_update_v2(interaction, components):
 async def send_v2_followup(interaction: discord.Interaction, components: list, *, ephemeral: bool = False):
     """Send a v2 container. ACK-aware: initial response (type 4) if the
     interaction is still unacknowledged, otherwise on the followup route."""
-    if _is_msg(interaction):
-        interaction.response.done = True
-        await _msg_send(interaction, components, ephemeral=ephemeral)
-        return
     _clean_components(components)
     flags = V2_FLAGS | 64 if ephemeral else V2_FLAGS
     if not interaction.response.is_done():
@@ -7093,11 +6978,6 @@ async def send_ephemeral_v2(interaction: discord.Interaction, content: str, colo
     """
     container = [{"type": 17, "accent_color": color, "spoiler": False,
         "components": [{"type": 10, "content": content}]}]
-
-    if _is_msg(interaction):
-        interaction.response.done = True
-        await _msg_send(interaction, container, ephemeral=True)
-        return
 
     if not interaction.response.is_done():
         await _raw(interaction, {"type": 4, "data": {
@@ -10490,12 +10370,7 @@ async def _send_png_panel(interaction, comps: list, png: bytes, fname: str, *, n
     f = discord.File(_io.BytesIO(png), filename=fname)
     form = lambda payload: [{"name": "payload_json", "value": json.dumps(payload)},
                             {"name": "files[0]", "value": f.fp, "filename": fname, "content_type": "image/png"}]
-    if _is_msg(interaction):
-        interaction.response.done = True
-        payload = {**body, "message_reference": {"message_id": str(interaction.id), "fail_if_not_exists": False}}
-        await bot.http.request(Route("POST", "/channels/{channel_id}/messages",
-                                     channel_id=interaction.channel_id), form=form(payload), files=[f])
-    elif new and not interaction.response.is_done():
+    if new and not interaction.response.is_done():
         route = Route("POST", "/interactions/{interaction_id}/{interaction_token}/callback",
                       interaction_id=interaction.id, interaction_token=interaction.token)
         await interaction.client.http.request(route, form=form({"type": 4, "data": body}), files=[f])
@@ -24249,7 +24124,7 @@ async def explore_hunt_entry(interaction, user_id: str, *, owner: bool = True) -
     async with user_transaction(user_id):
         _ex_state(user_id)
     msg = getattr(interaction, "message", None)
-    is_comp = msg is not None and not _is_msg(interaction)
+    is_comp = msg is not None
     if not is_comp:                                                    # a slash command: always a new message
         await explore_show(interaction, user_id, new=True)
     elif owner and not hunt_new_message(user_id):
@@ -26153,8 +26028,7 @@ async def invite_cmd(interaction: discord.Interaction):
             f"{emoji('bow')} Hunt, craft, gamble and rule the leaderboards — bring **Idle Hunter** to your server!\n\n"
             f"{emoji('sparkles')} **Add to Server** — put the bot in a server you manage (giveaways, server leaderboards).\n"
             f"{emoji('profile')} **Add to Account** — use every `/command` anywhere, in any server or DM, "
-            f"without adding it to a server. *(Text commands like `ih hunt` only work in DMs with the bot "
-            f"and in servers it has been added to.)*\n"
+            f"without adding it to a server.\n"
             f"{emoji('tribe')} **Join the support server** for updates, events and help.\n"
             f"{emoji('handshake')} **Refer a friend** with </refer:{COMMAND_ID.get('refer','0')}> — "
             f"when they get going you **both** earn {emoji('gem')} gems and a title.\n"
@@ -28901,202 +28775,6 @@ async def inspect_economy_cmd(interaction: discord.Interaction, currency: str = 
     await send_ephemeral_v2(interaction, f"### 📊 {currency.title()} economy\n{text}"[:3900], 0x3498DB)
 
 _add_staff_command(inspect_group)
-
-# ─────────────────────────────────────────────
-# TEXT COMMANDS  ·  "ih hunt", "ih daily", "ih bj" …
-# ─────────────────────────────────────────────
-# Players expect a short word prefix from a game bot. "ih " (with the space) is long enough
-# not to collide with other bots' "." / "!" and short enough to type. A text command runs the
-# SAME function as its slash command: a MessageInteraction stands in for the interaction, so
-# gating (maintenance / ban / verify), the item ledger and every panel behave identically.
-# Panels reply into the channel and their buttons work normally. Admin commands are never
-# reachable this way, and anything that needs a form (modal) tells the player to use the slash.
-
-# alias -> "command" or "group sub". Anything not here is matched by its real command name.
-PREFIX_ALIASES = {
-    "h": "hunt", "d": "daily", "m": "menu", "p": "profile", "bal": "balance", "money": "balance",
-    "cash": "balance", "gems": "balance", "wallet": "balance", "top": "leaderboard", "lb": "leaderboard",
-    "w": "world", "map": "world", "biomes": "world", "s": "shop", "e": "equip", "cr": "craft",
-    "ev": "events", "set": "settings", "v": "vote", "prog": "progression", "achievements": "progression",
-    "bj": "gamble blackjack", "blackjack": "gamble blackjack", "cf": "gamble coinflip",
-    "flip": "gamble coinflip", "coinflip": "gamble coinflip", "slots": "gamble slots",
-    "slot": "gamble slots", "roulette": "gamble roulette", "rps": "gamble rps", "dice": "gamble dice",
-    "hl": "gamble highlow", "highlow": "gamble highlow", "casino": "gamble menu",
-    "q": "quests daily", "qw": "quests weekly", "weekly": "quests weekly",
-    "t": "tribe menu", "mk": "market browse", "listings": "market listings",
-    "changelog": "update view", "updates": "update view", "ga": "giveaway list", "giveaways": "giveaway list",
-}
-# what a bare group word means: "ih tribe" -> /tribe menu
-PREFIX_GROUP_DEFAULT = {"tribe": "menu", "gamble": "menu", "quests": "daily", "market": "browse",
-                        "update": "view", "session": "status", "giveaway": "list"}
-# real slash commands that must not be typed as free text (long free-text args / money transfer)
-PREFIX_BLOCKED = {"report", "suggest", "gift"}
-_prefix_last: dict[int, float] = {}
-
-def _prefix_resolve(tokens: list[str]):
-    """-> (command, number of tokens it consumed). (None, 0) = not a command (stay silent)."""
-    if not tokens:
-        return None, 0
-    first = tokens[0].lower()
-    alias = PREFIX_ALIASES.get(first)
-    parts = alias.split() if alias else [first]
-    cmd = bot.tree.get_command(parts[0])
-    used = 1
-    if isinstance(cmd, app_commands.Group):
-        if len(parts) > 1:
-            sub = parts[1]
-        elif len(tokens) > 1 and cmd.get_command(tokens[1].lower()) is not None:
-            sub, used = tokens[1].lower(), 2
-        else:
-            sub = PREFIX_GROUP_DEFAULT.get(cmd.name, "")
-        cmd = cmd.get_command(sub) if sub else None
-    if cmd is None or getattr(cmd, "checks", None) or cmd.qualified_name.split(" ")[0] in PREFIX_BLOCKED:
-        return None, 0                # unknown, admin-gated, or blocked: never run
-    return cmd, used
-
-def _prefix_usage(cmd) -> str:
-    bits = [f"<{p.name}>" if p.required else f"[{p.name}]" for p in cmd.parameters]
-    return "ih " + cmd.qualified_name + (" " + " ".join(bits) if bits else "")
-
-async def _prefix_user(tok: str, message: discord.Message):
-    m = re.fullmatch(r"<@!?(\d+)>|(\d{15,21})", tok)
-    if not m:
-        return None
-    uid = int(m.group(1) or m.group(2))
-    for u in message.mentions:
-        if u.id == uid:
-            return u
-    user = (message.guild.get_member(uid) if message.guild else None) or bot.get_user(uid)
-    if user is None:
-        try:
-            user = await bot.fetch_user(uid)
-        except Exception:
-            user = None
-    return user
-
-async def _prefix_bind(cmd, tokens: list[str], message: discord.Message) -> tuple[dict | None, str]:
-    """Positional text -> the command's typed options. (None, '') = looks like chat, say nothing;
-    (None, text) = the player meant it but got it wrong, so tell them how."""
-    import inspect
-    pnames = list(inspect.signature(cmd.callback).parameters)[1:]       # drop `interaction`
-    params = list(cmd.parameters)
-    if not params:
-        return ({}, "") if not tokens else (None, "")                  # "ih hunt for deer" is chat, not a command
-    kwargs, i = {}, 0
-    for pname, par in zip(pnames, params):
-        if i >= len(tokens):
-            if par.required:
-                return None, f"`{_prefix_usage(cmd)}`"
-            break
-        tok, t = tokens[i], par.type
-        if t == discord.AppCommandOptionType.string:
-            last = par is params[-1]
-            val = " ".join(tokens[i:]) if last else tok
-            i = len(tokens) if last else i + 1
-            if par.choices:
-                hit = next((c for c in par.choices if str(c.value).lower() == val.lower()
-                            or c.name.lower() == val.lower()), None)
-                if hit is None:
-                    return (None, f"`{par.name}` must be one of: " + ", ".join(f"`{c.value}`" for c in par.choices)
-                            if par.required else "")
-                val = hit.value
-        elif t in (discord.AppCommandOptionType.integer, discord.AppCommandOptionType.number):
-            val = parse_amount(tok)
-            i += 1
-            if val is None or (par.min_value is not None and val < par.min_value) \
-                    or (par.max_value is not None and val > par.max_value):
-                return (None, f"`{par.name}` needs a number" +
-                        (f" from {par.min_value} to {par.max_value}" if par.min_value is not None else "") + ".") \
-                    if par.required else (None, "")
-        elif t == discord.AppCommandOptionType.boolean:
-            word = tok.lower()
-            if word not in ("yes", "no", "true", "false", "on", "off"):
-                return (None, f"`{par.name}` should be yes or no.") if par.required else (None, "")
-            val, i = word in ("yes", "true", "on"), i + 1
-        elif t == discord.AppCommandOptionType.user:
-            val = await _prefix_user(tok, message)
-            i += 1
-            if val is None:
-                return (None, f"Mention the player for `{par.name}`.") if par.required else (None, "")
-        else:
-            return None, f"That one needs the slash command — use `/{cmd.qualified_name}`."
-        kwargs[pname] = val
-    return kwargs, ""
-
-def _prefix_cheatsheet() -> list:
-    body = (
-        "### 🏹 Text commands\n"
-        "Type **`ih`** and a command — e.g. `ih hunt`. Everything also works as a `/slash` command.\n\n"
-        "**Hunt & earn** — `ih hunt` (`h`) · `ih daily` (`d`) · `ih vote` (`v`) · `ih idle` · `ih quests` (`q`) · `ih qw`\n"
-        "**Gear & world** — `ih shop` (`s`) · `ih equip` (`e`) · `ih craft` · `ih world` (`w`) · `ih guide` · `ih record`\n"
-        "**You** — `ih bal [@user]` · `ih menu` (`m`) · `ih profile [@user]` (`p`) · `ih settings` · `ih progression` · `ih log`\n"
-        "**Casino** — `ih bj` · `ih cf` · `ih slots` · `ih roulette` · `ih rps` · `ih dice` · `ih hl` · `ih casino`\n"
-        "**Social** — `ih tribe` (`t`) · `ih lb` · `ih market` · `ih events` · `ih giveaways` · `ih refer [code]`\n"
-        "**More** — `ih use <item>` · `ih verify <code>` · `ih info <category> <name>` · `ih updates` · `ih rules` · `ih help`\n\n"
-        "-# Needs a form (like creating a tribe with a description)? Use the slash command for that one."
-    )
-    return [{"type": 17, "accent_color": 0x2ECC71, "spoiler": False, "components": [{"type": 10, "content": body}]}]
-
-_PREFIX_RE = re.compile(r"^\s*ih(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
-
-async def handle_prefix_message(message: discord.Message) -> bool:
-    """Run `ih <command> …` if that's what the message is. True = it was ours (even if refused)."""
-    m = _PREFIX_RE.match(message.content or "")
-    if not m:
-        return False
-    tokens = (m.group(1) or "").split()
-    uid = message.author.id
-    now = time.monotonic()
-    if now - _prefix_last.get(uid, 0) < PREFIX_COOLDOWN:
-        return True
-    _prefix_last[uid] = now
-    if len(_prefix_last) > 5000:
-        for k in [k for k, t in _prefix_last.items() if now - t > 60]:
-            _prefix_last.pop(k, None)
-
-    cmd, used = _prefix_resolve(tokens)
-    if not tokens or (tokens[0].lower() in ("commands", "cmds", "cheatsheet", "prefix") and cmd is None):
-        fake = MessageInteraction(message)
-        await _msg_send(fake, _prefix_cheatsheet())
-        return True
-    if cmd is None:
-        return True                          # not one of ours — likely just chat that starts with "ih"
-    fake = MessageInteraction(message, cmd)
-    kwargs, err = await _prefix_bind(cmd, tokens[used:], message)
-    if kwargs is None:
-        if err:
-            await _msg_send(fake, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False,
-                "components": [{"type": 10, "content": f"{emoji('warning')} {err}"}]}], ephemeral=True)
-        return True
-    try:
-        if not await _tree_gate(fake):       # maintenance / ban / verify, exactly like a slash command
-            return True
-        await cmd.callback(fake, **kwargs)
-    except PrefixUnsupported:
-        await _msg_send(fake, [{"type": 17, "accent_color": 0xE67E22, "spoiler": False, "components": [{
-            "type": 10, "content": f"{emoji('warning')} That one needs a form — use `/{cmd.qualified_name}`."}]}],
-            ephemeral=True)
-    except Exception as e:
-        logger.exception("text command failed: ih %s", cmd.qualified_name)
-        try:
-            await report_error_to_owner(f"text command ih {cmd.qualified_name}", e, fake)
-        except Exception:
-            pass
-        await _msg_send(fake, [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False, "components": [{
-            "type": 10, "content": f"{emoji('warning')} Something went wrong. Please try again."}]}], ephemeral=True)
-    finally:
-        inv_flush_touched()
-    return True
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or not message.content:
-        return
-    try:
-        await handle_prefix_message(message)
-    except Exception:
-        logger.exception("text-command handler crashed")
-
 
 # ─────────────────────────────────────────────
 # CONNECTION STATUS  ·  "is the bot up, and is everything it talks to connected?"

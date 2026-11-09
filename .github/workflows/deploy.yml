@@ -52,7 +52,6 @@ jobs:
       - run: python tests/test_settings.py
       - run: python tests/test_giveaway.py
       - run: python tests/test_inspect.py
-      - run: python tests/test_prefix.py
       - run: python tests/test_status.py
       - run: python tests/test_lifetime.py
       - run: python tests/test_profile.py
