@@ -228,5 +228,10 @@
     "key": "2026-11-08-explore-pay",
     "title": "Explore now pays about double what Classic Hunt does per minute",
     "message": "Exploring takes attention and thought, so it now pays properly for your time.\n\n- Every catch on the Explore map now pays **14x per point of your tool's multi-catch** (money and XP). A Longbow catch pays x28, a Shotgun x42, a Cosmic RPG x84.\n- A shot that hits several animals pays the whole shot more (x1.5 for two animals, x2 for three...), split between them.\n- Over a few minutes that works out to **roughly 2x the money and XP** of the same time pressing Hunt in Classic mode, whichever tool you carry (before, better tools earned far less per minute in Explore than in Classic).\n- Classic Hunt is unchanged."
+  },
+  {
+    "key": "2026-11-08-quality-of-life",
+    "title": "Prestige keeps your gems, Settings has 2 pages, Clear Bot DMs, Explore weather",
+    "message": "A round of small things:\n\n- **Prestige now keeps all your gems.** (Money, level, gear and boosts still reset.)\n- **Sold your animals?** The Back button on that screen now takes you straight back to hunting (the map, in Explore Mode) instead of the home page.\n- **Explore:** the tiles you can step onto now have a **yellow outline** instead of a filled square.\n- **Weather on the Explore map:** rain, storms, fog, snow, sandstorms, ashfall, aurora... It is drawn on the map, follows the region (and Heavy Rain / Aurora / Clear Skies conditions), and nudges Explore a little (fog hides far animals, storms hurt your aim, rain calms animals, snow keeps tracks fresh). It never changes what a catch pays.\n- **`/settings` now has 2 pages.**\n- **Too many old bot messages in your DMs?** `/cleardm` (or **Settings → page 2 → Clear Bot DMs**) deletes the bot's last 300 messages in your DMs after you confirm. It can only remove the bot's messages, not yours.\n- **Profile:** the little row of emoji now has a label. 🏡🌳🍄... are **Region decorations** you earn for finishing every animal of a region's field guide."
   }
 ]

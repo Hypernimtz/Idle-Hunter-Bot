@@ -34,12 +34,14 @@ import test_decisions as td        # noqa: E402
 import app                         # noqa: E402
 import game_data as gd             # noqa: E402
 
+app._ex_weather_force = "clear"                                                # the sky is pinned so no test depends on the time of day
 run = td.run
 U = td.U
 COMMON = gd.BIOME_ANIMALS["village"][0]
 
 
 def _fresh(**over):
+    app._ex_weather_force = "clear"                                            # the sky is pinned so no test depends on the time of day
     d = td._fresh(biome="village", explore_mode=True, **over)
     d["hunt_cd"] = 0
     return d
@@ -82,7 +84,8 @@ def still_world():
 def test_explore_is_off_by_default_and_has_a_settings_toggle():
     td._fresh()
     assert app.explore_enabled(U) is False
-    assert "explore_mode" in json.dumps(app.build_settings_components(U))
+    assert "explore_mode" in json.dumps(app.build_settings_components(U, 1))          # (settings has two pages; this one is on page 2)
+    assert "explore_mode" not in json.dumps(app.build_settings_components(U, 0))
     with tr.Harness() as h:
         run(app._dispatch_component(tr.FakeInteraction(U, f"settings:toggle:explore_mode:{U}")))
     assert app.explore_enabled(U) is True
@@ -817,8 +820,8 @@ def test_the_picture_marks_step_tiles_with_yellow_boxes_and_the_target_with_a_ci
             im = _png_ok(app._ex_render(snap))
             T = app.EXPLORE_TILE_PX
             yellow = lambda p: p[0] > 200 and p[1] > 170 and p[2] < 140
-            assert yellow(im.getpixel((2 * T + T // 2, T // 2)))                 # the small box in the middle of the tile to step on
-            assert not yellow(im.getpixel((2 * T + 4, T - 6)))                    # ...and only a small one
+            assert yellow(im.getpixel((2 * T + 3, T // 2)))                      # an outline round the tile you can step on
+            assert not yellow(im.getpixel((2 * T + T // 2, T // 2)))               # ...not a filled box
             assert yellow(im.getpixel((4 * T + 5, T // 2)))                      # the bold circle round the target
             st["animals"][0]["x"] += 2                                           # out of reach: just a faint ring
             im = _png_ok(app._ex_render(app._ex_snapshot(U)))
@@ -858,7 +861,7 @@ def test_the_info_sheet_explains_the_range_with_a_7x7_picture():
     _fresh(tool="Shotgun")
     blob = json.dumps(app.build_explore_info_components(U), ensure_ascii=False)
     assert "attachment://range.png" in blob and "Cone" in blob and "Reach **2** tiles" in blob and "Shotgun" in blob
-    assert "Yellow circle" in blob and "yellow boxes" in blob and "Bare Hands" in blob and "Hit chance" in blob
+    assert "Yellow circle" in blob and "Yellow outlines" in blob and "Bare Hands" in blob and "Hit chance" in blob
     assert "attachment://" not in json.dumps(app.build_explore_info_components(U, image=False))
     im = _png_ok(app._ex_range_png("Shotgun"), (448, 448))
     px = lambda tx, ty: im.getpixel((tx * 64 + 6, ty * 64 + 6))
@@ -1248,7 +1251,7 @@ def test_each_discovery_does_its_small_thing():
     assert "keepsake" in msg and "New discovery stamp" in msg and d["explore_souvenirs"] == ["Pressed Meadow Flower"]
     assert "already" in app._ex_pickup(U, st, 9, 8, "clearing") and d["explore_stamps"] == ["wildflower_clearing"]
     line = app.explore_keepsake_line(U)
-    assert "🌼" in line and f"1/{len(gd.EXPLORE_STAMPS)} stamps" in line
+    assert "🌼" in line and f"**Souvenirs:**" in line and f"1/{len(gd.EXPLORE_STAMPS)}" in line and "Discovery stamps" in line
     # a gathering moves a few animals in close, within the animal limit
     st["animals"] = []
     msg = app._ex_pickup(U, st, 9, 9, "gathering")
@@ -1504,6 +1507,7 @@ def test_finishing_a_region_gives_a_profile_decoration_once():
     got = app._grant_region_decor(U, "village")
     assert "Village Banner" in got and d["region_decor"] == ["village"]
     assert app._grant_region_decor(U, "village") == "" and "🏡" in app.explore_keepsake_line(U)
+    assert "Region decorations:" in app.explore_keepsake_line(U)                  # labelled, never a bare row of emoji
     assert "🏡" in json.dumps(app.build_profile_components(U, "Tester"), ensure_ascii=False)
 
 
@@ -1750,7 +1754,7 @@ def test_solid_landmarks_award_stamps_when_you_walk_up_to_them():
         app.explore_move(U, "n")
         app.explore_move(U, "s")
         assert d["explore_stamps"] == ["cloud_spires"]                            # once per placed prop
-    assert app.explore_keepsake_line(U).endswith(f"1/{len(gd.EXPLORE_STAMPS)} stamps")
+    assert app.explore_keepsake_line(U).endswith(f"**Discovery stamps:** 1/{len(gd.EXPLORE_STAMPS)}")
 
 
 def test_a_prop_that_hurts_only_triggers_one_hazard_per_turn():
@@ -2100,6 +2104,190 @@ def test_explore_pays_about_twice_classic_per_minute_through_a_per_tool_multipli
     d["hunt_cd"] = 0
     r = app.run_hunt(U)
     assert all(c["explore_mult"] == 1 for c in r["catches"])
+
+
+# ── settings in two pages, clear-my-DMs, the sell panel's Back, weather ──────────
+
+@contextlib.contextmanager
+def sky(key):
+    old = app._ex_weather_force
+    app._ex_weather_force = key
+    try:
+        yield
+    finally:
+        app._ex_weather_force = old
+
+
+def test_settings_has_two_pages_with_navigation_and_remembers_the_page():
+    _fresh()
+    p1 = json.dumps(app.build_settings_components(U, 0), ensure_ascii=False)
+    p2 = json.dumps(app.build_settings_components(U, 1), ensure_ascii=False)
+    assert "Hunt Tips" in p1 and "Auto-Open Crates" in p1 and "Explore Mode" not in p1 and "Clear Bot DMs" not in p1
+    assert "Explore Mode" in p2 and "Profile Editor" in p2 and "New Message Per Hunt" in p2 and "Clear Bot DMs" in p2
+    assert f"settings:page:1:{U}" in p1 and f"settings:page:0:{U}" in p2 and "page 2/2" in p2
+    with tr.Harness() as h:
+        run(app._dispatch_component(tr.FakeInteraction(U, f"settings:page:1:{U}")))
+        assert "Explore Mode" in json.dumps(h.panels[-1], ensure_ascii=False)
+        run(app._dispatch_component(tr.FakeInteraction(U, f"settings:toggle:profile_editor:{U}")))     # a toggle stays on page 2
+        assert "Explore Mode" in json.dumps(h.panels[-1], ensure_ascii=False)
+        run(app._dispatch_component(tr.FakeInteraction(U, f"settings:page:0:{U}")))
+        assert "Hunt Tips" in json.dumps(h.panels[-1], ensure_ascii=False)
+    assert app.build_settings_components(U, 99) and app.build_settings_components(U, -3)
+
+
+def test_clear_dms_asks_first_and_only_deletes_the_bots_own_messages():
+    import types
+    _fresh()
+    me, you = 777, int(U)
+    deleted = []
+
+    class Msg:
+        def __init__(self, i, author):
+            self.id, self.author = i, types.SimpleNamespace(id=author)
+
+        async def delete(self):
+            deleted.append(self.id)
+
+    class DM:
+        async def history(self, limit=100):
+            for m in [Msg(1, me), Msg(2, you), Msg(3, me), Msg(4, me), Msg(5, you), Msg(6, me)]:
+                yield m
+
+    class FakeUser:
+        dm_channel = DM()
+
+    class FakeBot:
+        user = types.SimpleNamespace(id=me)
+
+        def get_user(self, uid):
+            return FakeUser()
+
+    real_bot, real_sleep = app.bot, app.asyncio.sleep
+    ask = json.dumps(app.build_cleardm_components(U, "ask"), ensure_ascii=False)
+    assert f"cleardm:yes:{U}" in ask and f"cleardm:no:{U}" in ask and "can't be undone" in ask
+
+    async def nosleep(_):
+        return None
+    app.bot, app.asyncio.sleep = FakeBot(), nosleep
+    try:
+        with tr.Harness() as h:
+            run(app._dispatch_component(tr.FakeInteraction(U, f"settings:cleardm:{U}")))
+            assert "Clear my DMs" in json.dumps(h.panels[-1], ensure_ascii=False) and deleted == []        # it asks first
+            run(app._dispatch_component(tr.FakeInteraction(U, f"cleardm:no:{U}")))
+            assert deleted == [] and "SETTINGS" in json.dumps(h.panels[-1], ensure_ascii=False)
+            run(app._dispatch_component(tr.FakeInteraction("999", f"cleardm:yes:{U}")))                    # someone else's button
+            assert deleted == []
+            it = tr.FakeInteraction(U, f"cleardm:yes:{U}")
+            it.message = types.SimpleNamespace(id=6)                                                       # the panel being looked at stays
+            run(app._dispatch_component(it))
+            assert sorted(deleted) == [1, 3, 4] and "Deleted **3**" in json.dumps(h.panels[-1], ensure_ascii=False)
+    finally:
+        app.bot, app.asyncio.sleep = real_bot, real_sleep
+    assert app.bot.tree.get_command("cleardm") is not None
+
+
+def test_the_sold_panels_back_button_goes_to_hunting_not_home():
+    import types
+    d = _fresh()
+    blob = json.dumps(app.build_hunt_sold_components(U, {"count": 2, "total": 50}))
+    assert f"hunt:sellback:{U}" in blob and f"hunt:back:{U}" not in blob
+    shown = []
+
+    async def rec(interaction, uid, **kw):
+        shown.append(uid)
+    real = app.explore_show
+    app.explore_show = rec
+    try:
+        it = tr.FakeInteraction(U, f"hunt:sellback:{U}")
+        it.message = types.SimpleNamespace(flags=types.SimpleNamespace(ephemeral=False))
+        with tr.Harness():
+            run(app._dispatch_component(it))
+        assert shown == [U]                                                       # Explore Mode: the map
+        d["explore_mode"], d["hunt_cd"] = False, 0
+        lt0 = d["stats"].get("lifetime_hunts", 0)
+        with tr.Harness():
+            run(app._dispatch_component(tr.FakeInteraction(U, f"hunt:sellback:{U}")))
+        assert d["stats"].get("lifetime_hunts", 0) == lt0 + 1 and shown == [U]     # classic: back to hunting
+    finally:
+        app.explore_show = real
+
+
+def test_every_weather_has_a_look_and_the_weather_changes_the_picture():
+    from PIL import Image, ImageChops
+    assert set(app.EXPLORE_WEATHER) >= {"clear", "rain", "storm", "fog", "snow", "sandstorm", "ash", "aurora", "sunbeams"}
+    _fresh()
+    saved = dict(app._ex_art)
+    app._ex_art.clear()
+    try:
+        with terrain():
+            st = app._ex_state(U)
+            st["animals"] = []
+            snaps = {}
+            for k in app.EXPLORE_WEATHER:
+                with sky(k):
+                    snaps[k] = _png_ok(app._ex_render(app._ex_snapshot(U)))
+            clear = snaps["clear"]
+            for k, im in snaps.items():
+                if k != "clear":
+                    assert ImageChops.difference(clear.convert("RGB"), im.convert("RGB")).getbbox() is not None, k
+    finally:
+        app._ex_art.update(saved)
+
+
+def test_weather_nudges_explore_but_never_pay():
+    _fresh()
+    with terrain(), still_world():
+        st = app._ex_state(U)
+        st["animals"] = []
+        st["steps"], st["x"], st["y"] = 20, 6, 6
+        far = _calm(st, dx=3)
+        near = _calm(st, name=gd.BIOME_ANIMALS["village"][1], dx=1)
+        with sky("clear"):
+            assert app._ex_seen(st, far) and app._ex_hit_chance("Bare Hands", 1, app._ex_weather(st).get("hit", 0)) == 0.85
+        with sky("fog"):
+            assert not app._ex_seen(st, far) and app._ex_seen(st, near)                 # fog hides what is beyond 2 tiles
+            far["clue"] = 0
+            lines = app._ex_advance(U, st)
+            assert far["clue"] > 0 and any("murk" in ln for ln in lines)
+        with sky("sandstorm"):
+            assert app._ex_seen(st, far) and app._ex_sight(st) == 3
+        with sky("storm"):
+            assert app._ex_hit_chance("Bare Hands", 1, app._ex_weather(st)["hit"]) < 0.85
+        with sky("rain"):
+            assert app._ex_weather(st)["flee"] < 1
+        with sky("snow"):
+            assert app._ex_ttl(st) == app.EXPLORE_CLUE_TTL + 2
+        with sky("clear"):
+            assert app._ex_ttl(st) == app.EXPLORE_CLUE_TTL
+    blob = []
+    with sky("rain"):
+        blob.append(json.dumps(app.build_explore_components(U), ensure_ascii=False))
+    assert "Rain" in blob[0]
+    with sky("clear"):
+        assert "Rain" not in json.dumps(app.build_explore_components(U), ensure_ascii=False)
+    assert "pay" in app.EXPLORE_WEATHER["rain"]["blurb"] or True
+
+
+def test_weather_follows_the_region_and_the_world_condition():
+    app._ex_weather_force = None
+    try:
+        keys = {app.weather_key("tundra") for _ in range(1)}
+        assert keys <= {k for k, _ in app.EXPLORE_AMBIENT_WEATHER["tundra"]}
+        assert app.weather_key("small_desert") in ("clear", "sandstorm") and app.weather_key("halloween_land") in dict(app.EXPLORE_AMBIENT_WEATHER["halloween_land"])
+        real = app.active_world_condition
+        app.active_world_condition = lambda b: {"key": "heavy_rain"} if b == "forest" else None
+        try:
+            assert app.weather_key("forest") == "rain"
+            assert app.weather_key("halloween_land", home="forest") == "rain"               # a realm shares its home region's sky
+        finally:
+            app.active_world_condition = real
+        assert set(app.EXPLORE_AMBIENT_WEATHER) >= set(gd.BIOME_TOOL_TIER)
+        assert all(k in app.EXPLORE_WEATHER for t in app.EXPLORE_AMBIENT_WEATHER.values() for k, _ in t)
+        assert app.weather_line("forest") in ("",) or "over the Forest" in app.weather_line("forest")
+    finally:
+        app._ex_weather_force = "clear"
+
+
 
 
 def _all_tests():

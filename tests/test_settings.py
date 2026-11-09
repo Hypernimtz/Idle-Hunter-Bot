@@ -97,7 +97,7 @@ def test_toggle_flips_and_shows_in_settings_panel():
         assert d["hunt_new_message"] is False
         assert h.panels, "settings panel should re-render after a toggle"
     import json
-    assert "New Message Per Hunt" in json.dumps(app.build_settings_components("6"), ensure_ascii=False)
+    assert "New Message Per Hunt" in json.dumps(app.build_settings_components("6", 1), ensure_ascii=False)
     assert "6" in app._dirty_users
 
 

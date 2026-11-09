@@ -79,7 +79,7 @@ def test_editor_is_off_by_default_even_for_admins_and_nothing_changes():
 
 def test_settings_page_has_the_toggle_and_it_flips():
     _fresh("2")
-    assert "profile_editor" in json.dumps(app.build_settings_components("2"))
+    assert "profile_editor" in json.dumps(app.build_settings_components("2", 1))
     seen = []
 
     async def upd(interaction, comps):

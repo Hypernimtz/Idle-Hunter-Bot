@@ -1645,17 +1645,22 @@ def _grant_region_decor(user_id: str, biome: str) -> str:
 
 
 def explore_keepsake_line(user_id: str) -> str:
-    """Profile decorations from the map and the field guide: region decorations, souvenirs, discovery stamps."""
+    """The profile's decoration lines — each one LABELLED, so the emoji are never a mystery: region decorations (you finished
+    a region's field guide), souvenirs and discovery stamps from the Explore map, and Halloween candy."""
     d = data.get(user_id, {})
-    bits = [REGION_DECOR[b][0] for b in d.get("region_decor", []) if b in REGION_DECOR]
-    bits += [next((i for i, n in _EX_SOUVENIRS.values() if n == sv), "🌿") for sv in d.get("explore_souvenirs", [])]
+    lines = []
+    deco = [REGION_DECOR[b][0] for b in d.get("region_decor", []) if b in REGION_DECOR]
+    if deco:
+        lines.append("🏆 **Region decorations:** " + " ".join(deco) + "  -# (finished a region's field guide)")
+    souv = [next((i for i, n in _EX_SOUVENIRS.values() if n == sv), "🌿") for sv in d.get("explore_souvenirs", [])]
+    if souv:
+        lines.append("🎒 **Souvenirs:** " + " ".join(souv))
     n = len([x for x in d.get("explore_stamps", []) if x in EXPLORE_STAMPS])
-    out = " ".join(bits)
     if n:
-        out += (" · " if out else "") + f"🏅 {n}/{len(EXPLORE_STAMPS)} stamps"
+        lines.append(f"🏅 **Discovery stamps:** {n}/{len(EXPLORE_STAMPS)}")
     if d.get("candy"):
-        out += (" · " if out else "") + f"🍬 {d['candy']:,} candy"
-    return out
+        lines.append(f"🍬 **Candy:** {d['candy']:,}")
+    return "\n".join(lines)
 
 
 def keepsake_line(uid: str) -> str:
@@ -8704,10 +8709,90 @@ def _ex_in_view(st: dict, a: dict) -> bool:
     return cx <= a["x"] < cx + n and cy <= a["y"] < cy + n
 
 
+# ── Explore weather: what the sky over a region is doing right now ─────────────────────────────────────────────
+# A live world condition (Heavy Rain, Aurora, Clear Skies) shapes the sky of its region; otherwise each region has its own
+# ambient weather that changes every EXPLORE_WEATHER_SLOT_H hours. It is drawn on the map and nudges Explore a little:
+#   flee (x animals' chance to bolt) · hit (added to your hit chance) · sight (animals further than this are hidden) · clue (steps
+#   a clue lasts longer). It never changes what a catch pays.
+EXPLORE_WEATHER_SLOT_H = 3
+EXPLORE_WEATHER = {
+    "clear":     dict(emoji="☀️", name="Clear", blurb=""),
+    "sunbeams":  dict(emoji="🌤️", name="Clear Skies", blurb="Sunbeams through the haze. Nothing in your way."),
+    "rain":      dict(emoji="🌧️", name="Rain", blurb="Animals hunker down and bolt less, but wet gear costs you a little aim (-3%).",
+                      flee=0.7, hit=-0.03),
+    "storm":     dict(emoji="⛈️", name="Thunderstorm", blurb="Thunder spooks them (they bolt more) and the wind ruins your aim (-6%).",
+                      flee=1.25, hit=-0.06),
+    "fog":       dict(emoji="🌫️", name="Fog", blurb="You can only make out animals within 2 tiles.", sight=2),
+    "snow":      dict(emoji="❄️", name="Snowfall", blurb="Tracks stay fresh in the snow: clues last 2 steps longer.", clue=2),
+    "sandstorm": dict(emoji="🏜️", name="Sandstorm", blurb="You can only make out animals within 3 tiles, and grit costs you a little aim (-4%).",
+                      sight=3, hit=-0.04),
+    "ash":       dict(emoji="🌋", name="Ashfall", blurb="Falling ash costs you a little aim (-4%).", hit=-0.04),
+    "aurora":    dict(emoji="✨", name="Aurora", blurb="Lights dance in the sky. Pretty, and harmless."),
+}
+EXPLORE_AMBIENT_WEATHER = {
+    "village": [("clear", 50), ("rain", 25), ("fog", 15), ("storm", 10)],
+    "forest": [("clear", 40), ("rain", 30), ("fog", 20), ("storm", 10)],
+    "woods": [("clear", 35), ("snow", 25), ("fog", 25), ("rain", 15)],
+    "small_desert": [("clear", 70), ("sandstorm", 30)],
+    "sunken_coast": [("clear", 35), ("rain", 25), ("fog", 25), ("storm", 15)],
+    "tundra": [("clear", 30), ("snow", 50), ("fog", 20)],
+    "jungle": [("clear", 30), ("rain", 45), ("storm", 15), ("fog", 10)],
+    "swamp": [("clear", 25), ("fog", 40), ("rain", 25), ("storm", 10)],
+    "volcanic_highlands": [("clear", 50), ("ash", 40), ("storm", 10)],
+    "cursed_ruins": [("clear", 30), ("fog", 50), ("storm", 20)],
+    "rainbow": [("clear", 50), ("rain", 40), ("sunbeams", 10)],
+    "abyssal_depths": [("clear", 70), ("fog", 30)],
+    "celestial_peaks": [("clear", 40), ("snow", 30), ("aurora", 20), ("fog", 10)],
+    "halloween_land": [("fog", 45), ("clear", 25), ("storm", 15), ("rain", 15)],
+}
+_WORLD_CONDITION_SKY = {"heavy_rain": "rain", "aurora": "aurora", "clear_skies": "sunbeams"}
+_ex_weather_force: str | None = None            # tests / admins can pin the sky
+
+
+def weather_key(biome: str, home: str | None = None) -> str:
+    """The sky over `biome` right now (`home` is the real region whose world condition applies, for realms)."""
+    if _ex_weather_force:
+        return _ex_weather_force
+    c = active_world_condition(home or biome)
+    if c and c.get("key") in _WORLD_CONDITION_SKY:
+        return _WORLD_CONDITION_SKY[c["key"]]
+    table = EXPLORE_AMBIENT_WEATHER.get(biome) or [("clear", 1)]
+    slot = int(time.time() // (EXPLORE_WEATHER_SLOT_H * 3600))
+    h = _zlib.crc32(f"{biome}:{slot}".encode()) % sum(w for _, w in table)
+    for key, w in table:
+        if h < w:
+            return key
+        h -= w
+    return "clear"
+
+
+def weather_line(biome: str) -> str:
+    """A flavour line for the classic hunt panel ('' when the sky is clear)."""
+    k = weather_key(biome)
+    if k == "clear":
+        return ""
+    w = EXPLORE_WEATHER[k]
+    return f"{w['emoji']} {w['name']} over the {BIOME_NAMES.get(biome, biome)}."
+
+
+def _ex_weather(st: dict) -> dict:
+    k = weather_key(st["biome"], st.get("home"))
+    return dict(EXPLORE_WEATHER[k], key=k)
+
+
+def _ex_sight(st: dict) -> int:
+    return _ex_weather(st).get("sight", 99)
+
+
+def _ex_ttl(st: dict) -> int:
+    return EXPLORE_CLUE_TTL + _ex_weather(st).get("clue", 0)
+
+
 def _ex_seen(st: dict, a: dict) -> bool:
-    """On screen — and not hidden: a bush covers an animal until you're right next to it."""
+    """On screen — and not hidden: a bush covers an animal until you're right next to it, and fog or a sandstorm hides
+    whatever is further than you can see."""
     d = _ex_dist(a["x"], a["y"], st["x"], st["y"])
-    return _ex_in_view(st, a) and (_ex_kind(st, a["x"], a["y"]) != "bush" or d <= 1)
+    return _ex_in_view(st, a) and d <= _ex_sight(st) and (_ex_kind(st, a["x"], a["y"]) != "bush" or d <= 1)
 
 
 def _ex_visible(st: dict) -> list[dict]:
@@ -8800,8 +8885,9 @@ def _ex_hit_tiles(st: dict, tool: str, target: dict | None) -> set:
             for dx, dy in shape_hits(tool, target["x"] - st["x"], target["y"] - st["y"])}
 
 
-def _ex_hit_chance(tool: str, dist: int) -> float:
-    return max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1)))
+def _ex_hit_chance(tool: str, dist: int, bonus: float = 0.0) -> float:
+    """`bonus` is what the weather adds (it is usually a small penalty)."""
+    return max(0.35, min(0.95, tool_combat_accuracy(tool) - EXPLORE_SHOT_FALLOFF * (dist - 1) + bonus))
 
 
 def _ex_spend_ammo(user_id: str, n: int) -> None:
@@ -8985,6 +9071,8 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
     """One tick of the world: animals act, a new one may wander in, clues update."""
     lines: list[str] = list(st.pop("_lines", []))
     px, py = st["x"], st["y"]
+    wx = _ex_weather(st)
+    ttl = EXPLORE_CLUE_TTL + wx.get("clue", 0)
     toward = lambda x, y: (x - px) ** 2 + (y - py) ** 2
     away = lambda x, y: -((x - px) ** 2 + (y - py) ** 2)
     for a in list(st["animals"]):
@@ -8997,7 +9085,8 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
         if resting:
             a["rest"] -= 1
         spooky = {"skittish": (3, 0.9), "defensive": (3, 0.5), "passive": (2, 0.3)}.get(beh)
-        fleeing = a.get("mood") == "flee" or bool(spooky and d0 <= spooky[0] and random.random() < spooky[1])
+        fleeing = a.get("mood") == "flee" or bool(
+            spooky and d0 <= spooky[0] and random.random() < min(0.97, spooky[1] * wx.get("flee", 1.0)))
         if fleeing:
             if not resting:
                 _ex_step(st, a, away)
@@ -9029,10 +9118,11 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
         if _ex_seen(st, a):
             a["clue"], a["pd"] = 0, d
             continue
-        if _ex_in_view(st, a):                      # on screen, but hidden in a bush
+        if _ex_in_view(st, a):                      # on screen, but hidden: in a bush, or beyond what the weather lets you see
             if a["clue"] == 0:
-                lines.append("🌿 A bush nearby is rustling — something is hiding in it.")
-            a["clue"], a["pd"] = EXPLORE_CLUE_TTL, d
+                lines.append("🌿 A bush nearby is rustling — something is hiding in it." if _ex_kind(st, a["x"], a["y"]) == "bush"
+                             else f"{wx['emoji']} Something moves out in the murk.")
+            a["clue"], a["pd"] = ttl, d
             continue
         a["fade"] = max(0, a.get("fade", 0) - 1)
         if d > EXPLORE_CLUE_RADIUS:
@@ -9041,14 +9131,14 @@ def _ex_advance(user_id: str, st: dict) -> list[str]:
                 a["clue"], a["fade"] = 0, 3
         elif a["clue"] > 0:
             if d < a.get("pd", d):
-                a["clue"] = EXPLORE_CLUE_TTL
+                a["clue"] = ttl
             else:
                 a["clue"] -= 1
                 if a["clue"] == 0:
                     a["fade"] = 3
                     lines.append("-# The trail fades — you've lost it.")
         elif d <= EXPLORE_NOTICE_RADIUS and a["fade"] <= 0:
-            a["clue"] = EXPLORE_CLUE_TTL
+            a["clue"] = ttl
             if a.get("gold"):
                 lines.append("✨ Golden footprints glitter somewhere ahead — a rare chance for a Perfect Catch.")
             elif st["biome"] == HALLOWEEN_BIOME:
@@ -9126,7 +9216,7 @@ def _ex_reveal(st: dict, radius: int) -> int:
     n = 0
     for a in st["animals"]:
         if _ex_dist(a["x"], a["y"], st["x"], st["y"]) <= radius and not _ex_seen(st, a):
-            a["clue"], a["fade"] = EXPLORE_CLUE_TTL, 0
+            a["clue"], a["fade"] = _ex_ttl(st), 0
             a["pd"] = _ex_dist(a["x"], a["y"], st["x"], st["y"])
             n += 1
     return n
@@ -9579,7 +9669,7 @@ def explore_fire(user_id: str) -> dict:
     hits, misses = [], []
     for g in group:
         dist = _ex_dist(g["x"], g["y"], st["x"], st["y"])
-        (hits if random.random() < _ex_hit_chance(tool, dist) else misses).append(g)
+        (hits if random.random() < _ex_hit_chance(tool, dist, _ex_weather(st).get("hit", 0.0)) else misses).append(g)
     lines: list[str] = []
     for m_ in misses:
         beh = animal_combat_stats(m_["name"], _ex_home(st))["behavior"]
@@ -9677,7 +9767,8 @@ def _ex_snapshot(user_id: str) -> dict:
     fox = (fx["x"] - cx, fx["y"] - cy) if fx and 0 <= fx["x"] - cx < n and 0 <= fx["y"] - cy < n else None
     return {"seed": st["seed"], "biome": st["biome"], "cx": cx, "cy": cy, "hx": px - cx, "hy": py - cy,
             "animals": animals, "clues": clues, "cells": cells, "chests": chests, "edges": edges, "moves": moves,
-            "hits": hits, "fox": fox, "props": props}
+            "hits": hits, "fox": fox, "props": props, "weather": _ex_weather(st)["key"], "wstep": st.get("steps", 0),
+            "sight": _ex_sight(st)}
 
 
 # biome look: ground (two greens/sands…), tree canopy, trunk, stone; pine=True draws conifers.
@@ -10012,6 +10103,76 @@ def _ex_proc_prop(kind: str, biome: str, r: random.Random, pal: dict, S: int):
     return im
 
 
+def _ex_weather_fx(canvas, snap: dict, T: int, N: int):
+    """Lay the sky over the finished picture: rain, lightning, fog, snow, sand, ash, an aurora or sunbeams. The pattern is
+    re-rolled every step, so it looks alive from one screen to the next."""
+    key = snap.get("weather", "clear")
+    if key in ("clear", ""):
+        return canvas
+    W = H = T * N
+    r = random.Random(_zlib.crc32(f"{snap['seed']}:{snap.get('wstep', 0)}:{key}".encode()))
+    layer = _PILImage.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = _PILDraw.Draw(layer)                                    # on an empty RGBA layer drawing simply fills it in
+    veil = lambda col: layer.paste(col, (0, 0, W, H))
+    if key in ("rain", "storm"):
+        heavy = key == "storm"
+        veil((18, 34, 70, 70 if heavy else 42))
+        for _ in range(240 if heavy else 130):
+            x, y, ln = r.randint(0, W + 40), r.randint(-30, H), r.randint(16, 30)
+            d.line([(x, y), (x - ln * .35, y + ln)], fill=(196, 214, 255, 175), width=2)
+        if heavy and snap.get("wstep", 0) % 3 == 0:             # lightning
+            veil((255, 255, 255, 46))
+            x = r.randint(W // 5, W * 4 // 5)
+            pts = [(x, 0)]
+            for i in range(1, 7):
+                pts.append((pts[-1][0] + r.randint(-26, 26), i * H // 7))
+            d.line(pts, fill=(255, 255, 230, 240), width=4)
+    elif key == "fog":
+        veil((226, 232, 238, 70))
+        for _ in range(9):
+            cx, cy, rx, ry = r.randint(0, W), r.randint(0, H), r.randint(W // 6, W // 3), r.randint(H // 12, H // 6)
+            d.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=(236, 240, 245, 48))
+    elif key == "snow":
+        veil((232, 240, 255, 28))
+        for _ in range(130):
+            x, y, rad = r.randint(0, W), r.randint(0, H), r.choice((1, 1, 2, 2, 3))
+            d.ellipse([x - rad, y - rad, x + rad, y + rad], fill=(255, 255, 255, 235))
+    elif key == "sandstorm":
+        veil((212, 164, 98, 92))
+        for _ in range(120):
+            x, y, ln = r.randint(-40, W), r.randint(0, H), r.randint(30, 80)
+            d.line([(x, y), (x + ln, y + r.randint(-4, 4))], fill=(236, 206, 150, 150), width=2)
+    elif key == "ash":
+        veil((54, 44, 44, 60))
+        for _ in range(110):
+            x, y, rad = r.randint(0, W), r.randint(0, H), r.choice((1, 2, 2, 3))
+            d.ellipse([x - rad, y - rad, x + rad, y + rad], fill=(210, 200, 192, 210))
+        for _ in range(14):
+            x, y = r.randint(0, W), r.randint(0, H)
+            d.ellipse([x - 2, y - 2, x + 2, y + 2], fill=(255, 140, 52, 235))
+    elif key == "aurora":
+        veil((10, 20, 54, 46))
+        for i, col in enumerate(((70, 255, 170, 70), (150, 110, 255, 62), (80, 220, 255, 56))):
+            y0 = int(H * (.04 + .07 * i))
+            pts = [(0, y0)] + [(x, y0 + int(14 * _math.sin(x / 55 + i + snap.get("wstep", 0) * .6))) for x in range(0, W + 1, 24)] + [(W, y0 + 64), (0, y0 + 64)]
+            d.polygon(pts, fill=col)
+    elif key == "sunbeams":
+        for i in range(4):
+            x0 = int(W * (.1 + .24 * i))
+            d.polygon([(x0, 0), (x0 + 38, 0), (x0 + 38 + 150, H), (x0 + 150, H)], fill=(255, 240, 190, 30))
+    # fog and sandstorms hide what is beyond sight: veil those tiles too
+    sight = snap.get("sight", 99)
+    if sight < 99:
+        for ty in range(N):
+            for tx in range(N):
+                if max(abs(tx - snap["hx"]), abs(ty - snap["hy"])) > sight:
+                    d.rectangle([tx * T, ty * T, tx * T + T, ty * T + T],
+                                fill=(226, 232, 238, 120) if key == "fog" else (212, 164, 98, 110))
+    base = canvas.convert("RGBA")
+    base.alpha_composite(layer)
+    return base.convert("RGB")
+
+
 def _ex_render(snap: dict) -> bytes:
     """Draw the map window as a 7x7 PNG: grass tile at the bottom, then trees / rocks / bushes / chests, yellow
     step boxes, animals (with the yellow target circle), the hunter, trail footprints and clue arrows. The window never shows past the edge of the world: near
@@ -10077,12 +10238,9 @@ def _ex_render(snap: dict) -> bytes:
     for hx_, hy_ in snap["hits"]:
         d.rectangle([hx_ * T, hy_ * T, hx_ * T + T - 1, hy_ * T + T - 1], fill=(255, 120, 40, 70),
                     outline=(255, 150, 60, 200), width=2)
-    # 2b — a small yellow box on every tile you can step onto
+    # 2b — a yellow outline round every tile you can step onto
     for mx, my in snap["moves"]:
-        c = T * .34
-        x0, y0 = mx * T + (T - c) / 2, my * T + (T - c) / 2
-        d.rounded_rectangle([x0, y0, x0 + c, y0 + c], radius=c * .22, fill=(255, 214, 40, 225),
-                            outline=(255, 232, 110, 255), width=2)
+        d.rectangle([mx * T + 2, my * T + 2, mx * T + T - 3, my * T + T - 3], outline=(255, 214, 40, 255), width=3)
     # 3 — animals (small, feet on the tile's baseline; bigger animals a little larger)
     for a in snap["animals"]:
         tx, ty = a["tx"], a["ty"]
@@ -10122,6 +10280,7 @@ def _ex_render(snap: dict) -> bytes:
         _ex_player(hero)
     _ex_pasted(canvas, hero, hx, hy, T, 1.0, feet=.98)
     W = H = T * N
+    canvas = _ex_weather_fx(canvas, snap, T, N)
     d = _PILDraw.Draw(canvas, "RGBA")
     # 6 — the edge of the world: an amber line on every side where the land stops
     amber = (255, 196, 80, 235)
@@ -10496,6 +10655,9 @@ def build_explore_components(user_id: str, image: bool = True) -> list:
     elif not over:
         blocks += [{"type": 10, "content": "-# Nothing nearby — keep wandering."}]
     status = []
+    sky = _ex_weather(st)
+    if sky["key"] != "clear":
+        status.append(f"-# {sky['emoji']} **{sky['name']}**" + (f" — {sky['blurb']}" if sky["blurb"] else ""))
     if ammo_why:
         status.append(ammo_why)
     elif reload_ts:
@@ -10607,7 +10769,7 @@ def build_explore_info_components(user_id: str, image: bool = True) -> list:
         {"type": 10, "content": "**On the map**\n"
                                 "- 🟡 **Yellow circle** — your target. **Fire** aims your weapon at it by itself; tap **Target** to switch.\n"
                                 "- 🟧 **Orange tiles** — exactly what the next shot will hit.\n"
-                                "- 🟨 **Small yellow boxes** — tiles you can step onto.\n"
+                                "- 🟨 **Yellow outlines** — tiles you can step onto.\n"
                                 "- ⚪ A faint circle: in view but out of reach — walk closer. Animals tire when they run and stop to graze.\n"
                                 "- 🌿 Bushes hide an animal until you're next to it. Walk onto 🎒 bags, 🫐 berries, ⛺ camps, 🗿 monuments, 🌼 clearings and chests.\n"
                                 "- 🔫 Every animal a shot covers costs one round and every shot (hit or miss) uses your cooldown."},
@@ -10617,6 +10779,11 @@ def build_explore_info_components(user_id: str, image: bool = True) -> list:
                                 "- 🌿 reeds, ferns and bushes hide animals until you're beside them · water can't be crossed\n"
                                 "- ✨ glowing coral, crystals and arches show where animals are; some landmarks give a small find or a discovery stamp. "
                                 "Each one only pays out once."},
+        {"type": 10, "content": "**Weather**\n"
+                                "- 🌧️ rain: animals bolt less, your aim −3% · ⛈️ storm: they bolt more, aim −6%\n"
+                                "- 🌫️ fog: you only see animals within 2 tiles · 🏜️ sandstorm: within 3, aim −4% · 🌋 ashfall: aim −4%\n"
+                                "- ❄️ snow: clues last 2 steps longer · ✨ aurora and 🌤️ clear skies are just pretty\n"
+                                "-# The sky changes every few hours and follows the region. It never changes what a catch pays."},
         {"type": 14, "divider": False, "spacing": 1},
         {"type": 10, "content": f"**Every tool's shape**\n{others}"},
     ]
@@ -12734,7 +12901,7 @@ def build_profile_components(user_id: str, display_name: str,
         gem_disp  += f"{_ks_line}\n"            # event keepsakes (profile decorations)
     _ex_line       = explore_keepsake_line(user_id)
     if _ex_line:
-        gem_disp  += f"{_ex_line}\n"            # region decorations, map souvenirs and stamps
+        gem_disp  += f"{_ex_line}\n"            # region decorations, map souvenirs, stamps and candy (each line labelled)
 
     viewing_note = f"-# {emoji('eyes')} You're viewing another hunter's profile.\n" if _viewing_other(user_id, viewer_id) else ""
     tester_note  = f"-# {emoji('test_tube')} **TESTER ACCOUNT** — excluded from all leaderboards.\n" if d.get("is_tester") else ""
@@ -13049,6 +13216,9 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
     _goal = next_goal_line(user_id)
     if _goal:
         footer_block += f"\n-# {_goal}"
+    _sky = weather_line(result.get("biome", d.get("biome", "village")))
+    if _sky:
+        footer_block += f"\n-# {_sky}"
     if result.get("region_decor"):
         extra_block += f"\n-# 🏆 **Region complete!** You earned the {result['region_decor']} decoration for your profile."
 
@@ -13290,7 +13460,7 @@ def build_hunt_sold_components(user_id: str, sold: dict) -> list:
     btn_row = {"type": 1, "components": [
         {"type": 2, "style": 3, "label": "Hunt",     "custom_id": f"hunt:again:{user_id}"},
         {"type": 2, "style": 1, "label": "Sell All", "custom_id": f"hunt:sell_all:{user_id}", "disabled": True},
-        {"type": 2, "style": 2, "label": "◀ Back",   "custom_id": f"hunt:back:{user_id}"},
+        {"type": 2, "style": 2, "label": "◀ Back",   "custom_id": f"hunt:sellback:{user_id}"},
     ]}
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": [
         {"type": 10, "content": body},
@@ -14591,13 +14761,19 @@ def init_notif(user_id: str):
     n.setdefault("daily_dm",       False)
     n.setdefault("leaderboard_dm", False)
 
-def build_settings_components(user_id: str) -> list:
-    """Redesigned 2026-09-15: each setting used to be text block + button row
-    + divider — three components apiece. Now one section per setting, with
-    the ON/OFF state itself as the clickable accessory."""
+_settings_page: dict[str, int] = {}
+SETTINGS_PAGES = 2
+
+
+def build_settings_components(user_id: str, page: int | None = None) -> list:
+    """Redesigned 2026-09-15: one section per setting, with the ON/OFF state itself as the clickable accessory.
+    Split into two pages once it got long: page 1 = notifications and hunting, page 2 = screens, modes and housekeeping."""
     init_notif(user_id)
     n = data[user_id]["notif"]
-    header = ui_header(emoji('settings'), "SETTINGS")
+    page = _settings_page.get(user_id, 0) if page is None else page
+    page = max(0, min(SETTINGS_PAGES - 1, int(page)))
+    _settings_page[user_id] = page
+    header = ui_header(emoji('settings'), "SETTINGS", f"page {page + 1}/{SETTINGS_PAGES}")
 
     def _setting_section(key: str, icon: str, label: str, blurb: str, on: bool):
         content = f"{icon} **{label}**\n-# {blurb}"
@@ -14609,40 +14785,115 @@ def build_settings_components(user_id: str) -> list:
     tips_on      = data[user_id].get("tips_enabled", True)
     auto_open_on = data[user_id].get("auto_open_crates", False)
 
-    sections = [
-        _setting_section("tips_enabled", emoji('tip'), "Hunt Tips",
-                          "Occasional gameplay tips, at most once every 10 minutes.", tips_on),
-        _setting_section("daily_dm", emoji('daily'), "Daily Reminder",
-                          "DM you once your daily reward is ready to claim.", n["daily_dm"]),
-        _setting_section("leaderboard_dm", emoji('leaderboard'), "Rank Alerts",
-                          "DM you if you fall out of the global Top 3.", n["leaderboard_dm"]),
-        _setting_section("auto_open_crates", emoji('crate_sample'), "Auto-Open Crates",
-                          "Instantly open crates you find while hunting instead of stacking them in your inventory.",
-                          auto_open_on),
-        _setting_section("hunt_new_message", emoji('bow'), "New Message Per Hunt",
-                          "ON: every press of Hunt posts a fresh message (and keeps the old ones). "
-                          "OFF: Hunt updates the same message in place. `/hunt` always posts a new one.",
-                          hunt_new_message(user_id)),
-        _setting_section("profile_editor", emoji('profile'), "Profile Editor",
-                          "Adds an Edit Bio button and a \"what my profile shows\" picker to your own `/profile`. "
-                          "Off by default.", profile_editor_on(user_id)),
-        _setting_section("explore_mode", emoji('compass'), "Explore Mode (beta)",
-                          "Hunting becomes a walk on a 7x7 map: follow clues to roaming animals, get in your weapon's range and take "
-                          "real shots. Replaces the instant Hunt while it is on. Off by default.", explore_enabled(user_id)),
+    pages = [
+        [
+            _setting_section("tips_enabled", emoji('tip'), "Hunt Tips",
+                              "Occasional gameplay tips, at most once every 10 minutes.", tips_on),
+            _setting_section("daily_dm", emoji('daily'), "Daily Reminder",
+                              "DM you once your daily reward is ready to claim.", n["daily_dm"]),
+            _setting_section("leaderboard_dm", emoji('leaderboard'), "Rank Alerts",
+                              "DM you if you fall out of the global Top 3.", n["leaderboard_dm"]),
+            _setting_section("auto_open_crates", emoji('crate_sample'), "Auto-Open Crates",
+                              "Instantly open crates you find while hunting instead of stacking them in your inventory.",
+                              auto_open_on),
+        ],
+        [
+            _setting_section("hunt_new_message", emoji('bow'), "New Message Per Hunt",
+                              "ON: every press of Hunt posts a fresh message (and keeps the old ones). "
+                              "OFF: Hunt updates the same message in place. `/hunt` always posts a new one.",
+                              hunt_new_message(user_id)),
+            _setting_section("profile_editor", emoji('profile'), "Profile Editor",
+                              "Adds an Edit Bio button and a \"what my profile shows\" picker to your own `/profile`. "
+                              "Off by default.", profile_editor_on(user_id)),
+            _setting_section("explore_mode", emoji('compass'), "Explore Mode (beta)",
+                              "Hunting becomes a walk on a 7x7 map: follow clues to roaming animals, get in your weapon's range and take "
+                              "real shots. Replaces the instant Hunt while it is on. Off by default.", explore_enabled(user_id)),
+        ],
     ]
 
     comps = [{"type": 10, "content": header}, {"type": 14, "divider": True, "spacing": 1}]
-    for i, sec in enumerate(sections):
+    for i, sec in enumerate(pages[page]):
         if i > 0:
             comps.append({"type": 14, "divider": True, "spacing": 1})
         comps.append(sec)
     comps.append({"type": 14, "divider": True, "spacing": 1})
+    if page == SETTINGS_PAGES - 1:
+        comps.append({"type": 1, "components": [
+            {"type": 2, "style": 2, "label": "Hunter's Guide", "emoji": emoji_partial("book"),
+             "custom_id": f"settings:tutorial:{user_id}"},
+            {"type": 2, "style": 2, "label": "Clear Bot DMs", "emoji": {"name": "🧹"},
+             "custom_id": f"settings:cleardm:{user_id}"},
+        ]})
     comps.append({"type": 1, "components": [
-        {"type": 2, "style": 2, "label": "Hunter's Guide", "emoji": emoji_partial("book"),
-         "custom_id": f"settings:tutorial:{user_id}"},
+        {"type": 2, "style": 2, "label": "◀ Prev", "custom_id": f"settings:page:{page - 1}:{user_id}", "disabled": page == 0},
+        {"type": 2, "style": 2, "label": f"{page + 1}/{SETTINGS_PAGES}", "custom_id": f"settings:noop:{user_id}", "disabled": True},
+        {"type": 2, "style": 2, "label": "Next ▶", "custom_id": f"settings:page:{page + 1}:{user_id}",
+         "disabled": page >= SETTINGS_PAGES - 1},
     ]})
     comps.append(ui_footer(user_id))
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
+
+
+CLEAR_DM_LIMIT = 300           # how many of the bot's most recent DM messages one clean-up looks at
+
+
+def build_cleardm_components(user_id: str, state: str = "ask", count: int = 0) -> list:
+    """The confirm / working / done panel for clearing the bot's old DMs."""
+    if state == "ask":
+        body = (f"### 🧹 Clear my DMs with the bot\n"
+                f"This deletes the messages **the bot** sent you in your DMs — up to the last **{CLEAR_DM_LIMIT}** — "
+                f"so the chat is tidy again. It can't be undone.\n"
+                f"-# Your own messages stay (Discord doesn't let a bot delete those). Run it again for anything older. "
+                f"Reminders and replies will keep arriving as normal.")
+        row = [{"type": 2, "style": 4, "label": "Yes, clear them", "emoji": {"name": "🧹"}, "custom_id": f"cleardm:yes:{user_id}"},
+               {"type": 2, "style": 2, "label": "Cancel", "custom_id": f"cleardm:no:{user_id}"}]
+    elif state == "working":
+        body = "### 🧹 Clearing…\n-# Deleting my old DM messages one by one (Discord rate-limits this, so it can take a minute)."
+        row = []
+    else:
+        body = (f"### 🧹 Done\nDeleted **{count}** message{'s' if count != 1 else ''} from your DMs."
+                if count else "### 🧹 Nothing to clear\nI couldn't find any of my messages in your DMs.")
+        row = [{"type": 2, "style": 2, "label": "◀ Settings", "custom_id": f"settings:nav:main:{user_id}"}]
+    comps = [{"type": 10, "content": body}]
+    if row:
+        comps += [{"type": 14, "divider": True, "spacing": 1}, {"type": 1, "components": row}]
+    return [{"type": 17, "accent_color": 0xE67E22 if state != "done" else 0x2ECC71, "spoiler": False, "components": comps}]
+
+
+async def clear_bot_dms(user_id: str, keep_message_id: int | None = None, limit: int = CLEAR_DM_LIMIT) -> tuple[int, int]:
+    """Delete the bot's own recent messages in this user's DM channel. Returns (deleted, failed). It only ever touches
+    messages the bot itself sent; `keep_message_id` (the panel the player is looking at) is left for last."""
+    uid = int(user_id)
+    user = bot.get_user(uid) or await bot.fetch_user(uid)
+    dm = user.dm_channel or await user.create_dm()
+    me = bot.user.id
+    deleted = failed = 0
+    async for msg in dm.history(limit=limit):
+        if msg.author.id != me or (keep_message_id and msg.id == keep_message_id):
+            continue
+        try:
+            await msg.delete()
+            deleted += 1
+        except discord.HTTPException:
+            failed += 1
+        await asyncio.sleep(0.35)                   # Discord's delete rate limit
+    return deleted, failed
+
+
+async def _cleardm_run(interaction, user_id: str) -> None:
+    keep = getattr(getattr(interaction, "message", None), "id", None)
+    await smart_update_v2(interaction, build_cleardm_components(user_id, "working"))
+    try:
+        deleted, failed = await clear_bot_dms(user_id, keep_message_id=keep)
+    except Exception:
+        logger.exception("clear DMs failed")
+        await smart_update_v2(interaction, [{"type": 17, "accent_color": 0xE74C3C, "spoiler": False, "components": [
+            {"type": 10, "content": "### 🧹 Couldn't clear your DMs\n-# Discord wouldn't let me read them right now — try again in a bit."}]}])
+        return
+    await smart_update_v2(interaction, build_cleardm_components(user_id, "done", deleted))
+
+
+
 
 # ─────────────────────────────────────────────
 # RULES
@@ -15376,7 +15627,7 @@ def shop_bought_count(d: dict, item_name: str) -> int:
 
 def apply_account_reset(user_id: str, prestige: bool = False) -> int:
     """Reset a hunter back to a fresh start. Gear/progression and personal +
-    timed boosts are wiped and gems are capped at RESET_GEM_CAP; badges,
+    timed boosts are wiped; gems survive a player prestige and are capped at RESET_GEM_CAP only by the admin reset; badges,
     achievements, titles, tribe, trophies and lifetime stats survive.
     prestige=True (the player-facing /prestige confirm) also advances the
     prestige count by one; prestige=False (admin "Reset Account") leaves the
@@ -15388,7 +15639,7 @@ def apply_account_reset(user_id: str, prestige: bool = False) -> int:
     # circulation (otherwise reset money/gems just silently vanish from it).
     _old_money = int(d.get("money", 0))
     _old_gems  = int(d.get("gems", 0))
-    _new_gems  = min(_old_gems, RESET_GEM_CAP)
+    _new_gems  = _old_gems if prestige else min(_old_gems, RESET_GEM_CAP)
     if _old_money > 0:
         log_economy_event(user_id, "reset wipe", -_old_money, 0)
     if _old_gems > _new_gems:
@@ -15462,13 +15713,13 @@ def build_prestige_components(user_id: str) -> list:
         f"**Reward:** gain **+{PRESTIGE_BOOST_PER}%** permanent Luck, Sell & XP — new total **+{boost}%**\n"
         + (f"{emoji('warning')} You have **{unclaimed}** finished quest{'s' if unclaimed != 1 else ''} you haven't claimed — "
            f"claim {'them' if unclaimed != 1 else 'it'} first, quests are cleared when you prestige.\n" if unclaimed else "") +
-        f"Prestiging costs almost everything: your gems drop to **{min(gems, RESET_GEM_CAP):,}** at most "
-        f"(currently {emoji('gem')} {gems:,}) and your personal boosts are erased. "
+        f"Prestiging costs almost everything and your personal boosts are erased — but **you keep all your gems** "
+        f"(currently {emoji('gem')} {gems:,}). "
         f"Please re-think about your decision before you click **Prestige**.\n"
-        f"-# Resets: Level/XP, Money, Gems (max {RESET_GEM_CAP}), Personal & Temporary Boosts, Tools, Ammo, Vehicle, "
+        f"-# Resets: Level/XP, Money, Personal & Temporary Boosts, Tools, Ammo, Vehicle, "
         f"Animal Inventory, Biome, Field Guide, Total Caught, Travel, Camp (Hunters/Upgrades/Haul/Location), Crates/Materials, "
         f"Items & Healing Items, Daily/Weekly Quests, HP & any live fight\n"
-        f"-# Kept: Prestige Bonus, Badges, Achievements, Titles, Tribe, Special Badges, "
+        f"-# Kept: Gems, Prestige Bonus, Badges, Achievements, Titles, Tribe, Special Badges, "
         f"Lifetime Stats, Cosmetics, Hunt History"
     )
     btns = []
@@ -19296,6 +19547,8 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
     cid    = raw.get("custom_id", "")
     values = raw.get("values", [])
     parts  = cid.split(":")
+    if parts[:2] == ["hunt", "sellback"]:          # "◀ Back" on the sold-inventory panel: back to hunting (the map in Explore Mode)
+        parts[1] = "again"
 
     # ACK FIRST. Discord gives 3 seconds from the click; the gate work in
     # _common_init (and any loop stall ahead of it) used to eat into that window
@@ -19980,6 +20233,17 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             await smart_update_v2(interaction, build_settings_components(owner_id))
             return
 
+        if parts[1] == "page":
+            await smart_update_v2(interaction, build_settings_components(owner_id, int(parts[2])))
+            return
+
+        if parts[1] == "noop":
+            return
+
+        if parts[1] == "cleardm":
+            await smart_update_v2(interaction, build_cleardm_components(owner_id, "ask"))
+            return
+
         if parts[1] == "tutorial":
             await smart_update_v2(interaction, build_tutorial_guide_components(owner_id, 0))
             return
@@ -20002,6 +20266,17 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             mark_user_dirty(owner_id)
             await smart_update_v2(interaction, build_settings_components(owner_id))
             return
+
+    if parts[0] == "cleardm":
+        owner_id = parts[-1]
+        if str(interaction.user.id) != owner_id:
+            await send_ephemeral_v2(interaction, show_incorrect_user_message(owner_id), 0xE74C3C)
+            return
+        if parts[1] == "yes":
+            await _cleardm_run(interaction, owner_id)
+        else:
+            await smart_update_v2(interaction, build_settings_components(owner_id))
+        return
 
     if parts[0] == "tutorial_guide":
         owner_id = parts[-1]
@@ -23902,6 +24177,14 @@ async def achievements_cmd(interaction: discord.Interaction):
     if not user_id: return
     _ach_page[user_id] = 0
     await send_v2_followup(interaction, build_progression_hub(user_id))
+
+@bot.tree.command(name="cleardm", description="Delete the bot's old messages from your DMs")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def cleardm_cmd(interaction: discord.Interaction):
+    user_id = await _common_init(interaction)
+    if not user_id: return
+    await send_v2_followup(interaction, build_cleardm_components(user_id, "ask"), ephemeral=interaction.guild is not None)
 
 @bot.tree.command(name="settings", description="Manage your preferences, notifications and hunter's guide")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)

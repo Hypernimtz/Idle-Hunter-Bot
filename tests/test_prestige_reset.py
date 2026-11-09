@@ -7,6 +7,7 @@ states the incremental reward.
 Runs without pytest:  python tests/test_prestige_reset.py
 """
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -73,7 +74,17 @@ def test_reset_clears_healing_fight_tracking_hp_guide_and_item_flags():
     assert d["health"]["hp"] == d["health"]["max_hp"] and d["health"]["injuries"] == []
     assert d["guide_seen"] == [] and d["_camp_rations"] == 0
     assert "_lucky_hammer_active" not in d and "_danger_whistle_active" not in d
-    assert d["prestige"] == 1 and d["gems"] == app.RESET_GEM_CAP
+    assert d["prestige"] == 1 and d["gems"] == 5000                 # a player prestige keeps every gem
+
+
+def test_admin_reset_still_caps_gems_and_the_prestige_panel_says_you_keep_them():
+    d = _veteran(prestige=1)
+    d["gems"] = 5000
+    app.apply_account_reset(U, prestige=False)
+    assert d["gems"] == app.RESET_GEM_CAP
+    d["gems"] = 5000
+    blob = json.dumps(app.build_prestige_components(U), ensure_ascii=False)
+    assert "keep all your gems" in blob and "Gems (max" not in blob
 
 
 def test_admin_reset_keeps_the_prestige_count_but_still_clears_run_state():
