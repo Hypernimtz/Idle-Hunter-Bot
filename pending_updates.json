@@ -253,5 +253,10 @@
     "key": "2026-11-09-season-task-claim",
     "title": "Season tasks now need a Claim",
     "message": "Finishing a **season task** no longer pays on its own — open `/season tasks` and press **Claim tasks** to collect the Season XP. You get a note when a task is ready, a confirmation (with any level-up) when you claim, and a task you forget is collected for you when the day or week rolls over. The Daily and Weekly lists now have their own headings."
+  },
+  {
+    "key": "2026-11-09-quest-modes",
+    "title": "Quests now say which hunting mode counts",
+    "message": "Every hunting quest now shows which mode it counts in. Most count in **Quick Hunt or Explore**, so you can play whichever you like. New daily quests are mode-specific: **Catch animals with Quick Hunt** and **Catch animals in Explore** (the Explore target is smaller to match the extra steps; only players with Explore on get that one)."
   }
 ]

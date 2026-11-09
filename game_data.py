@@ -4764,6 +4764,28 @@ QUEST_TEMPLATES = [
         "max_count":   90,
     },
     {
+        "id":          "catch_quick",
+        "description": "Catch **{count}** animals with **Quick Hunt**.",
+        "icon":        emoji('bow'),
+        "stat":        "animals_caught",
+        "base_count":  15,
+        "base_xp":     500,
+        "base_money":  6_000,
+        "max_count":   90,
+        "requires":    {"mode": "quick"},
+    },
+    {
+        "id":          "catch_explore",
+        "description": "Catch **{count}** animals in **Explore**.",
+        "icon":        emoji('earth'),
+        "stat":        "animals_caught",
+        "base_count":  8,                # Explore catches take more steps: a smaller target, the same kind of reward
+        "base_xp":     550,
+        "base_money":  7_000,
+        "max_count":   40,
+        "requires":    {"mode": "explore"},
+    },
+    {
         "id":          "catch_specific",
         "description": "Catch **{count}** **{animal}**.",
         "icon":        emoji('target'),
@@ -5153,6 +5175,9 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
         # the higher the rarity, the fewer a hunter can reasonably land
         raw_count = max(1, int(raw_count * _QUEST_RARITY_COUNT_FACTOR.get(resolved["rarity"], 1.0)))
  
+    if req.get("mode") in ("quick", "explore"):
+        resolved["mode"] = req["mode"]                 # which hunting mode this quest counts (none = either)
+
     if req.get("tool_tier_min"):
         # Pick a random valid tier from 1 to a sensible max for the player
         max_tier = min(5, max(1, level // 100 + 1))
@@ -5198,7 +5223,7 @@ def generate_quest(quest_id_or_template: dict, level: int, seed: int | None = No
     }
  
  
-def roll_daily_quests(level: int, existing_templates: list[str], tool_tier: int | None = None) -> list[dict]:
+def roll_daily_quests(level: int, existing_templates: list[str], tool_tier: int | None = None, explore: bool = True) -> list[dict]:
     """
     Generate QUESTS_PER_DAY new quest dicts, avoiding template repeats
     already in the player's active queue.
@@ -5207,9 +5232,10 @@ def roll_daily_quests(level: int, existing_templates: list[str], tool_tier: int 
     """
     import random as _r, time as _t
  
-    pool = [t for t in QUEST_TEMPLATES if t["id"] not in existing_templates]
+    usable = [t for t in QUEST_TEMPLATES if explore or t.get("requires", {}).get("mode") != "explore"]   # no Explore quests for players with Explore off
+    pool = [t for t in usable if t["id"] not in existing_templates]
     if not pool:
-        pool = list(QUEST_TEMPLATES)   # fallback: allow repeats if all used
+        pool = list(usable)   # fallback: allow repeats if all used
  
     chosen = _r.sample(pool, min(QUESTS_PER_DAY, len(pool)))
     seed_base = int(_t.time())

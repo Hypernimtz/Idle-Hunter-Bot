@@ -3598,6 +3598,8 @@ _dirty_users: set[str] = set()
 # their last-known inventory.
 import contextvars
 _inv_src: "contextvars.ContextVar[str]" = contextvars.ContextVar("inv_src", default="system")
+# Which hunting mode the code running right now belongs to ("quick" unless an Explore shot set it) - quests can count one mode only.
+_hunt_mode: "contextvars.ContextVar[str]" = contextvars.ContextVar("hunt_mode", default="quick")
 _inv_touched: dict[str, str] = {}      # uid -> source tag at the last mark_user_dirty
 _inv_shadow: dict[str, dict] = {}      # uid -> {(kind, name): count} as last seen
 _INV_TRACKED = (("ammo_inv", "ammo"), ("items", "item"), ("crate_inv", "crate"), ("myth_items", "trophy"),
@@ -9609,7 +9611,11 @@ def explore_fire(user_id: str) -> dict:
     res = None
     if hits:
         bonus = EXPLORE_GOLD_PERFECT if any(h.get("gold") for h in hits) else 0.0
-        res = run_hunt(user_id, forced_animal=[h["name"] for h in hits], perfect_bonus=bonus)
+        _mtok = _hunt_mode.set("explore")                 # this hunt counts for Explore quests
+        try:
+            res = run_hunt(user_id, forced_animal=[h["name"] for h in hits], perfect_bonus=bonus)
+        finally:
+            _hunt_mode.reset(_mtok)
         if not res.get("ok"):
             if res.get("verify"):
                 st["msg"] = f"{emoji('lock')} Verification required — use {_verify_cmd_ref()}."
@@ -15163,6 +15169,21 @@ def _quest_icon(q: dict) -> str:
             return t["icon"]
     return q.get("icon", "")
 
+_QUEST_HUNT_STATS = {"hunts_done", "hunts_in_biome", "tool_tier_hunts", "animals_caught", "animal_caught_specific",
+                     "rarity_caught", "perfect_catches", "ammo_used_quest"}
+
+
+def quest_mode_tag(q: dict) -> str:
+    """Which hunting mode a quest counts: 'Explore only' / 'Quick Hunt only' / 'Quick Hunt or Explore'. Empty for quests that
+    have nothing to do with hunting (selling, crates, streaks...)."""
+    mode = (q.get("requires") or {}).get("mode")
+    if mode == "explore":
+        return f"{emoji('earth')} Explore only"
+    if mode == "quick":
+        return f"{emoji('bow')} Quick Hunt only"
+    return "Counts in Quick Hunt or Explore" if q.get("stat") in _QUEST_HUNT_STATS else ""
+
+
 def _quest_section(q: dict, claim_prefix: str, user_id: str) -> dict:
     """One Discord section for a quest — a Claim accessory when it's ready,
     otherwise just its own compact progress block. Shared by the daily and
@@ -15178,10 +15199,11 @@ def _quest_section(q: dict, claim_prefix: str, user_id: str) -> dict:
         reward_bits.append(f"1× {q['crate_reward']}")
     if q.get("item_reward"):
         reward_bits.append(f"1× {q['item_reward']}")
+    _mt = quest_mode_tag(q)
     content = (
         f"{done_tag}{_quest_icon(q)} {q['description']}\n"
         f"{bar} {q['progress']:,}/{q['target']:,} ({pct_label})\n"
-        f"-# Reward: {' · '.join(reward_bits)}"
+        f"-# Reward: {' · '.join(reward_bits)}" + (f"\n-# {_mt}" if _mt else "")
     )
     accessory = None
     if q.get("completed") and not q.get("claimed"):
@@ -16144,7 +16166,7 @@ def quest_daily_roll_if_needed(user_id: str):
  
     existing_templates = [q["template"] for q in active_quests if not q.get("claimed")]
     level  = d.get("level", 1)
-    new_qs = roll_daily_quests(level, existing_templates, _quest_tool_tier(user_id))
+    new_qs = roll_daily_quests(level, existing_templates, _quest_tool_tier(user_id), explore=explore_enabled(user_id))
  
     # Never exceed cap
     new_qs = new_qs[:slots_free]
@@ -16254,6 +16276,8 @@ def quest_progress(user_id: str, stat: str, amount: int = 1, *, absolute: bool =
             continue
         if "crate_tier" in req and ctx.get("crate_name") != req["crate_tier"]:
             continue
+        if req.get("mode") and (ctx.get("mode") or _hunt_mode.get()) != req["mode"]:
+            continue                                   # an Explore-only (or Quick-Hunt-only) quest
  
         if absolute:
             q["progress"] = min(max(q["progress"], amount), q["target"])

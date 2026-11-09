@@ -2805,6 +2805,37 @@ def test_season_tasks_panel_has_headings_a_claim_button_and_nothing_is_lost_at_r
         assert st["xp"] == 120 and any("collected for you" in n for n in st["notes"])
 
 
+def test_quests_say_which_hunting_mode_counts_and_only_that_mode_progresses_them():
+    d = _fresh(level=300)
+    quick = dict(gd.QUEST_TEMPLATES[0], **{})
+    q_ex = app.generate_quest(next(t for t in gd.QUEST_TEMPLATES if t["id"] == "catch_explore"), 300, seed=1)
+    q_qk = app.generate_quest(next(t for t in gd.QUEST_TEMPLATES if t["id"] == "catch_quick"), 300, seed=2)
+    q_any = app.generate_quest(next(t for t in gd.QUEST_TEMPLATES if t["id"] == "catch_any"), 300, seed=3)
+    q_sell = app.generate_quest(next(t for t in gd.QUEST_TEMPLATES if t["id"] == "sell_animals"), 300, seed=4)         if any(t["id"] == "sell_animals" for t in gd.QUEST_TEMPLATES) else None
+    assert q_ex["requires"] == {"mode": "explore"} and "Explore" in q_ex["description"]
+    assert q_qk["requires"] == {"mode": "quick"} and "Quick Hunt" in q_qk["description"]
+    assert "Explore only" in app.quest_mode_tag(q_ex) and "Quick Hunt only" in app.quest_mode_tag(q_qk)
+    assert app.quest_mode_tag(q_any) == "Counts in Quick Hunt or Explore"
+    if q_sell:
+        assert app.quest_mode_tag(q_sell) == ""
+    d["quests"], d["weekly_quests"], d["quests_last_roll"] = [q_ex, q_qk, q_any], [], app.today_utc()
+    d["weekly_quests_last_roll"] = time.time()
+    app.quest_progress(U, "animals_caught", 2)                                    # a Quick Hunt catch (the default mode)
+    assert (q_ex["progress"], q_qk["progress"], q_any["progress"]) == (0, 2, 2)
+    tok = app._hunt_mode.set("explore")
+    try:
+        app.quest_progress(U, "animals_caught", 3)
+    finally:
+        app._hunt_mode.reset(tok)
+    assert (q_ex["progress"], q_qk["progress"], q_any["progress"]) == (3, 2, 5)
+    # players with Explore off are never handed an Explore-only quest
+    for _ in range(40):
+        got = gd.roll_daily_quests(300, [], None, explore=False)
+        assert not any(q["requires"].get("mode") == "explore" for q in got)
+    assert any(q["requires"].get("mode") == "explore" for _ in range(60) for q in gd.roll_daily_quests(300, [], None, explore=True))
+    assert "Explore only" in json.dumps(app._quest_section(q_ex, "claim", U), ensure_ascii=False)
+
+
 if __name__ == "__main__":
     asyncio.set_event_loop(asyncio.new_event_loop())
     run(td.tt._ensure_db())
