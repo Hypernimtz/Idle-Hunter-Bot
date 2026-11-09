@@ -4634,19 +4634,29 @@ def color_display_name(color_key: str) -> str:
 # ─────────────────────────────────────────────
 
 def parse_amount(raw: str) -> int | None:
+    """"5,000" / "50k" / "1.5M" / "2b" -> an exact int (None when it isn't a number). Whole numbers go through int() and
+    decimals through Decimal, so nothing is rounded by a float ("1.001K" is 1001, not 1000; 9007199254740993 stays as typed)."""
+    import decimal as _dec
     raw = raw.strip().upper().replace(",", "").replace("_", "")
-    for suffix, mult in [("T", 1_000_000_000_000), ("B", 1_000_000_000),
-                          ("M", 1_000_000), ("K", 1_000)]:
+    mult = 1
+    for suffix, m in (("T", 1_000_000_000_000), ("B", 1_000_000_000), ("M", 1_000_000), ("K", 1_000)):
         if raw.endswith(suffix):
-            try:
-                return int(float(raw[:-1]) * mult)
-            except (ValueError, OverflowError):   # "1e999", "inf", "nan"
-                return None
+            raw, mult = raw[:-1], m
+            break
     try:
-        return int(float(raw))
-    except (ValueError, OverflowError):
+        body = raw[1:] if raw[:1] in "+-" else raw
+        if body.isascii() and body.isdigit():
+            return int(raw) * mult
+        with _dec.localcontext() as ctx:
+            ctx.prec = 80
+            val = _dec.Decimal(raw)
+            if not val.is_finite():                                   # "inf", "nan"
+                return None
+            out = int(val * mult)
+    except (ValueError, ArithmeticError):                             # "1e999", junk
         return None
-    
+    return out if abs(out) < 10 ** 40 else None
+
 
 # ─────────────────────────────────────────────
 # VERIFY HELPERS

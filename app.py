@@ -3666,10 +3666,10 @@ async def user_tribe_transaction(user_id, *tribe_names):
         yield
 
 @asynccontextmanager
-async def multi_user_transaction(*user_ids):
+async def multi_user_transaction(*user_ids, extra=None, atomic=False):
     for uid in user_ids:
         mark_user_dirty(uid)
-    async with _backend_multi_user_transaction(*(str(u) for u in user_ids)):
+    async with _backend_multi_user_transaction(*(str(u) for u in user_ids), extra=extra, atomic=atomic):
         yield
 
 async def load_all_data():
@@ -25626,7 +25626,10 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         if _market.pop(listing_id, None):
             await backend.market_delete(listing_id)
         return False, "That listing is gone."
-    async with multi_user_transaction(buyer_id, seller):
+    writes: list = []                         # the listing row's change, committed together with both players' records
+    lst0 = dict(lst)                          # for rolling the in-memory listing back if the write fails
+    try:
+      async with multi_user_transaction(buyer_id, seller, extra=writes):
         lst = _market.get(listing_id)
         if not lst or lst["expires_ts"] <= time.time() or lst.get("pending"):
             return False, "That listing is gone — someone beat you to it, or it expired."
@@ -25640,12 +25643,12 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         if data[buyer_id]["money"] < total:
             return False, f"You need **◈ {total:,}** for {n}× {lst['item']}."
         left = lst["qty"] - n
-        # Listing state is persisted BEFORE anyone is paid: a crash after this
-        # loses the sale rather than letting the same items sell twice.
+        # The listing row (shrunk or deleted) is written in the SAME SQLite transaction as both players' records, so a
+        # crash or a failed save can't pay the players without removing the stock, nor remove the stock unpaid.
         if left > 0:
-            await backend.market_save({**lst, "qty": left})
+            writes.append(backend.market_upsert_sql({**lst, "qty": left}))
         else:
-            await backend.market_delete(listing_id)
+            writes.append(backend.market_delete_sql(listing_id))
         if not spend_money(buyer_id, total, "market buy", f"{n}× {lst['item']} from {seller}"):
             raise RuntimeError("market buy: balance changed under the buyer lock")
         tax = max(1, int(total * MARKET_TAX)) if total > 1 else 0     # small sales still burn at least 1
@@ -25659,6 +25662,10 @@ async def market_buy(buyer_id: str, listing_id: str, qty: int | None) -> tuple[b
         for uid, key in ((buyer_id, "market_bought"), (seller, "market_sold")):
             st = data[uid].setdefault("stats", {})
             st[key] = st.get(key, 0) + n
+    except BaseException:
+        _market[listing_id] = lst0            # the sale did not happen: the listing is exactly as it was
+        lst0.pop("pending", None)
+        raise
     analytics(buyer_id, "market_buy", item=lst["item"], qty=n, total=total)
     asyncio.create_task(_dm_user(seller,
         f"## {emoji('money_bag')} Market sale!\n"
@@ -31280,40 +31287,61 @@ def _fd_elo(winner: str, loser: str) -> None:
     _fd_stats(loser)["rating"] = max(100, round(rb - FD_ELO_K * (1 - exp)))
 
 
+FD_SETTLED_KEEP = 40          # how many settled duel ids each player's record remembers
+
+
+def _fd_is_settled(d: dict) -> bool:
+    """True when this duel's payout was already committed (the marker lives in the players' saved records)."""
+    return any(d["id"] in (data.get(u, {}).get("fd_settled") or ()) for u in (d["a"], d["b"]))
+
+
 async def _fd_finish(d: dict, verdict: str, reason: str = "") -> None:
-    """Pay out and close a duel. verdict: 'a' | 'b' | 'draw' | 'void'. Idempotent."""
+    """Pay out and close a duel. verdict: 'a' | 'b' | 'draw' | 'void'. Idempotent.
+    The payout, the stats and a persistent `fd_settled` marker are written to SQLite in ONE transaction, and the duel
+    only becomes "done" once that write has landed. If the write fails nothing is paid, the duel stays open with its
+    stakes escrowed, and the next attempt pays it. If the bot dies after the write but before the duel record is saved,
+    the marker stops the retry from paying a second time."""
     if d["status"] in ("done", "cancelled"):
         return
     a, b, bet = d["a"], d["b"], d["bet"]
-    d["status"], d["verdict"], d["reason"], d["closed"] = "done", verdict, reason, time.time()
     winner = {"a": a, "b": b}.get(verdict)
+    keep = {k: d.get(k) for k in ("status", "verdict", "reason", "closed", "tax", "escrowed")}
     tok = _inv_src.set("trail standoff")
     try:
-        async with multi_user_transaction(a, b):
-            if bet and d.get("escrowed"):
+        async with multi_user_transaction(a, b, atomic=True):
+            if not _fd_is_settled(d):
+                if bet and d.get("escrowed"):
+                    if winner:
+                        pot = 2 * bet
+                        d["tax"] = int(pot * FD_TAX)
+                        add_money(winner, pot - d["tax"], "fight win")
+                    else:
+                        add_money(a, bet, "fight refund")
+                        add_money(b, bet, "fight refund")
+                sa, sb = _fd_stats(a), _fd_stats(b)
                 if winner:
-                    pot = 2 * bet
-                    d["tax"] = int(pot * FD_TAX)
-                    add_money(winner, pot - d["tax"], "fight win")
-                else:
-                    add_money(a, bet, "fight refund")
-                    add_money(b, bet, "fight refund")
-                d["escrowed"] = False
-            sa, sb = _fd_stats(a), _fd_stats(b)
-            if winner:
-                loser = _fd_other(d, winner)
-                w, l = _fd_stats(winner), _fd_stats(loser)
-                w["w"] += 1; l["l"] += 1
-                w["streak"] += 1; w["best"] = max(w["best"], w["streak"]); l["streak"] = 0
-                if bet:
-                    w["net"] += bet - d["tax"]; l["net"] -= bet
-                _fd_elo(winner, loser)
-                for n, title in FD_TITLES:
-                    if w["w"] >= n:
-                        _grant_event_reward(winner, title=title)
-            elif verdict == "draw":
-                sa["t"] += 1; sb["t"] += 1
+                    loser = _fd_other(d, winner)
+                    w, l = _fd_stats(winner), _fd_stats(loser)
+                    w["w"] += 1; l["l"] += 1
+                    w["streak"] += 1; w["best"] = max(w["best"], w["streak"]); l["streak"] = 0
+                    if bet:
+                        w["net"] += bet - d["tax"]; l["net"] -= bet
+                    _fd_elo(winner, loser)
+                    for n, title in FD_TITLES:
+                        if w["w"] >= n:
+                            _grant_event_reward(winner, title=title)
+                elif verdict == "draw":
+                    sa["t"] += 1; sb["t"] += 1
+                for u in (a, b):                                   # the marker is saved in the same commit as the money
+                    done_ids = data[u].setdefault("fd_settled", [])
+                    done_ids.append(d["id"])
+                    del done_ids[:-FD_SETTLED_KEEP]
+            d["escrowed"] = False
+            d["status"], d["verdict"], d["reason"], d["closed"] = "done", verdict, reason, time.time()
             mark_user_dirty(a); mark_user_dirty(b)
+    except BaseException:
+        d.update(keep)                                             # not paid -> not finished: it will be retried
+        raise
     finally:
         _inv_src.reset(tok)
     analytics(winner or a, "duel_done", verdict=verdict, bet=bet, rounds=d["round"])
@@ -31323,7 +31351,9 @@ async def _fd_finish(d: dict, verdict: str, reason: str = "") -> None:
 
 async def _fd_advance(d: dict) -> None:
     """Resolve the round that just closed, then start the next or finish. Caller holds the lock."""
-    _fd_resolve_round(d)
+    if d.get("resolved") != d["round"]:                    # a failed payout is retried: never score the same round twice
+        _fd_resolve_round(d)
+        d["resolved"] = d["round"]
     state = _fd_next_state(d)
     if state == "next":
         _fd_begin_round(d)
@@ -31781,10 +31811,6 @@ async def on_ready():
         return
 
     load_runtime_state()
-    try:
-        await duels_recover()
-    except Exception as e:
-        print("duel recovery failed:", e)
 
     try:
         _market.update(await backend.market_load())
@@ -31868,6 +31894,13 @@ async def on_ready():
             raise backend.SaveFailed("could not save tribes") from e
 
     register_save_callbacks(_flush_dirty_users, _flush_tribes_cb)
+
+    # Recovery refunds duels through the transaction managers, so it must run only now that the state refs and the
+    # save callbacks are registered (before this the refund happened in memory and nothing was written to SQLite).
+    try:
+        await duels_recover()
+    except Exception as e:
+        print("duel recovery failed:", e)
 
     try:
         if _STAFF is not None:

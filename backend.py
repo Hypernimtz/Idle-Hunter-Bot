@@ -389,6 +389,16 @@ async def market_save(listing: dict) -> None:
         (listing["id"], json.dumps(listing)))
     await _pool.commit()
 
+def market_upsert_sql(listing: dict) -> tuple:
+    """(sql, params) for a listing row, for a transaction's `extra` list (see multi_user_transaction)."""
+    return ("""INSERT INTO market_listings (listing_id, data, updated_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(listing_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
+            (listing["id"], json.dumps({k: v for k, v in listing.items() if k != "pending"})))
+
+def market_delete_sql(listing_id: str) -> tuple:
+    return ("DELETE FROM market_listings WHERE listing_id = ?", (listing_id,))
+
 async def market_delete(listing_id: str) -> None:
     if SAVES_DISABLED or _pool is None:
         return
@@ -1308,6 +1318,60 @@ async def _flush_tribes() -> None:
         await _save_tribes_fn()
 
 
+async def _flush_atomic(uids=(), tribe_names=(), extra=()) -> None:
+    """Write these users, these tribes and any extra (sql, params) statements in ONE SQLite transaction:
+    either every row lands or none does. (Two separate flushes could leave the first one saved when the
+    second failed; a market sale could pay the players but not remove the listing, or the reverse.)
+    Runs as a single unit on the connection's own thread, so no other coroutine's statement can slip in
+    between, and inside a SAVEPOINT so a failure only undoes this write. Raises SaveFailed on any error.
+    Falls back to the plain sequential flushes when there is no live database (tests / analysis scripts)."""
+    uids = tuple(dict.fromkeys(str(u) for u in uids))
+    live = _pool is not None and not SAVES_DISABLED and _users_ref is not None
+    if not live:
+        if uids:
+            await _flush_users(*uids)
+        if tribe_names:
+            await _flush_tribes()
+        return
+    tribe_rows, tribe_gone = [], []
+    try:
+        user_rows = [(uid, json.dumps(_users_ref[uid]), _users_ref[uid].get("username", ""), _users_ref[uid].get("level", 1),
+                      _users_ref[uid].get("money", 0), _users_ref[uid].get("prestige", 0)) for uid in uids if uid in _users_ref]
+        for name in tribe_names:
+            if _tribes_ref is not None and name in _tribes_ref:
+                tribe_rows.append(_tribe_row(name, _tribes_ref[name]))
+            else:
+                tribe_gone.append(name)                   # a disbanded tribe: its row goes in the same transaction
+    except Exception as e:                                # unserialisable data: nothing was written
+        raise SaveFailed(f"atomic save failed: {e}") from e
+    extra = list(extra)
+
+    def work(conn):
+        conn.execute("SAVEPOINT atomic_flush")
+        try:
+            if user_rows:
+                conn.executemany(_USER_UPSERT, user_rows)
+            if tribe_rows:
+                conn.executemany(_TRIBE_UPSERT, tribe_rows)
+            for name in tribe_gone:
+                conn.execute("DELETE FROM tribes WHERE name = ?", (name,))
+            for sql, params in extra:
+                conn.execute(sql, params)
+            conn.execute("RELEASE atomic_flush")
+            conn.commit()
+        except BaseException:
+            conn.execute("ROLLBACK TO atomic_flush")
+            conn.execute("RELEASE atomic_flush")
+            raise
+
+    try:
+        await _pool._execute(work, _pool._conn)
+    except Exception as e:
+        raise SaveFailed(f"atomic save failed: {e}") from e
+    if tribe_names:
+        _dirty_tribes.difference_update(tribe_names)      # written: nothing left to retry
+
+
 # ─────────────────────────────────────────────
 # TRANSACTION CONTEXT MANAGERS  —  snapshot + rollback
 # ─────────────────────────────────────────────
@@ -1421,12 +1485,16 @@ async def user_transaction(user_id: str):
 
 
 @asynccontextmanager
-async def multi_user_transaction(*user_ids: str):
+async def multi_user_transaction(*user_ids: str, extra: Optional[list] = None, atomic: bool = False):
     """Serialise mutations to several users at once, roll back all on error.
 
     Locks are taken in a globally consistent order (sorted, de-duplicated) so two
     interactions that touch the same pair of users — e.g. A gifting B while B
     gifts A — can never each hold one lock while waiting on the other.
+
+    ``atomic=True`` (implied by ``extra``) writes every user in ONE SQLite transaction — all or nothing —
+    together with the (sql, params) statements the body appended to the ``extra`` list (e.g. a market
+    listing delete), so a sale can't pay the players without removing the listing, or the reverse.
 
         async with multi_user_transaction(sender_id, recipient_id):
             spend_money(sender_id, n, "gift"); add_money(recipient_id, n, "gift")
@@ -1436,22 +1504,35 @@ async def multi_user_transaction(*user_ids: str):
         for uid in uniq:
             await stack.enter_async_context(get_user_lock(uid))
         snaps = {uid: _snap_user(uid) for uid in uniq}
+        use_atomic = atomic or extra is not None
         try:
             yield
         except BaseException:
             for uid, s in snaps.items():
                 _restore_user(uid, s)
             try:
-                await _flush_users(*uniq)
+                if use_atomic:
+                    await _flush_atomic(uniq)
+                else:
+                    await _flush_users(*uniq)
             except SaveFailed:
                 pass
             raise
         try:
-            await _flush_users(*uniq)
+            if use_atomic:
+                await _flush_atomic(uniq, (), extra or ())
+            else:
+                await _flush_users(*uniq)
         except SaveFailed:
             for uid, s in snaps.items():
                 _restore_user(uid, s)
             raise
+
+
+async def _flush_both_legacy(user_id: str) -> None:
+    """The no-tribe-names form can touch any tribe, so it keeps the all-tribes sweep (user first, then tribes)."""
+    await _flush_users(user_id)
+    await _flush_tribes()
 
 
 @asynccontextmanager
@@ -1496,15 +1577,18 @@ async def user_tribe_transaction(user_id: str, *tribe_names: str):
                 _undo()
                 mark_tribes_dirty(*tribe_names)
                 try:
-                    await _flush_users(user_id)
-                    await _flush_tribes()
+                    await _flush_atomic((user_id,), tribe_names) if tribe_names else await _flush_both_legacy(user_id)
                 except SaveFailed:
                     pass
                 raise
             mark_tribes_dirty(*tribe_names)
             try:
-                await _flush_users(user_id)
-                await _flush_tribes()
+                # the user row and the tribe row(s) are written in ONE SQLite transaction: if it fails nothing was
+                # written, so rolling memory back leaves the database and memory in agreement
+                if tribe_names:
+                    await _flush_atomic((user_id,), tribe_names)
+                else:
+                    await _flush_both_legacy(user_id)
             except SaveFailed:
                 _undo()
                 raise

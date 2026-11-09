@@ -6,6 +6,7 @@ Runs without pytest:  python tests/test_races.py
 """
 import asyncio
 import itertools
+import json
 import os
 import random
 import sys
@@ -666,7 +667,11 @@ def test_user_tribe_transaction_marks_its_tribe_dirty():
         async with backend.user_tribe_transaction("D1", "Delta"):
             pass
     run(go())
-    assert backend.take_dirty_tribes() == ({"Delta"}, False)
+    # the tribe row was written in the same SQLite transaction as the user's, so nothing is left dirty
+    async def delta_row():
+        async with backend._pool.execute("SELECT name FROM tribes WHERE name = 'Delta'") as c:
+            return await c.fetchall()
+    assert run(delta_row()) and backend.take_dirty_tribes() == (set(), False)
 
 
 def test_leaderboard_ranking_cached_and_disbanded_tribes_dropped():
@@ -1034,6 +1039,82 @@ def test_market_panel_buy_flow():
 
 def _all_tests():
     return sorted(n for n in globals() if n.startswith("test_"))
+
+def test_user_and_tribe_are_written_in_one_transaction_so_a_failed_tribe_save_leaves_the_user_untouched():
+    _reset()
+    run(_ensure_db())
+    _mk_tribe("Eps", "E1")
+    app.data["E1"]["money"] = 100
+    run(backend.bulk_save_users({"E1": app.data["E1"]}))
+    run(backend.bulk_save_tribes({"Eps": app.tribe_data["Eps"]}))
+    async def row_money():
+        async with backend._pool.execute("SELECT money FROM users WHERE user_id = 'E1'") as c:
+            return (await c.fetchone())[0]
+    async def go():
+        async with backend.user_tribe_transaction("E1", "Eps"):
+            app.data["E1"]["money"] = 5000
+            app.tribe_data["Eps"]["bad"] = {1, 2}              # json can't store a set: the tribe write fails
+    try:
+        run(go())
+        assert False, "should have raised"
+    except backend.SaveFailed:
+        pass
+    assert run(row_money()) == 100 and app.data["E1"]["money"] == 100 and "bad" not in app.tribe_data["Eps"]
+
+
+def test_a_failing_extra_statement_rolls_back_every_player_in_the_same_commit():
+    _reset()
+    run(_ensure_db())
+    for u in ("M1", "M2"):
+        _mk_user(u, money=100)
+    run(backend.bulk_save_users({u: app.data[u] for u in ("M1", "M2")}))
+    async def rows():
+        async with backend._pool.execute("SELECT user_id, money FROM users WHERE user_id IN ('M1','M2') ORDER BY 1") as c:
+            return await c.fetchall()
+    async def go(sql):
+        async with app.multi_user_transaction("M1", "M2", extra=[(sql, ())]):
+            app.data["M1"]["money"] -= 60
+            app.data["M2"]["money"] += 60
+    try:
+        run(go("INSERT INTO table_that_does_not_exist VALUES (1)"))
+        assert False, "should have raised"
+    except backend.SaveFailed:
+        pass
+    assert run(rows()) == [("M1", 100), ("M2", 100)] and app.data["M1"]["money"] == 100 and app.data["M2"]["money"] == 100
+    run(go("DELETE FROM market_listings WHERE listing_id = 'nothing'"))          # a good statement commits with the players
+    assert run(rows()) == [("M1", 40), ("M2", 160)]
+
+
+def test_a_market_purchase_that_fails_to_save_changes_nothing():
+    _reset()
+    run(_ensure_db())
+    app._market.clear()
+    _mk_user("S1", money=0); _mk_user("B1", money=10_000)
+    app.data["S1"]["crate_inv"] = {}
+    lst = {"id": "lst1", "seller": "S1", "kind": "crate", "item": "Common Crate", "qty": 3, "price": 100,
+           "created_ts": time.time(), "expires_ts": time.time() + 3600}
+    app._market["lst1"] = lst
+    run(backend.market_save(lst))
+    run(backend.bulk_save_users({u: app.data[u] for u in ("S1", "B1")}))
+    real = backend._flush_atomic
+    async def boom(*a, **k):
+        raise backend.SaveFailed("disk full")
+    backend._flush_atomic = boom
+    try:
+        try:
+            run(app.market_buy("B1", "lst1", 2))
+            assert False, "should have raised"
+        except backend.SaveFailed:
+            pass
+    finally:
+        backend._flush_atomic = real
+    assert app._market["lst1"]["qty"] == 3 and app.data["B1"]["money"] == 10_000 and not app.data["B1"].get("crate_inv")
+    ok, _ = run(app.market_buy("B1", "lst1", 2))
+    assert ok and app._market["lst1"]["qty"] == 1 and app.data["B1"]["crate_inv"]["Common Crate"] == 2
+    async def db_qty():
+        async with backend._pool.execute("SELECT data FROM market_listings WHERE listing_id = 'lst1'") as c:
+            return json.loads((await c.fetchone())[0])["qty"]
+    assert run(db_qty()) == 1
 
 
 if __name__ == "__main__":

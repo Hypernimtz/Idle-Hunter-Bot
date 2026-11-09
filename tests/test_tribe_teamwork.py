@@ -185,7 +185,7 @@ def test_contracts_pay_each_participant_a_crate():
     run(app.award_tribe_xp(a, "hunt", catches=3, biome=FOREST))          # a finishes it
     assert ct["done"]
     queued = {p["uid"] for p in td["payouts"] if p["id"].startswith("contract:")}
-    assert queued in ({a, b}, set()), queued                             # (award already kicked the payout off)
+    assert queued <= {a, b}, queued                                      # (the award already kicked the payout off: some may be paid)
     run(app._tribe_pay_queue("K"))
     run(asyncio.sleep(0.05))
     assert app.data[a]["crate_inv"].get(gd.TRIBE_CONTRACT_CRATES[0]) == 1

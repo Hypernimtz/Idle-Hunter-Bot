@@ -190,6 +190,41 @@ def test_duel_titles_unlock_at_win_milestones():
     run(app._fd_finish(d, "a"))
     assert "Standoff Survivor" in app.data[A]["earned_titles"]
 
+def test_a_failed_payout_leaves_the_duel_open_and_the_retry_pays_exactly_once():
+    _reset()
+    ma, mb = app.data[A]["money"], app.data[B]["money"]
+    d = _duel(10_000)
+    real = app.backend._flush_atomic
+
+    async def boom(*a, **k):
+        raise app.backend.SaveFailed("disk full")
+    app.backend._flush_atomic = boom
+    try:
+        try:
+            run(app._fd_finish(d, "a"))
+            assert False, "should have raised"
+        except app.backend.SaveFailed:
+            pass
+    finally:
+        app.backend._flush_atomic = real
+    assert d["status"] != "done" and d["escrowed"] is True                       # still open, stakes still held
+    assert app.data[A]["money"] == ma - 10_000 and app.data[B]["money"] == mb - 10_000
+    run(app._fd_finish(d, "a"))                                                  # the retry pays
+    assert d["status"] == "done" and app.data[A]["money"] == ma - 10_000 + 18_000
+    assert d["id"] in app.data[A]["fd_settled"] and d["id"] in app.data[B]["fd_settled"]
+    # the bot died before the duel record was saved: it comes back "active, escrowed" - the marker blocks a second payout
+    d["status"], d["escrowed"] = "active", True
+    run(app._fd_finish(d, "a"))
+    assert app.data[A]["money"] == ma - 10_000 + 18_000 and d["status"] == "done" and app._fd_stats(A)["w"] == 1
+
+
+def test_parse_amount_is_exact():
+    from game_data import parse_amount
+    assert parse_amount("1.001K") == 1001 and parse_amount("9007199254740993") == 9007199254740993
+    assert parse_amount("50k") == 50_000 and parse_amount("1.5M") == 1_500_000 and parse_amount("5,000") == 5000
+    assert parse_amount("2b") == 2_000_000_000 and parse_amount("1e999") is None and parse_amount("inf") is None
+    assert parse_amount("") is None and parse_amount("abc") is None and parse_amount("K") is None
+
 
 # ── limits ──────────────────────────────────────────────────
 
