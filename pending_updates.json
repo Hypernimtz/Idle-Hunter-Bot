@@ -258,5 +258,10 @@
     "key": "2026-11-09-quest-modes",
     "title": "Quests now say which hunting mode counts",
     "message": "Every hunting quest now shows which mode it counts in. Most count in **Quick Hunt or Explore**, so you can play whichever you like. New daily quests are mode-specific: **Catch animals with Quick Hunt** and **Catch animals in Explore** (the Explore target is smaller to match the extra steps; only players with Explore on get that one)."
+  },
+  {
+    "key": "2026-11-12-lottery-flex-use",
+    "title": "Lottery refunds, rarer Show Offs, and /use quantity",
+    "message": "- **Lottery:** a draw now needs at least **10 players**. If fewer buy tickets, nobody loses anything — **every ticket is refunded in full** and the lottery announces it.\n- **Show Off:** the button now only appears for a **Perfect legendary catch** or a **mythical** (epics and ordinary legendaries no longer get it), and it's limited so the channel isn't flooded: at least 15 minutes between posts, up to 2 legendary and 5 mythical posts a day.\n- **`/use` now has a `quantity`:** `/use item:<crate> quantity:10` opens up to 25 crates at once and shows one summary."
   }
 ]

@@ -497,9 +497,28 @@ def test_share_card_and_stranger_start():
     # the custom_id shape the handler keys on.
     assert start_btn["custom_id"] == f"hunt:again:{owner}"
     # rarity rule
-    assert app._rarity_shareable("epic") and not app._rarity_shareable("common")
-    assert app._rarity_shareable("rare", personal_first=True)
-    assert not app._rarity_shareable("rare", personal_first=False)
+    # only a PERFECT legendary or a mythical is worth a Show Off; epic / plain legendary / rare never get the button
+    assert app._rarity_shareable("mythic") and app._rarity_shareable("legendary", perfect=True)
+    assert not app._rarity_shareable("legendary") and not app._rarity_shareable("epic", perfect=True)
+    assert not app._rarity_shareable("rare", perfect=True) and not app._rarity_shareable("common")
+
+
+def test_show_off_is_rate_limited_by_how_rare_the_moment_is():
+    _reset()
+    u = "shLimit"
+    _mk_user(u)
+    sid = app.make_share(u, "rare_catch", animal="Lion", rarity="legendary", biome="village")
+    assert app._share_row(sid, u) is not None                       # nothing posted yet: the button shows
+    app._share_record(u, "legendary")
+    assert 0 < app._share_wait(u, "legendary") <= app.SHARE_MIN_GAP
+    assert app._share_row(sid, u) is None                           # too soon after the last post: no button
+    assert app._share_wait(u, "mythic") > 0                         # the gap applies to every tier
+    st = app.data[u]["stats"]
+    st["share_log"] = [[time.time() - 3600, "legendary"], [time.time() - 1800, "legendary"]]     # 2 legendary posts today = the cap
+    assert app._share_wait(u, "legendary") > app.SHARE_MIN_GAP      # waits for the day window, not just the gap
+    assert app._share_wait(u, "mythic") == 0                        # mythical moments are rarer: their own, larger allowance
+    st["share_log"] = [[time.time() - 86400 - 5, "legendary"], [time.time() - 3600 * 25, "legendary"]]
+    assert app._share_wait(u, "legendary") == 0                     # yesterday's posts no longer count
 
 
 # ─────────────────────────────────────────────────────────────

@@ -350,6 +350,7 @@ MAX_LOG_ENTRIES       = 50
 INV_DISPLAY_MAX       = 10
 AMMO_MAX_STACK        = 9_999
 LOTTERY_TICKET_COST   = 10_000
+LOTTERY_MIN_PLAYERS   = 10      # a draw needs at least this many different players, otherwise everyone is refunded
 GAMBLE_COOLDOWN       = 2       # seconds between wagers (0 during Admin's Day Off)
 V2_FLAGS              = 32768
 SUGGESTION_CHANNEL_ID = 1503581602234765322
@@ -5999,13 +6000,56 @@ async def refresh_world_map_url(*, force: bool = False) -> None:
 # LOTTERY DRAW
 # ─────────────────────────────────────────────
 
+async def _lottery_pay_refunds() -> bool:
+    """Give every ticket buyer their money back after a draw that fell short of LOTTERY_MIN_PLAYERS. Each refund has its own
+    marker saved with the money, so a retry after a crash never pays anyone twice. True once nothing is pending."""
+    pr = lottery_data.get("pending_refunds")
+    if not pr:
+        return True
+    left = dict(pr["amounts"])
+    for uid, amount in list(left.items()):
+        pid = f"{pr['id']}:{uid}"
+        try:
+            init_user(uid)
+            async with user_transaction(uid):
+                paid = data[uid].setdefault("stats", {}).setdefault("lottery_paid", [])
+                if pid not in paid:
+                    add_money(uid, int(amount), "lottery refund")
+                    paid.append(pid)
+                    del paid[:-100]
+            left.pop(uid, None)
+        except Exception:
+            logger.exception("lottery refund failed for %s — will retry", uid)
+    if left:
+        pr["amounts"] = left
+        _write_text("lottery.json", json.dumps(lottery_data, indent=4, default=str))
+        return False
+    lottery_data.pop("pending_refunds", None)
+    _write_text("lottery.json", json.dumps(lottery_data, indent=4, default=str))
+    return True
+
+
+async def _lottery_announce(content: str) -> None:
+    channel = bot.get_channel(LOTTERY_CHANNEL_ID)
+    if not channel:
+        return
+    try:
+        await bot.http.request(Route("POST", "/channels/{channel_id}/messages", channel_id=LOTTERY_CHANNEL_ID), json={
+            "flags": V2_FLAGS, "allowed_mentions": {"parse": []},
+            "components": [{"type": 17, "accent_color": 0xF1C40F, "spoiler": False,
+                            "components": [{"type": 10, "content": content}]}]})
+    except Exception as e:
+        print("Lottery channel send error:", e)
+
+
 async def _lottery_pay_pending() -> bool:
     """Deliver the lottery winner's prize if one is pending. Idempotent: the payout id is stored on the winner in
     the SAME transaction as the money, so a retry after a crash (money saved, 'pending' not yet cleared) skips
     the grant. Returns True once nothing is pending."""
+    ok_refunds = await _lottery_pay_refunds()
     pp = lottery_data.get("pending_payout")
     if not pp:
-        return True
+        return ok_refunds
     uid, amount, pid = str(pp["winner"]), int(pp["amount"]), pp["id"]
     try:
         init_user(uid)
@@ -6038,6 +6082,22 @@ async def run_lottery_draw():
         ld["tickets"] = {}
         ld["pool"]    = 0
         ld["next_ts"] = next_ts
+        save_lottery(ld)
+        return
+
+    if len(tickets) < LOTTERY_MIN_PLAYERS:
+        # Too few players for a fair lottery: no draw, every ticket is refunded in full (the pool was only ever their money).
+        ld["pending_refunds"] = {"id": f"lotteryrefund:{int(time.time())}",
+                                 "amounts": {str(u): int(n) * LOTTERY_TICKET_COST for u, n in tickets.items() if n > 0}}
+        ld["tickets"] = {}
+        ld["pool"]    = 0
+        ld["next_ts"] = next_ts
+        _write_text("lottery.json", json.dumps(ld, indent=4, default=str))
+        await _lottery_pay_refunds()
+        await _lottery_announce(
+            f"### {emoji('lottery_ticket')} Lottery cancelled\n"
+            f"Only **{len(tickets)}** player{'s' if len(tickets) != 1 else ''} joined — a draw needs at least "
+            f"**{LOTTERY_MIN_PLAYERS}**, so **every ticket was refunded in full**.\n\n-# Next lottery <t:{next_ts}:R>")
         save_lottery(ld)
         return
 
@@ -10790,19 +10850,55 @@ def make_share(owner_id: str, kind: str, **fields) -> str:
                          "created_ts": time.time(), "shared": False, **fields}
     return sid
 
+# Show Off ("flex") rules. Only a PERFECT legendary catch or a mythical is worth a channel post, and the rarer the moment the
+# more of them a player may post: (max posts, per seconds) by tier, plus a minimum gap between any two posts so a lucky
+# streak can't flood the channel.
+SHARE_LIMITS = {"legendary": (2, 86400), "mythic": (5, 86400)}
+SHARE_MIN_GAP = 900
+
+
+def _share_tier(sh: dict) -> str:
+    return "mythic" if sh.get("kind") == "myth_kill" or sh.get("rarity") == "mythic" else "legendary"
+
+
+def _share_wait(user_id: str, tier: str) -> int:
+    """Seconds until this player may post a Show Off of `tier` again (0 = now)."""
+    log = (data.get(user_id, {}).get("stats", {}).get("share_log") or [])
+    now = time.time()
+    wait = 0
+    if log:
+        wait = max(wait, int(log[-1][0] + SHARE_MIN_GAP - now))
+    cap, window = SHARE_LIMITS[tier]
+    mine = sorted(t for t, tr in log if tr == tier and now - t < window)
+    if len(mine) >= cap:
+        wait = max(wait, int(mine[len(mine) - cap] + window - now))
+    return max(0, wait)
+
+
+def _share_record(user_id: str, tier: str) -> None:
+    st = data[user_id].setdefault("stats", {})
+    log = st.setdefault("share_log", [])
+    log.append([time.time(), tier])
+    del log[:-30]
+    mark_user_dirty(user_id)
+
+
 def _share_row(sid: str, owner_id: str, label: str = "Show Off") -> dict | None:
     if not sid:
         return None
+    sh = _share_store.get(sid)
+    if sh and _share_wait(str(owner_id), _share_tier(sh)):
+        return None                                        # posted too much lately: no button at all
     return {"type": 1, "components": [
         {"type": 2, "style": 1, "label": label, "emoji": emoji_partial("cheering_megaphone"),
          "custom_id": f"share:post:{sid}:{owner_id}"}]}
 
-def _rarity_shareable(rarity: str, personal_first: bool = False) -> bool:
+def _rarity_shareable(rarity: str, perfect: bool = False) -> bool:
+    """Worth a Show Off button: a mythical, or a legendary that was also a Perfect Catch. (Epic and ordinary legendaries
+    are common enough that offering the button on every one was just spam.)"""
     if not FEATURE_SHARE_CARDS:
         return False
-    if rarity in SHARE_RARITY_MIN:
-        return True
-    return rarity == "rare" and personal_first
+    return rarity == "mythic" or (rarity == "legendary" and bool(perfect))
 
 def build_share_public_components(sid: str) -> list:
     sh = _share_store.get(sid, {})
@@ -13152,8 +13248,7 @@ def build_hunt_components(user_id: str, result: dict, onboarding: bool = False) 
             f"-# {rarity_icon} {rarity.title()} · {ui_money(c['sell_value'])} · +{c['xp_earned']} XP"
             f"{tag}"
         )
-        _pf = d.get("record", {}).get(animal, {}).get("count", 0) <= 1
-        if _rarity_shareable(rarity, personal_first=_pf):
+        if _rarity_shareable(rarity, perfect=bool(c.get("is_rare"))):
             _share_animal, _share_rarity = animal, rarity
 
     _biome_animals = BIOME_ANIMALS.get(result["biome"], [])
@@ -15802,7 +15897,8 @@ def build_lottery_components(user_id: str) -> list:
         f"Your tickets: **{my_tickets}**\n\n"
         f"Tickets cost: **◈ {LOTTERY_TICKET_COST:,}** each\n\n"
         f"There are currently {keyword} tickets compared to the previous lottery.\n\n"
-        f"-# More tickets = better chance\n\n"
+        f"-# More tickets = better chance\n"
+        f"-# Needs at least **{LOTTERY_MIN_PLAYERS}** players ({len({u for u, n in tickets.items() if n > 0})} so far) — otherwise everyone is refunded.\n\n"
         f"-# Next lottery <t:{next_ts}:R>\n"
         f"-# Join the server in /invite to know more information about the winners!"
     )
@@ -19090,6 +19186,45 @@ async def _open_crate_and_show(interaction, user_id: str, crate_name: str):
     await _hunters_path_notify(interaction, user_id, _hp_result)
     await check_achievements_and_badges(interaction, user_id)
 
+async def _open_crates_bulk_and_show(interaction, user_id: str, crate_name: str, qty: int):
+    """`/use item:<crate> quantity:N` - open up to N crates in one go and show one summary (the bank is checked and consumed
+    under the lock, so asking for more than you have simply opens what you have)."""
+    if crate_name not in CRATE_TIERS:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} Unknown crate.", 0xE74C3C)
+        return
+    opened, gems_found, hp_result = [], [], None
+    async with user_transaction(user_id):
+        inv = data[user_id].setdefault("crate_inv", {})
+        n = min(int(qty), int(inv.get(crate_name, 0)))
+        for _ in range(n):
+            inv[crate_name] -= 1
+            if inv[crate_name] <= 0:
+                del inv[crate_name]
+            reward, extras, hp_result = _resolve_crate_reward(user_id, crate_name)
+            opened.append(reward)
+            if extras.get("gemstone"):
+                gems_found.append(extras["gemstone"])
+    if not opened:
+        await send_ephemeral_v2(interaction, f"{emoji('cross_mark')} You don't have any **{crate_name}**.", 0xE74C3C)
+        return
+    crate = CRATE_TIERS[crate_name]
+    shown = [f"* {_fmt_reward(r)}" for r in opened[:15]]
+    if len(opened) > 15:
+        shown.append(f"-# …and {len(opened) - 15} more")
+    stone = (f"\n{emoji('gem')} **Bonus gemstones:** " + ", ".join(_rarity_label(r) for r in gems_found)) if gems_found else ""
+    remaining = data[user_id].get("crate_inv", {}).get(crate_name, 0)
+    note = f"\n-# You asked for {qty} but only had {len(opened)}." if len(opened) < qty else ""
+    content = (f"### {crate['emoji']} Opened {len(opened)}× {crate_name}!\n\n" + "\n".join(shown) + stone + note +
+               f"\n\n-# {crate_name} remaining: **{remaining}**")
+    btns = [{"type": 2, "style": 2, "label": "◀ Craft", "custom_id": f"craft:open:{user_id}"}]
+    if remaining > 0:
+        btns.insert(0, {"type": 2, "style": 3, "label": f"Open Another {crate_name}", "custom_id": f"crate:open_again:{crate_name}:{user_id}"})
+    await smart_update_v2(interaction, [{"type": 17, "accent_color": crate["color"], "spoiler": False, "components": [
+        {"type": 10, "content": content[:3800]}, {"type": 14, "divider": True, "spacing": 1}, {"type": 1, "components": btns}]}])
+    await _hunters_path_notify(interaction, user_id, hp_result)
+    await check_achievements_and_badges(interaction, user_id)
+
+
 # ─────────────────────────────────────────────
 # SCRATCH PAD  ·  a 3-wide scratch card, 5 of 12 panels hide a prize
 # ─────────────────────────────────────────────
@@ -20942,6 +21077,17 @@ async def _dispatch_component_inner(interaction: discord.Interaction):
             return
         if sh.get("shared"):
             await send_ephemeral_v2(interaction, "-# Already shared this one!", 0xE67E22)
+            return
+        tier_ = _share_tier(sh)
+        async with user_transaction(owner_id):                  # check + record under the lock: no double-click burst
+            wait_ = _share_wait(owner_id, tier_)
+            if not wait_:
+                _share_record(owner_id, tier_)
+        if wait_:
+            mins = max(1, -(-wait_ // 60))
+            await send_ephemeral_v2(interaction,
+                f"-# Easy there — you've shown off a lot lately. You can post another in about **{mins} min**"
+                + (f" ({tier_} moments are limited to {SHARE_LIMITS[tier_][0]} a day)." if wait_ > SHARE_MIN_GAP else "."), 0xE67E22)
             return
         sh["shared"] = True
         sh["owner_name"] = interaction.user.display_name
@@ -27058,14 +27204,18 @@ async def _use_healing_item_and_show(interaction: discord.Interaction, user_id: 
 @bot.tree.command(name="use", description="Open a crate, use a trophy or a healing item you own")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.describe(item="What to use — start typing to pick a crate, trophy or healing item you own")
-async def use_cmd(interaction: discord.Interaction, item: str):
+@app_commands.describe(item="What to use — start typing to pick a crate, trophy or healing item you own",
+                       quantity="How many crates to open at once (crates only, up to 25)")
+async def use_cmd(interaction: discord.Interaction, item: str, quantity: app_commands.Range[int, 1, 25] = 1):
     user_id = await _common_init(interaction)
     if not user_id:
         return
     crate_name = _canon_crate_name(item)
     if crate_name:
-        await _open_crate_and_show(interaction, user_id, crate_name)
+        if quantity > 1:
+            await _open_crates_bulk_and_show(interaction, user_id, crate_name, quantity)
+        else:
+            await _open_crate_and_show(interaction, user_id, crate_name)
         return
     heal_name = _canon_healing_name(item)
     if heal_name:

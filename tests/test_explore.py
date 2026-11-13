@@ -2836,6 +2836,24 @@ def test_quests_say_which_hunting_mode_counts_and_only_that_mode_progresses_them
     assert "Explore only" in json.dumps(app._quest_section(q_ex, "claim", U), ensure_ascii=False)
 
 
+def test_use_opens_several_crates_at_once_and_only_what_you_have():
+    d = _fresh(level=300)
+    d["crate_inv"] = {"Common Crate": 3}
+    d["money"] = 0
+    with tr.Harness() as h:
+        run(app._open_crates_bulk_and_show(tr.FakeInteraction(U, "x"), U, "Common Crate", 10))
+        blob = json.dumps(h.panels[-1], ensure_ascii=False)
+        assert "Opened 3" in blob and "only had 3" in blob
+        assert not d["crate_inv"].get("Common Crate")
+        run(app._open_crates_bulk_and_show(tr.FakeInteraction(U, "x"), U, "Common Crate", 2))
+        assert any("don't have any" in m for m in h.ephemerals)
+        d["crate_inv"] = {"Common Crate": 5}
+        run(app._open_crates_bulk_and_show(tr.FakeInteraction(U, "x"), U, "Common Crate", 2))
+        assert d["crate_inv"]["Common Crate"] == 3 and "remaining: **3**" in json.dumps(h.panels[-1])
+    params = {p.name: p for p in app.use_cmd.parameters}
+    assert "quantity" in params and params["quantity"].required is False
+
+
 if __name__ == "__main__":
     asyncio.set_event_loop(asyncio.new_event_loop())
     run(td.tt._ensure_db())

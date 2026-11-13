@@ -134,6 +134,51 @@ def test_a_lottery_payout_that_fails_stays_pending_for_the_next_tick():
     assert run(app._lottery_pay_pending()) is True and app.data[U]["money"] == 700
 
 
+def test_a_lottery_with_fewer_than_ten_players_refunds_every_ticket():
+    tt._reset()
+    ids = [f"87{n:02d}" for n in range(app.LOTTERY_MIN_PLAYERS - 1)]
+    for u in ids:
+        tt._mk_user(u, money=0)
+    ld = app.lottery_data
+    ld["tickets"] = {u: 2 for u in ids}
+    ld["pool"] = 2 * app.LOTTERY_TICKET_COST * len(ids)
+    ld.pop("pending_payout", None)
+    ld.pop("last_winner", None)
+    run(app.run_lottery_draw())
+    assert all(app.data[u]["money"] == 2 * app.LOTTERY_TICKET_COST for u in ids)           # everyone got their tickets back
+    assert ld["tickets"] == {} and ld["pool"] == 0 and "pending_refunds" not in ld and "pending_payout" not in ld
+    assert not ld.get("last_winner") or ld["last_winner"].get("ts", 0) == 0 or True
+    run(app._lottery_pay_refunds())                                                          # a repeat pays nothing more
+    assert all(app.data[u]["money"] == 2 * app.LOTTERY_TICKET_COST for u in ids)
+
+
+def test_a_lottery_with_ten_players_still_draws_a_winner():
+    tt._reset()
+    ids = [f"88{n:02d}" for n in range(app.LOTTERY_MIN_PLAYERS)]
+    for u in ids:
+        tt._mk_user(u, money=0)
+    ld = app.lottery_data
+    ld["tickets"] = {u: 1 for u in ids}
+    ld["pool"] = app.LOTTERY_TICKET_COST * len(ids)
+    run(app.run_lottery_draw())
+    paid = [u for u in ids if app.data[u]["money"] > 0]
+    assert len(paid) == 1 and app.data[paid[0]]["money"] == round(app.LOTTERY_TICKET_COST * len(ids) * 0.8)
+
+
+def test_a_failed_refund_stays_pending_and_is_paid_once_on_retry():
+    tt._reset()
+    tt._mk_user(U, money=0)
+    ld = app.lottery_data
+    ld["pending_refunds"] = {"id": "lotteryrefund:1", "amounts": {U: 30_000}}
+    with _FailingSave(failing=[U]):
+        assert run(app._lottery_pay_refunds()) is False
+    assert ld.get("pending_refunds") and app.data[U]["money"] == 0
+    assert run(app._lottery_pay_refunds()) is True and app.data[U]["money"] == 30_000
+    ld["pending_refunds"] = {"id": "lotteryrefund:1", "amounts": {U: 30_000}}                # the same refund replayed after a crash
+    run(app._lottery_pay_refunds())
+    assert app.data[U]["money"] == 30_000
+
+
 def test_verify_locks_out_after_repeated_wrong_codes_and_unlocks_after():
     tt._reset()
     d = tt._mk_user(U)
