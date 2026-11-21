@@ -2878,6 +2878,17 @@ def test_only_explore_catches_complete_a_region_and_old_completions_are_kept():
     assert "Quick Hunt" in json.dumps(app.build_collection_regions_components(U), ensure_ascii=False)
 
 
+def test_the_world_screen_answers_to_biomes_and_travel_and_says_what_it_is():
+    names = {c.name for c in app.bot.tree.get_commands()}
+    assert {"world", "biomes", "travel"} <= names
+    assert len(app.bot.tree.get_command("world").description) <= 100
+    d = _fresh(level=300)
+    blob = json.dumps(app.build_world_components(U), ensure_ascii=False)
+    assert "Biomes" in blob and "Travel" in blob and "Regions" in blob
+    for n in ("world", "biomes", "travel"):
+        assert len(app.bot.tree.get_command(n).description) <= 100
+
+
 if __name__ == "__main__":
     asyncio.set_event_loop(asyncio.new_event_loop())
     run(td.tt._ensure_db())

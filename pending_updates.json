@@ -268,5 +268,10 @@
     "key": "2026-11-20-region-completion-explore",
     "title": "Completing a region now takes Explore",
     "message": "Finishing a region was far too easy in Quick Hunt, so **a region is now complete when you've caught all of its animals in Explore.** Quick Hunt catches still fill your species book, and every catch still pays, but they no longer count toward region completion (the decoration, the Regions page and the World Completion %). In `/guide` → Species a 🧭 marks the animals you've caught in Explore, and the header shows how many you still need. **Regions you had already completed keep their decoration and stay complete.**"
+  },
+  {
+    "key": "2026-11-20-world-aliases",
+    "title": "/biomes and /travel open the World screen",
+    "message": "Looking for the biomes? `/world` is the screen for **biomes, regions, the world map and travel** — and now `/biomes` and `/travel` open the same screen, so typing `/biome` finds it. The World screen's header also spells out what's inside: *Biomes · Regions · Travel · Map*."
   }
 ]

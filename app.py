@@ -14063,7 +14063,7 @@ def build_world_components(user_id: str, goal_line: str = "") -> list:
     cur = d.get("biome", "village")
 
     where = f"{BIOME_EMOJIS.get(cur,'')} **{BIOME_NAMES.get(cur, cur)}** — {biome_region(cur)['region']}"
-    header = ui_header(emoji('earth'), "WORLD") + "\n" + where
+    header = ui_header(emoji('earth'), "WORLD", "Biomes · Regions · Travel · Map") + "\n" + where
 
     now_bits = []
     if is_traveling(user_id):
@@ -25225,16 +25225,32 @@ async def shop_cmd(interaction: discord.Interaction):
     await send_v2_followup(interaction, build_shop_components(user_id, "boosts"))
     await check_everything(interaction, user_id)
 
-@bot.tree.command(name="world", description="See what's happening across the world right now — and travel between biomes")
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-@app_commands.allowed_installs(guilds=True, users=True)
-async def world_cmd(interaction: discord.Interaction):
+async def _world_screen(interaction: discord.Interaction):
     user_id = await _common_init(interaction)
     if not user_id: return
     if await _maybe_onboard(interaction, user_id): return
     goal_line = await _world_goal_line(interaction)
     await send_v2_followup(interaction, build_world_components(user_id, goal_line))
     await check_everything(interaction, user_id)
+
+@bot.tree.command(name="world", description="Biomes, regions & travel — the world map and what's happening in each region now")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def world_cmd(interaction: discord.Interaction):
+    await _world_screen(interaction)
+
+# Players guess the old / obvious names, so the same screen answers to them too (typing "/biome" lists /biomes).
+@bot.tree.command(name="biomes", description="Same as /world — every biome and region, the map and travel")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def biomes_cmd(interaction: discord.Interaction):
+    await _world_screen(interaction)
+
+@bot.tree.command(name="travel", description="Same as /world — pick a biome to travel to, see the map")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=True)
+async def travel_cmd(interaction: discord.Interaction):
+    await _world_screen(interaction)
 
 @bot.tree.command(name="guide", description="Your Collection — species, Mythicals, trophies & world completion")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
