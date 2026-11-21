@@ -1144,10 +1144,22 @@ def _region_species(biome: str) -> list[str]:
     return list(dict.fromkeys(BIOME_ANIMALS.get(biome, [])))
 
 def _guide_region_progress(user_id: str, biome: str) -> tuple[int, int]:
+    """(species found, species in the region) toward REGION COMPLETION. Only animals caught in Explore count: Quick Hunt
+    makes a whole region far too easy to finish. (A region you had already completed keeps its decoration and stays complete.)
+    The plain species book - every animal you've ever caught, either mode - is `_guide_species_seen`."""
+    d = data.get(user_id, {})
+    species = _region_species(biome)
+    if biome in (d.get("region_decor") or ()):
+        return len(species), len(species)
+    er = d.get("explore_record", {}) or {}
+    have = sum(1 for a in species if er.get(a, 0) > 0)
+    return have, len(species)
+
+
+def _guide_species_seen(user_id: str, biome: str) -> tuple[int, int]:
     rec = data.get(user_id, {}).get("record", {}) or {}
     species = _region_species(biome)
-    have = sum(1 for a in species if rec.get(a, {}).get("count", 0) > 0)
-    return have, len(species)
+    return sum(1 for a in species if rec.get(a, {}).get("count", 0) > 0), len(species)
 
 def _myths_discovered(user_id: str) -> set[str]:
     """Creature names the player has actually KILLED at least once (myth_record),
@@ -6526,6 +6538,9 @@ def record_catch(user_id: str, animal: str, tool: str, value: int):
     record[animal]["total_earned"] += value
     record[animal]["best"]          = max(record[animal].get("best", 0), value)
     record[animal].setdefault("tools", {})[tool] = record[animal]["tools"].get(tool, 0) + 1
+    if _hunt_mode.get() == "explore":                       # region completion counts Explore catches only
+        er = data[user_id].setdefault("explore_record", {})
+        er[animal] = er.get(animal, 0) + 1
     bump_caught(user_id)
 
 # ─────────────────────────────────────────────
@@ -10533,7 +10548,7 @@ def next_goal_line(user_id: str) -> str:
     biome = d.get("biome", "village")
     have_n, total_n = _guide_region_progress(user_id, biome)
     if total_n and have_n < total_n:
-        return f"📖 **{BIOME_NAMES.get(biome, biome)}** collection: {have_n}/{total_n} species found"
+        return f"📖 **{BIOME_NAMES.get(biome, biome)}** region: {have_n}/{total_n} animals caught in Explore"
     return up
 
 
@@ -14138,7 +14153,7 @@ def build_collection_components(user_id: str) -> list:
         f"-# World Completion: **{gc['world_pct']:.1f}%**",
         _guide_bar(int(gc['world_pct']), 100),
         "",
-        f"{emoji('animal_fallback')} Species        **{gc['species_have']}** / {gc['species_total']}",
+        f"{emoji('animal_fallback')} Species (Explore) **{gc['species_have']}** / {gc['species_total']}",
         f"{emoji('ghost')} Mythicals       **{gc['myths_have']}** / {gc['myths_total']}",
         f"{emoji('trophy')} Trophies        **{trophies_have}** / {gc['myths_total']}",
         f"{emoji('earth')} Regions         **{gc['regions_have']}** / {gc['regions_total']}",
@@ -14173,14 +14188,17 @@ def build_collection_species_components(user_id: str, biome: str = None) -> list
     rec     = data[user_id].get("record", {}) or {}
     species = _region_species(biome)
     have    = sum(1 for a in species if rec.get(a, {}).get("count", 0) > 0)
+    er      = data[user_id].get("explore_record", {}) or {}
+    done_r, total_r = _guide_region_progress(user_id, biome)
     lines = [f"## {BIOME_EMOJIS.get(biome,'')} {BIOME_NAMES[biome].upper()} COLLECTION",
-             f"-# {have} / {len(species)} Species", ""]
+             f"-# {have} / {len(species)} Species found · 🧭 **{done_r} / {total_r}** caught in Explore (completes the region)", ""]
     for a in species:
         entry  = rec.get(a)
         rarity = ANIMAL_DATA.get(a, {}).get("rarity", "common")
         if entry and entry.get("count", 0) > 0:
-            lines.append(f"{emoji('check_mark')} {animal_emoji(a)} **{a}**")
-            lines.append(f"-# Caught ×{entry['count']} · Best ◈{entry.get('best', 0):,}")
+            lines.append(f"{emoji('check_mark')} {animal_emoji(a)} **{a}**" + (" 🧭" if er.get(a, 0) > 0 else ""))
+            lines.append(f"-# Caught ×{entry['count']} · Best ◈{entry.get('best', 0):,}"
+                         + ("" if er.get(a, 0) > 0 else " · not yet caught in Explore"))
         else:
             lines.append(f"{emoji('black_question_mark_ornament')} Unknown Species")
             lines.append(f"-# {_rarity_label(rarity)}")
@@ -14225,7 +14243,8 @@ def build_collection_mythicals_components(user_id: str, biome: str = None) -> li
     return [{"type": 17, "accent_color": _accent(user_id), "spoiler": False, "components": comps}]
 
 def build_collection_regions_components(user_id: str) -> list:
-    lines = [f"## {emoji('earth')} REGIONS", ""]
+    lines = [f"## {emoji('earth')} REGIONS",
+             "-# A region is complete when you've caught **every one of its animals in Explore**. Quick Hunt catches fill your species book but don't complete regions.", ""]
     for biome_key, lvl_req in BIOME_LEVELS:
         h, t = _guide_region_progress(user_id, biome_key)
         em = BIOME_EMOJIS.get(biome_key, "")

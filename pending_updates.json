@@ -263,5 +263,10 @@
     "key": "2026-11-12-lottery-flex-use",
     "title": "Lottery refunds, rarer Show Offs, and /use quantity",
     "message": "- **Lottery:** a draw now needs at least **10 players**. If fewer buy tickets, nobody loses anything — **every ticket is refunded in full** and the lottery announces it.\n- **Show Off:** the button now only appears for a **Perfect legendary catch** or a **mythical** (epics and ordinary legendaries no longer get it), and it's limited so the channel isn't flooded: at least 15 minutes between posts, up to 2 legendary and 5 mythical posts a day.\n- **`/use` now has a `quantity`:** `/use item:<crate> quantity:10` opens up to 25 crates at once and shows one summary."
+  },
+  {
+    "key": "2026-11-20-region-completion-explore",
+    "title": "Completing a region now takes Explore",
+    "message": "Finishing a region was far too easy in Quick Hunt, so **a region is now complete when you've caught all of its animals in Explore.** Quick Hunt catches still fill your species book, and every catch still pays, but they no longer count toward region completion (the decoration, the Regions page and the World Completion %). In `/guide` → Species a 🧭 marks the animals you've caught in Explore, and the header shows how many you still need. **Regions you had already completed keep their decoration and stay complete.**"
   }
 ]

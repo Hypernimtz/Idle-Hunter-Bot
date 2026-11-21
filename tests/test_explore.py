@@ -1474,7 +1474,7 @@ def test_quick_hunt_and_explore_mode_switch_from_the_panels_without_settings():
 def test_the_panel_shows_one_next_goal():
     d = _fresh(tool="Bare Hands", owned_tools=["Bare Hands"], money=0, quests=[])
     d["quests"], d["weekly_quests"] = [], []
-    assert "collection" in app.next_goal_line(U) or "Next upgrade" in app.next_goal_line(U)
+    assert "region" in app.next_goal_line(U) or "Next upgrade" in app.next_goal_line(U)
     d["money"] = int(gd.TOOLS["Slingshot"]["price"] * 0.8)
     assert "Next upgrade: **Slingshot** — 80% saved" in app.next_goal_line(U)
     d["quests"] = [{"id": "q", "completed": True, "claimed": False}]
@@ -1501,9 +1501,12 @@ def test_claim_all_pays_every_finished_quest_at_once():
 
 def test_finishing_a_region_gives_a_profile_decoration_once():
     d = _fresh()
-    d["record"] = {a: {"count": 1, "best": 1} for a in gd.BIOME_ANIMALS["village"][:-1]}
-    assert app._grant_region_decor(U, "village") == ""                           # one species short
-    d["record"][gd.BIOME_ANIMALS["village"][-1]] = {"count": 1, "best": 1}
+    d["record"] = {a: {"count": 1, "best": 1} for a in gd.BIOME_ANIMALS["village"]}    # Quick Hunt caught every one...
+    assert app._grant_region_decor(U, "village") == ""                           # ...which doesn't complete a region
+    assert app._guide_region_progress(U, "village")[0] == 0 and app._guide_species_seen(U, "village")[0] == len(set(gd.BIOME_ANIMALS["village"]))
+    d["explore_record"] = {a: 1 for a in gd.BIOME_ANIMALS["village"][:-1]}
+    assert app._grant_region_decor(U, "village") == ""                           # one Explore species short
+    d["explore_record"][gd.BIOME_ANIMALS["village"][-1]] = 1
     got = app._grant_region_decor(U, "village")
     assert "Village Banner" in got and d["region_decor"] == ["village"]
     assert app._grant_region_decor(U, "village") == "" and "🏡" in app.explore_keepsake_line(U)
@@ -2414,7 +2417,7 @@ def test_the_events_screen_explains_the_chronicle_and_drops_the_weekly_list():
     app.stop_active_event()
     blob = json.dumps(app.build_events_components(U), ensure_ascii=False)
     assert "Chronicle" in blob and "storybook" in blob
-    assert "This week's Daily Themes" not in blob and "Saturday Monster Rampage" not in blob and "Season:" not in blob
+    assert "This week's Daily Themes" not in blob and "Season:" not in blob          # (today's theme may be any name, so it isn't checked by name)
     assert "Today's Daily Theme" in blob
     assert "What is the Chronicle?" in json.dumps(app.build_chronicle(U), ensure_ascii=False)
 
@@ -2852,6 +2855,27 @@ def test_use_opens_several_crates_at_once_and_only_what_you_have():
         assert d["crate_inv"]["Common Crate"] == 3 and "remaining: **3**" in json.dumps(h.panels[-1])
     params = {p.name: p for p in app.use_cmd.parameters}
     assert "quantity" in params and params["quantity"].required is False
+
+
+def test_only_explore_catches_complete_a_region_and_old_completions_are_kept():
+    d = _fresh(level=300)
+    animal = gd.BIOME_ANIMALS["village"][0]
+    d["record"] = {}
+    app.record_catch(U, animal, "Slingshot", 10)                                  # a Quick Hunt catch
+    assert d["record"][animal]["count"] == 1 and not d.get("explore_record")
+    tok = app._hunt_mode.set("explore")
+    try:
+        app.record_catch(U, animal, "Slingshot", 10)                              # an Explore catch
+    finally:
+        app._hunt_mode.reset(tok)
+    assert d["record"][animal]["count"] == 2 and d["explore_record"] == {animal: 1}
+    assert app._guide_region_progress(U, "village")[0] == 1
+    d["region_decor"] = ["forest"]                                                # finished long ago: stays finished
+    have, total = app._guide_region_progress(U, "forest")
+    assert have == total > 0
+    blob = json.dumps(app.build_collection_species_components(U, "village"), ensure_ascii=False)
+    assert "caught in Explore" in blob and "🧭" in blob
+    assert "Quick Hunt" in json.dumps(app.build_collection_regions_components(U), ensure_ascii=False)
 
 
 if __name__ == "__main__":
